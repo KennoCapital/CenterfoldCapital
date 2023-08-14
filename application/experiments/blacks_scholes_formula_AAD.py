@@ -1,11 +1,11 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
 
+
 tfd = tfp.distributions
 N = lambda x: tfd.Normal(loc=0.0, scale=1.0).cdf(x)
 
 
-@tf.function
 def black_scholes(S, K, T, t, r, sigma):
     d1 = (tf.math.log(S / K) + (r + 0.5 * sigma ** 2) * (T - t)) / (sigma * tf.math.sqrt(T - t))
     d2 = d1 - sigma * tf.math.sqrt(T - t)

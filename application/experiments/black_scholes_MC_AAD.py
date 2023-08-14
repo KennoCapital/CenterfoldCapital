@@ -1,5 +1,4 @@
 import tensorflow as tf
-import numpy as np
 
 
 def sim_gbm(spot, drift, vol, t, N, M, seed=None):
@@ -16,11 +15,11 @@ def call_payoff(x, K):
 
 
 def call_price_MC_AAD(spot, strike, r, vol, t, N, M, seed=None):
-    vars = {'spot': spot, 'vol': vol}
+    vars = {'spot': spot, 'strike': strike, 'r': r, 'vol': vol}
     with tf.GradientTape() as tape:
         tape.watch(vars)
 
-        S = sim_gbm(vars['spot'], r, vars['vol'], t, N, M, seed)
+        S = sim_gbm(spot, r, vol, t, N, M, seed)
         call = tf.math.reduce_mean(
             tf.exp(-t[-1] * r) * call_payoff(S[-1], strike)
         )
@@ -39,9 +38,11 @@ if __name__ == '__main__':
     M = tf.constant(52 * int(T))
     seed = 1234
 
-    t = tf.transpose(tf.constant([np.linspace(t0, T, int(M+1), True)], dtype=tf.float32))
+    t = tf.reshape(tf.linspace(t0, T, M+1), (M+1, 1))
 
     price, greeks = call_price_MC_AAD(spot, strike, r, vol, t, N, M, seed)
     print('Call price =', price.numpy())
     print('Delta =', greeks['spot'].numpy())
     print('Vega =', greeks['vol'].numpy())
+    print('Rho =', greeks['r'].numpy())
+    print('dC/dK =', greeks['strike'].numpy())
