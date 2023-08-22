@@ -5,11 +5,11 @@ def sim_gbm(N, t, spot, drift, vol, seed=None):
     M = tf.constant(t.shape[0])
     dt = tf.math.subtract(t[1:], t[:-1])
 
-    Z = tf.random.normal(mean=0.0, stddev=1.0, shape=(M - 1, N), seed=seed)
-
-    W = tf.concat([
+    rng = tf.random.Generator.from_seed(seed)
+    Z = rng.normal(shape=(M-1, N), mean=0.0, stddev=1.0)
+    W = tf.cumsum(tf.concat([
         tf.zeros(shape=(1, N)), tf.sqrt(dt)[:, None] * Z
-    ], axis=0)
+    ], axis=0))
 
     S = spot * tf.exp(((drift - 0.5 * vol ** 2) * t)[:, None] + vol * W)
     return S[-1,]
@@ -33,6 +33,8 @@ if __name__ == '__main__':
         S = sim_gbm(N, t, spot, drift, vol, seed)
 
     J = tape.jacobian(S, [spot, vol])
+
+    print(J)
 
     stop = datetime.now()
     print(stop - start)
