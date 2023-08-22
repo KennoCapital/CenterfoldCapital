@@ -1,6 +1,10 @@
 import tensorflow as tf
 
 
+def call_payoff(x, K):
+    return tf.math.maximum(x - K, 0.0)
+
+
 def sim_gbm(spot, drift, vol, t, N, M, seed=None):
     dt = t[1:] - t[:-1]
     Z = tf.random.normal(shape=(M, N), mean=0.0, stddev=1.0, seed=seed, dtype=tf.float32)
@@ -9,9 +13,6 @@ def sim_gbm(spot, drift, vol, t, N, M, seed=None):
     S = spot * tf.math.exp((drift - 0.5 * vol ** 2) * t + vol * W)
     return S
 
-
-def call_payoff(x, K):
-    return tf.math.maximum(x - K, 0.0)
 
 
 def call_price_MC_AAD(spot, strike, r, vol, t, N, M, seed=None):
@@ -40,9 +41,9 @@ if __name__ == '__main__':
 
     t = tf.reshape(tf.linspace(t0, T, M+1), (M+1, 1))
 
+    # Calcualte price and greeks by AAD
     price, greeks = call_price_MC_AAD(spot, strike, r, vol, t, N, M, seed)
     print('Call price =', price.numpy())
     print('Delta =', greeks['spot'].numpy())
     print('Vega =', greeks['vol'].numpy())
     print('Rho =', greeks['r'].numpy())
-    print('dC/dK =', greeks['strike'].numpy())
