@@ -28,7 +28,7 @@ if __name__ == '__main__':
     t0 = 0.0
     T = 1.0
     spot = torch.tensor(100.0, requires_grad=True)
-    drift = torch.tensor(0.03)
+    drift = torch.tensor(0.03, requires_grad=True)
     vol = torch.tensor(0.2, requires_grad=True)
     t = torch.linspace(t0, T, M + 1)
 

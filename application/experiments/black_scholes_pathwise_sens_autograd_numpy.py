@@ -47,6 +47,8 @@ if __name__ == '__main__':
 
     start = datetime.now()
     dCdS = jacobian(sim_gbm, argnum=2)(N, t, spot, strike, drift, vol, payoff_call, seed)
+    dCddrift = jacobian(sim_gbm, argnum=4)(N, t, spot, strike, drift, vol, payoff_call, seed)
+    dCdvol = jacobian(sim_gbm, argnum=5)(N, t, spot, strike, drift, vol, payoff_call, seed)
     stop = datetime.now()
     print(stop - start)
 
