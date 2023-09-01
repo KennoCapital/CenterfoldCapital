@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from products import Portfolio
 import torch
 
+
+
 N = lambda x: torch.distributions.Normal(loc=0.0, scale=1.0).cdf(x)
 
 
@@ -76,10 +78,20 @@ class Vasicek:
         return (zcb_t / zcb_tdt - 1) / dt
 
     def calc_swap_rate(self, t, dt, r0):
-
         zcb_0 = self.calc_zcb(t[0], r0)
         zcb_T = self.calc_zcb(t[-1], r0)
         return (zcb_0 - zcb_T) / (dt * torch.sum(self.calc_zcb(t[1:], r0)))
+
+    def calc_caplet_price_bond_options(self, t, dt, r0, K):
+        zcb_t = self.calc_zcb(t, r0)
+        zcb_tdt = self.calc_zcb(t+dt, r0)
+        K_bar = 1 / (1 + dt * K)
+
+        integral = self.sigma**2 / self.a**3 * \
+                   (0.5 * (torch.exp(2*t) + torch.exp(2*(t+dt)) - torch.exp(2*dt)) + torch.exp(dt) - torch.exp(2*t+dt))
+        d1 = (torch.log(zcb_t * K_bar / zcb_tdt)) + 0.5 * integral / torch.sqrt(integral)
+        d2 = d1 - torch.sqrt(integral)
+        return zcb_t * N(d1) - zcb_tdt / K_bar * N(d2)
 
     def calc_caplet_price_black(self, t, dt, r0, K):
         """Eq. 2.6, Filipovic"""
@@ -90,6 +102,7 @@ class Vasicek:
         return dt * zcb * ( fwd * N(d1) - K * N(d2) )
 
     def calc_cap_price_black(self, t, dt, r0, K):
+        # cpl = self.calc_caplet_price_bond_options(t, dt, r0, K)
         cpl = self.calc_caplet_price_black(t, dt, r0, K)
         return torch.sum(cpl)
 
@@ -103,7 +116,7 @@ if __name__ == '__main__':
     dt = torch.tensor(0.25)
     K = torch.tensor(0.08)
 
-    t = torch.linspace(0.25, 30.0, 120)
+    t = torch.linspace(0.25, 2.0, 8)
 
     mld = Vasicek(a=a, b=b, sigma=sigma)
 
@@ -113,11 +126,42 @@ if __name__ == '__main__':
 
     fwd = mld.calc_fwd_rate(t=t, dt=dt, r0=r0)
 
-    cpl = mld.calc_caplet_price_black(t=torch.tensor(0.25), dt=dt, r0=r0, K=K)
+    cpl = mld.calc_caplet_price_black(t=t, dt=dt, r0=r0, K=K)
 
-    swap_rate = mld.calc_swap_rate(t, dt, r0)
+    swap_rate = mld.calc_swap_rate(t=t, dt=dt, r0=r0)
+
+    cap = mld.calc_cap_price_black(t=t, dt=dt, r0=r0, K=swap_rate)
+    print(cap*100)
+
+    print(
+        mld.calc_caplet_price_black(t=torch.tensor(0.25), dt=torch.tensor(0.25), r0=r0, K=swap_rate),
+        mld.calc_caplet_price_bond_options(t=torch.tensor(0.25), dt=torch.tensor(0.25), r0=r0, K=swap_rate)
+    )
+
+    # Manual
+    zcb_1 = mld.calc_zcb(t=torch.tensor(0.25), r0=r0)
+    zcb_2 = mld.calc_zcb(t=torch.tensor(0.50), r0=r0)
+    zcb_3 = mld.calc_zcb(t=torch.tensor(0.75), r0=r0)
+    zcb_4 = mld.calc_zcb(t=torch.tensor(1.00), r0=r0)
+    swap_rate = (zcb_1 - zcb_4) / (0.25 * (zcb_2 + zcb_3 + zcb_4))
+    fwd_1_2 = (zcb_1 / zcb_2 - 1) / 0.25
+    fwd_2_3 = (zcb_2 / zcb_3 - 1) / 0.25
+    fwd_3_4 = (zcb_3 / zcb_4 - 1) / 0.25
+
+    d1_1_2 = (torch.log(fwd_1_2 / swap_rate) + 0.5 * sigma * 0.25) / (sigma * 0.25)
+    d2_1_2 = (torch.log(fwd_1_2 / swap_rate) - 0.5 * sigma * 0.25) / (sigma * 0.25)
+    d1_2_3 = (torch.log(fwd_2_3 / swap_rate) + 0.5 * sigma * 0.50) / (sigma * 0.50)
+    d2_2_3 = (torch.log(fwd_2_3 / swap_rate) - 0.5 * sigma * 0.50) / (sigma * 0.50)
+    d1_3_4 = (torch.log(fwd_3_4 / swap_rate) + 0.5 * sigma * 0.75) / (sigma * 0.75)
+    d2_3_4 = (torch.log(fwd_3_4 / swap_rate) - 0.5 * sigma * 0.75) / (sigma * 0.75)
+    cpl_1_2 = 0.25 * zcb_2 * (fwd_1_2 * N(d1_1_2) - swap_rate * N(d2_1_2))
+    cpl_2_3 = 0.25 * zcb_3 * (fwd_2_3 * N(d1_2_3) - swap_rate * N(d2_2_3))
+    cpl_3_4 = 0.25 * zcb_4 * (fwd_3_4 * N(d1_3_4) - swap_rate * N(d2_3_4))
+    cap = cpl_1_2 + cpl_2_3 + cpl_3_4
+    print(cap)
 
     # TODO this is not working: Filipovic table 7.1
+    """
     mat = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 15.0, 20.0, 30.0])
 
     for m in mat:
@@ -127,4 +171,4 @@ if __name__ == '__main__':
         print(f'Maturity = {m},\t swap_rate = {swap_rate},\t ATM-cap price = {cap}')
         plt.scatter(m, cap)
     plt.show()
-
+    """
