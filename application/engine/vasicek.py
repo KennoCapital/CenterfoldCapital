@@ -39,18 +39,18 @@ class Vasicek:
 
     def calc_fwd(self, r0, t, delta):
         """F(0; t, t+delta) = 1/delta * (P(0,t) / P(0,t+delta) - 1)"""
-        zcb_t = self.calc_zcb(t, r0)
-        zcb_tdt = self.calc_zcb(t+delta, r0)
+        zcb_t = self.calc_zcb(r0, t)
+        zcb_tdt = self.calc_zcb(r0, t+delta)
         return 1 / delta * (zcb_t / zcb_tdt - 1)
 
     def calc_swap_rate(self, r0, t, delta):
         """R(0) = [ P(0,T0) - P(0,Tn) ] / [delta * sum_{i=1}^n P(0,Ti) ]"""
-        zcb = self.calc_zcb(t, r0)
+        zcb = self.calc_zcb(r0, t)
         return (zcb[0] - zcb[-1]) / (delta * torch.sum(zcb[1:]))
 
     def calc_cpl(self, r0, t, delta, K):
         """Cpl(0; t, t+delta) = delta * P(0,t) * [ F(0, t, t+delta) * N(d1) - K * N(d2) ]"""
-        zcb = self.calc_zcb(t, r0)
+        zcb = self.calc_zcb(r0, t)
         fwd = 1 / delta * (zcb[0:-1] / zcb[1:] - 1)
         return black_cpl(zcb[1:], fwd, K, sigma, t[:-1], delta)
 
