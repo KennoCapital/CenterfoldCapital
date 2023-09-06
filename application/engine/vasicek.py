@@ -1,7 +1,7 @@
 import torch
 import scipy
 from application.utils.torch_utils import N_cdf
-from model import Model
+from application.engine.model import Model
 
 
 class Vasicek(Model):

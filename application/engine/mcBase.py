@@ -1,6 +1,6 @@
 import torch
-from products import Portfolio
-from model import Model
+from application.engine.products import Portfolio
+from application.engine.model import Model
 
 
 class RNG:
