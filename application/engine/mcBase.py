@@ -1,5 +1,5 @@
 import torch
-from application.engine.products import Portfolio
+from application.engine.products import Product
 from application.engine.model import Model
 
 
@@ -10,7 +10,8 @@ class RNG:
         self.N = N
         self.use_av = use_av
         if seed is None:
-            self.gen = torch.Generator().manual_seed(torch.Generator().initial_seed())
+            self.gen = torch.Generator()
+            self.gen.seed()
         else:
             self.gen = torch.Generator().manual_seed(seed)
 
@@ -49,11 +50,10 @@ class SampleDef:
 
 
 def mcSim(
-        port:   Portfolio,
+        prd:    Product,
         model:  Model,
         rng:    RNG,
-        N:      int,
-        seed:   int):
+        N:      int):
     """
     Template algorithm for running Monte Carlo simulation
 
@@ -61,7 +61,31 @@ def mcSim(
     :param model:   Model to simulate from
     :param rng:     Random number generator
     :param N:       Number of paths to simulate
-    :param seed:    Seed for replication
     :return:        Payoffs
     """
+
+    tl = prd.timeline
+
+    # simulation
+    for k, s in enumerate(tl):
+        Z = rng.next_G()
+        x = model.simulate(Z)
+
+
+
+    return payoffs
+    
+
+
+if __name__ == '__main__':
+    from application.engine.products import Cap
+    delta = 0.25
+    T = 2.0
+    expiry = torch.linspace(delta, T, int(T/delta))
+    strike = torch.tensor([0.2 * len(expiry)])
+
+    cap = Cap(strike=strike, expiry=expiry, delta=delta)
+
+
+
 
