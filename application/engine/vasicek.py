@@ -1,10 +1,10 @@
 import torch
 import scipy
+from application.utils.torch_utils import N_cdf
+from model import Model
 
-N_cdf = lambda x: torch.distributions.Normal(loc=0.0, scale=1.0).cdf(x)
 
-
-class Vasicek:
+class Vasicek(Model):
     """
         dr(t) = a*[b-r(t)]*dt + sigma*dW(t)
     """
@@ -26,7 +26,7 @@ class Vasicek:
 
     def _calc_A(self, t):
         B = self._calc_B(t)
-        return (self.b - self.sigma**2 / (2*self.a**2)) * (t - B) - self.sigma ** 2 * B ** 2 / (4 * self.a)
+        return (self.b - self.sigma ** 2 / (2 * self.a ** 2)) * (t - B) - self.sigma ** 2 * B ** 2 / (4 * self.a)
 
     def _calc_B(self, t):
         return (1 - torch.exp(-self.a * t)) / self.a
@@ -39,14 +39,14 @@ class Vasicek:
         sigma_fwd = self._calc_fwd_vol(t)
         return torch.exp(
             (r0 - self.b) * (torch.exp(-self.a * t) - 1) / self.a - \
-            self.b * t + sigma_fwd**2 * t / (2 * self.a ** 2) + \
-            sigma_fwd ** 2 * (4 * torch.exp(-self.a * t) - torch.exp(-2 * self.a * t) - 3) / (4 * self.a**3)
+            self.b * t + sigma_fwd ** 2 * t / (2 * self.a ** 2) + \
+            sigma_fwd ** 2 * (4 * torch.exp(-self.a * t) - torch.exp(-2 * self.a * t) - 3) / (4 * self.a ** 3)
         )
 
     def calc_fwd(self, r0, t, delta):
         """F(0; t, t+delta) = 1/delta * (P(0,t) / P(0,t+delta) - 1)"""
         zcb_t = self.calc_zcb(r0, t)
-        zcb_tdt = self.calc_zcb(r0, t+delta)
+        zcb_tdt = self.calc_zcb(r0, t + delta)
         return 1 / delta * (zcb_t / zcb_tdt - 1)
 
     def calc_swap_rate(self, r0, t, delta):
@@ -61,11 +61,12 @@ class Vasicek:
         """
         zcb = self.calc_zcb(r0, t)
 
-        K_bar = 1 / (1+delta*K)
-        vol_integral = self.sigma**2 / (2*self.a**3) * (
-                1 - torch.exp(-2*self.a*t) + torch.exp(-2*self.a*delta) - torch.exp(-2*self.a*(t+delta)) - \
-                2 * (torch.exp(-self.a*delta) - torch.exp(-self.a*(2*t+delta)))
-        )[:-1]
+        K_bar = 1 / (1 + delta * K)
+        vol_integral = self.sigma ** 2 / (2 * self.a ** 3) * (
+                    1 - torch.exp(-2 * self.a * t) + torch.exp(-2 * self.a * delta) - \
+                    torch.exp(-2 * self.a * (t + delta)) - 2 * (torch.exp(-self.a * delta) - \
+                                                                torch.exp(-self.a * (2 * t + delta)))
+                    )[:-1]
         d1 = (torch.log(zcb[:-1] * K_bar / zcb[1:]) + 0.5 * vol_integral) / torch.sqrt(vol_integral)
         d2 = d1 - torch.sqrt(vol_integral)
 
@@ -75,53 +76,68 @@ class Vasicek:
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
         return torch.sum(self.calc_cpl(r0, t, delta, K))
 
+    def simulate(self, r0, t, N, seed=None):
+        """
+        `Exact` simulation of the short rate, r(t) using
+        Eq.(3.46), p. 110 - Glasserman (2003):
+        """
+        # TODO simulation functions should take a random Gaussian vector instead of seed and also not use torch_rng
+        M = len(t) - 1
+        r = torch.full(size=(M + 1, N), fill_value=torch.nan)
+        r[0, :] = r0
 
-def black_cpl(sigma, zcb, fwd, K, t, delta):
-    """
-    Black76's formula for European caplet (call option on a Forward / Libor)
-    Filipovic eq. 2.6, the current time is assumed to be 0.0.
+        rng = torch_rng(seed=seed)
 
-    :param zcb:     Zero coupon bond price / discount factor
-    :param fwd:     Forward (spot) price
-    :param K:       Strike
-    :param sigma:   Volatility
-    :param t:       Expiry / reset date
-    :param delta:   Accrual period
-    :return:
-    """
-    d1 = (torch.log(fwd / K) + 0.5 * sigma ** 2 * t) / (sigma * torch.sqrt(t))
-    d2 = (torch.log(fwd / K) - 0.5 * sigma ** 2 * t) / (sigma * torch.sqrt(t))
-    cpl = delta * zcb * (fwd * N_cdf(d1) - K * N_cdf(d2))
-    return cpl
+        for k in range(M):
+            dt = t[k + 1] - t[k]
+            Z = torch.randn(size=(1, N), generator=rng)
+            r[k + 1, :] = torch.exp(-self.a * dt) * r[k] + self.b * (1 - torch.exp(-self.a * dt)) + \
+                          self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
 
-def black_iv(market_price, zcb, fwd, K, t, delta):
+        return r
+
+    def simulate_euler(self, r0, t, N, seed=None):
+        """
+        p. 110 - Glasserman (2003)
+        """
+        M = len(t) - 1
+        r = torch.full(size=(M + 1, N), fill_value=torch.nan)
+        r[0, :] = r0
+
+        rng = torch_rng(seed=seed)
+
+        for k in range(M):
+            dt = t[k + 1] - t[k]
+            Z = torch.randn(size=(1, N), generator=rng)
+            r[k + 1, :] = self.a * (self.b - r[k, :]) * dt + self.sigma * torch.sqrt(dt) * Z
+
+        return r
+
+
+def calibrate_vasicek(maturities, strikes, market_prices, a=1.00, b=0.05, sigma=0.2, r0=0.05, delta=0.25):
     def obj(x):
-        return torch.sum(black_cpl(x, zcb, fwd, K, t, delta)) - market_price
+        x = torch.tensor(x)
+        a, b, sigma, r0 = x[0], x[1], x[2], x[3]
+        model = Vasicek(a, b, sigma)
+        model_prices = torch.empty_like(market_prices, dtype=torch.float64)
 
-    sigma_iv = scipy.optimize.bisect(f=obj, a=1E-6, b=5.0, maxiter=1000)
-    return sigma_iv
+        for i, T in enumerate(maturities):
+            t = torch.linspace(start=delta, end=T, steps=int(T / delta))
+            cap = model.calc_cap(r0, t, delta, strikes[i])
+            model_prices[i] = cap
 
+        err = model_prices - market_prices
+        mse = torch.linalg.norm(err)**2
+        return mse
 
-if __name__ == '__main__':
-    torch.set_printoptions(precision=12)
-    T = 30.0
-    delta = 0.25
-    a = torch.tensor(0.86)
-    b = torch.tensor(0.09)
-    sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.08)
-    n = int(T / delta - 1)
-    t = torch.linspace(start=delta, end=T, steps=n+1)
-
-    # Calculate ATM cap price
-    mld = Vasicek(a, b, sigma, use_ATS=True)
-    swap_rate = mld.calc_swap_rate(r0, t, delta)
-    cap = mld.calc_cap(r0, t, delta, swap_rate)
-    print(cap)
-
-    # Calculate ATM Implied Volatility
-    zcb = mld.calc_zcb(r0, t)
-    fwd = (zcb[:-1] / zcb[1:] - 1) / delta
-
-    sigma_iv = black_iv(cap, zcb=zcb[:-1], fwd=fwd, K=swap_rate, t=t[:-1], delta=delta)
-    print(sigma_iv)
+    return scipy.optimize.minimize(
+        fun=obj, x0=torch.tensor([a, b, sigma, r0]), method='Nelder-Mead', tol=1e-12,
+        bounds=[(1E-6, 100.0), (-0.05, 1.00), (1E-6, 5.00), (-0.05, 1.00)],
+        options={
+            'xatol': 1e-12,
+            'fatol': 1e-12,
+            'maxiter': 2500,
+            'maxfev': 2500,
+            'adaptive': True,
+            'disp': True
+        })
