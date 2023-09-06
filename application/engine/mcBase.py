@@ -1,6 +1,10 @@
 import torch
 from products import Portfolio
-from models import MCModel
+from model import Model
+
+
+class RNG:
+    """Random Number Generator"""
 
 
 def torch_rng(seed=None):
@@ -9,16 +13,16 @@ def torch_rng(seed=None):
     else:
         return torch.Generator().manual_seed(seed)
 
+
 class Sample:
     """
         A sample is a collection of market observations on an event date for the evaluation of the payoff:
-            - Numeraire (if the event date is a payment date), and a collection of
+            - Numeraire         (if the event date is a payment date), and a collection of
             - Forwards
-            - Discounts
-            - Libors
+            - Discount factors  (zero coupon bonds)
+            - Libors            (forward rates)
         fixed on the event date
     """
-    def __init__(self):
 
 
 class Scenario:
@@ -27,9 +31,6 @@ class Scenario:
 
 class SampleDef:
     """Definition of what must be sampled"""
-
-class RNG:
-    """Random Number Generator"""
 
 
 def mcSim(
@@ -48,9 +49,6 @@ def mcSim(
     :param seed:    Seed for replication
     :return:        Payoffs
     """
-
-    # Simulate (over paths)
-    mdl.generatePaths():
 
 
 

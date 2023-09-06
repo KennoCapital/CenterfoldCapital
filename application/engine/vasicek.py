@@ -1,9 +1,10 @@
 import torch
 import scipy
 from application.utils.torch_utils import N_cdf
+from model import Model
 
 
-class Vasicek:
+class Vasicek(Model):
     """
         dr(t) = a*[b-r(t)]*dt + sigma*dW(t)
     """
