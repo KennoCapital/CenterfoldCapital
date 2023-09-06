@@ -5,7 +5,7 @@ from application.engine.mcBase import RNG
 
 
 # Specify simulation dimensions
-N = 3
+N = 4
 t = torch.linspace(start=0.25, end=30.0, steps=120)
 dt = t[1:] - t[:-1]
 M = len(t) - 1
