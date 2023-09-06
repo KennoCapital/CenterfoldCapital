@@ -76,42 +76,19 @@ class Vasicek(Model):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
         return torch.sum(self.calc_cpl(r0, t, delta, K))
 
-    def simulate(self, r0, t, N, seed=None):
+    def simulate(self, r0, Z, dt):
         """
         `Exact` simulation of the short rate, r(t) using
         Eq.(3.46), p. 110 - Glasserman (2003):
         """
-        # TODO simulation functions should take a random Gaussian vector instead of seed and also not use torch_rng
-        M = len(t) - 1
-        r = torch.full(size=(M + 1, N), fill_value=torch.nan)
-        r[0, :] = r0
+        return torch.exp(-self.a * dt) * r0 + self.b * (1 - torch.exp(-self.a * dt)) + \
+            self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
 
-        rng = torch_rng(seed=seed)
-
-        for k in range(M):
-            dt = t[k + 1] - t[k]
-            Z = torch.randn(size=(1, N), generator=rng)
-            r[k + 1, :] = torch.exp(-self.a * dt) * r[k] + self.b * (1 - torch.exp(-self.a * dt)) + \
-                          self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
-
-        return r
-
-    def simulate_euler(self, r0, t, N, seed=None):
+    def simulate_euler(self, r0, Z, dt):
         """
         p. 110 - Glasserman (2003)
         """
-        M = len(t) - 1
-        r = torch.full(size=(M + 1, N), fill_value=torch.nan)
-        r[0, :] = r0
-
-        rng = torch_rng(seed=seed)
-
-        for k in range(M):
-            dt = t[k + 1] - t[k]
-            Z = torch.randn(size=(1, N), generator=rng)
-            r[k + 1, :] = self.a * (self.b - r[k, :]) * dt + self.sigma * torch.sqrt(dt) * Z
-
-        return r
+        return r0 + self.a * (self.b - r0) * dt + self.sigma * torch.sqrt(dt) * Z
 
 
 def calibrate_vasicek(maturities, strikes, market_prices, a=1.00, b=0.05, sigma=0.2, r0=0.05, delta=0.25):
