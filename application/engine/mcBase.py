@@ -31,6 +31,9 @@ class RNG:
         return torch.rand(size=(self.N, ), generator=self.gen)
 
 
+class Scenario:
+    """A scenario is a collection of samples"""
+
 @dataclass
 class Sample:
     """
@@ -40,10 +43,6 @@ class Sample:
     """
     fwd: torch.tensor
     disc: torch.tensor
-
-class Scenario:
-    """A scenario is a collection of samples"""
-
 
 @dataclass
 class SampleDef:
@@ -107,8 +106,6 @@ if __name__ == '__main__':
     s = Sample(
         torch.tensor(0.0),
         torch.tensor([0.1, 0.2]),
-        torch.tensor(0.02),
-        torch.tensor(0.3)
     )
     print(s)
 
