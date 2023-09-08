@@ -1,6 +1,7 @@
 import torch
-from application.engine.products import Product
 from application.engine.model import Model
+from dataclasses import dataclass
+from abc import ABC, abstractmethod
 
 
 class RNG:
@@ -30,23 +31,42 @@ class RNG:
         return torch.rand(size=(self.N, ), generator=self.gen)
 
 
+@dataclass
 class Sample:
     """
         A sample is a collection of market observations on an event date for the evaluation of the payoff:
-            - Numeraire         (if the event date is a payment date), and a collection of
             - Forwards
-            - Discount factors  (zero coupon bonds)
-            - Libors            (forward rates)
-        fixed on the event date
+            - Discount factors  (zero coupon bonds) fixed on the event date
     """
-
+    fwd: torch.tensor
+    disc: torch.tensor
 
 class Scenario:
     """A scenario is a collection of samples"""
 
 
+@dataclass
 class SampleDef:
-    """Definition of what must be sampled"""
+    """
+        Definition of what must be sampled (on a specific event date)
+            - fwdMats   Maturities of forwards on this event date
+            - discMats  Maturities of the discounts on this event date
+    """
+    fwdMats: torch.tensor
+    discMats: torch.tensor
+
+
+class Product(ABC):
+    @abstractmethod
+    def __init__(self, *args, **kwargs):
+        self.timeline: torch.tensor
+        self.defline: SampleDef
+        self.label: str
+
+    @abstractmethod
+    def payoff(self, *args, **kwargs):
+        pass
+
 
 
 def mcSim(
@@ -71,8 +91,6 @@ def mcSim(
         Z = rng.next_G()
         x = model.simulate(Z)
 
-
-
     return payoffs
     
 
@@ -85,6 +103,15 @@ if __name__ == '__main__':
     strike = torch.tensor([0.2 * len(expiry)])
 
     cap = Cap(strike=strike, expiry=expiry, delta=delta)
+
+    s = Sample(
+        torch.tensor(0.0),
+        torch.tensor([0.1, 0.2]),
+        torch.tensor(0.02),
+        torch.tensor(0.3)
+    )
+    print(s)
+
 
 
 
