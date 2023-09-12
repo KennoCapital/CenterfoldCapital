@@ -12,9 +12,9 @@ b = torch.tensor(0.08)
 sigma = torch.tensor(0.0148)
 r0 = torch.tensor(0.08)
 
-start = torch.tensor(2.0)
+start = torch.tensor(0.25)
 delta = torch.tensor(0.25)
-expiry = torch.tensor(3.0)
+expiry = torch.tensor(1.0)
 
 t = torch.linspace(float(delta), float(expiry), int(expiry/delta))
 
@@ -30,8 +30,10 @@ prd = Cap(
     delta=delta
 )
 
-mcSim(prd, model, rng, N)
 
+print(
+    mcSim(prd, model, rng, N)  # TODO this gives wrong price
+)
 
 
 

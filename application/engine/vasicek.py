@@ -1,7 +1,7 @@
 import torch
 import scipy
 from application.utils.torch_utils import N_cdf
-from application.engine.mcBase import Model, SampleDef, Sample
+from application.engine.mcBase import Model, SampleDef
 
 
 class Vasicek(Model):
@@ -21,10 +21,12 @@ class Vasicek(Model):
         self.r0 = r0
         self.use_ATS = use_ATS
 
+        # Attributes for Monte Carlo
         self._timeline = None
         self._defline = None
-        self._simDim = None
-        self._disc = None
+        self._disc_curve = None
+        self._x = None
+        self._zcb = None
         self._fwd = None
 
 
@@ -37,19 +39,35 @@ class Vasicek(Model):
         return self._defline
 
     @property
-    def simDim(self):
-        return len(self.timeline) - 1
+    def disc_curve(self):
+        return self._disc_curve
 
-    def allocate(self, prdTimeline: torch.Tensor, prdDefline: SampleDef):
+    @property
+    def x(self):
+        return self._x
+
+    @property
+    def zcb(self):
+        return self._zcb
+
+    @property
+    def fwd(self):
+        return self._fwd
+
+    def allocate(self, prdTimeline: torch.Tensor, prdDefline: SampleDef, N):
         self._timeline = prdTimeline
 
         if 0.0 not in prdTimeline:  # Today on timeline
             self._timeline = torch.concat([torch.tensor([0.0]), self._timeline], dim=0)
         self._defline = prdDefline
 
-        # Allocate
-        self._disc = torch.full(size=(len(prdTimeline), len(prdDefline.discMats)), fill_value=torch.nan)
-        self._fwd = torch.full(size=(len(prdTimeline), len(prdDefline.fwdMats)), fill_value=torch.nan)
+        # Calculate discount curve
+        self._disc_curve = self.calc_zcb(self.r0, prdDefline.zcbMats).reshape(-1, 1)
+
+        # Allocate state variables (short rate), zcb and fwd
+        self._x = torch.full(size=(len(self.timeline), N), fill_value=torch.nan)
+        self._zcb = torch.full(size=(len(self.defline.zcbMats), N), fill_value=torch.nan)
+        self._fwd = torch.full(size=(len(self.defline.fwdMats), N), fill_value=torch.nan)
 
     def _calc_fwd_vol(self, t):
         """sigma(0,t) = sigma * exp{ -a * t }"""
@@ -107,32 +125,39 @@ class Vasicek(Model):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
         return torch.sum(self.calc_cpl(r0, t, delta, K))
 
-    def _fillScenario(self,
-                      idx:  int,
-                      t:    torch.Tensor,
-                      r:    torch.Tensor,
-                      s:    Sample,
-                      sDef: SampleDef):
-        s[idx] = self.calc_fwd(r0, t, delta)
-
-
-    def simulate(self, Z, path):
+    def simulate(self, Z):
         """
         `Exact` simulation of the short rate, r(t) using
         Eq.(3.46), p. 110 - Glasserman (2003):
         """
-        r = self.r0
 
-        for k, t in enumerate(self.timeline):
-            # TODO
-             r =  torch.exp(-self.a * dt) * r + self.b * (1 - torch.exp(-self.a * dt)) + \
-             self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
+        dt = self.timeline[1:] - self.timeline[:-1]
+
+        self._x[0, :] = self.r0
+        idx_zcb = 0
+        idx_fwd = 0
+
+        # Iterate over model's timeline
+        for k, s in enumerate(self.timeline[1:]):
+            self._x[k+1, :] = torch.exp(-self.a * dt[k]) * self._x[k, :] + self.b * (1 - torch.exp(-self.a * dt[k])) + \
+                        self.sigma * Z[k, ] * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt[k])))
+
+            if s in self.defline.zcbMats:
+                self._zcb[idx_zcb, :] = self.calc_zcb(self._x[k, :], s)
+                idx_zcb += 1
+
+            if s in self.defline.fwdMats:
+                self._fwd[idx_fwd, :] = self.calc_fwd(self._x[k, :], s, self.defline.fwdDeltas[idx_fwd])
+                idx_fwd += 1
+
+        return self._x, self._zcb, self._fwd
 
     def simulate_euler(self, r0, Z, dt):
         """
         p. 110 - Glasserman (2003)
         """
-        return r0 + self.a * (self.b - r0) * dt + self.sigma * torch.sqrt(dt) * Z
+        # return r0 + self.a * (self.b - r0) * dt + self.sigma * torch.sqrt(dt) * Z
+        raise NotImplementedError
 
 
 def calibrate_vasicek(maturities, strikes, market_prices, a=1.00, b=0.05, sigma=0.2, r0=0.05, delta=0.25):
