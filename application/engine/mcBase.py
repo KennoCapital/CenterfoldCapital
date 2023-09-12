@@ -1,14 +1,14 @@
 import torch
-from application.engine.model import Model
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from abc import ABC, abstractmethod
+from copy import copy
 
 
 class RNG:
     """Random Number Generator"""
-    def __init__(self, N, seed=None, use_av=True):
+    def __init__(self, simDim=None, seed=None, use_av=True):
         self.seed = seed
-        self.N = N
+        self.simDim = simDim
         self.use_av = use_av
         if seed is None:
             self.gen = torch.Generator()
@@ -19,20 +19,19 @@ class RNG:
     def next_G(self):
         """Returns a vector (tensor) N Gaussian distributed variables"""
         if self.use_av:
-            Z = torch.randn(size=(self.N // 2, ), generator=self.gen)
+            Z = torch.randn(size=(self.simDim // 2, ), generator=self.gen)
             return torch.concat([Z, -Z])
-        return torch.randn(size=(self.N, ), generator=self.gen)
+        return torch.randn(size=(self.simDim, ), generator=self.gen)
 
     def next_U(self):
         """Returns a vector (tensor) N Uniformly distributed variables"""
         if self.use_av:
-            U = torch.rand(size=(self.N // 2, ), generator=self.gen)
+            U = torch.rand(size=(self.simDim // 2, ), generator=self.gen)
             return torch.concat([U, 1-U])
-        return torch.rand(size=(self.N, ), generator=self.gen)
+        return torch.rand(size=(self.simDim, ), generator=self.gen)
 
 
-class Scenario:
-    """A scenario is a collection of samples"""
+
 
 @dataclass
 class Sample:
@@ -41,8 +40,13 @@ class Sample:
             - Forwards
             - Discount factors  (zero coupon bonds) fixed on the event date
     """
-    fwd: torch.tensor
-    disc: torch.tensor
+    fwd: torch.Tensor
+    disc: torch.Tensor
+
+    #def allocate(self):
+    #    self.fwd = torch.ones_like(self.fwd) * 100.0
+    #    self.disc = torch.ones_like(self.disc) * 1.0
+
 
 @dataclass
 class SampleDef:
@@ -51,19 +55,65 @@ class SampleDef:
             - fwdMats   Maturities of forwards on this event date
             - discMats  Maturities of the discounts on this event date
     """
-    fwdMats: torch.tensor
-    discMats: torch.tensor
+    fwdMats: torch.Tensor
+    discMats: torch.Tensor
 
+    #def __len__(self):
+    #    return len(fields(self))
+
+"""A scenario is a collection of samples"""
+Scenario = list[Sample]
+
+tmp = Scenario([Sample(torch.tensor(0.1), torch.tensor(0.5))])
 
 class Product(ABC):
+
+    @property
     @abstractmethod
-    def __init__(self, *args, **kwargs):
-        self.timeline: torch.tensor
-        self.defline: SampleDef
-        self.label: str
+    def timeline(self):
+        pass
+
+    @property
+    @abstractmethod
+    def defline(self):
+        pass
+
+    @property
+    @abstractmethod
+    def payoffLabels(self):
+        """Labeling of the payoffs for a product"""
+        pass
 
     @abstractmethod
     def payoff(self, *args, **kwargs):
+        pass
+
+
+class Model(ABC):
+    @property
+    @abstractmethod
+    def timeline(self):
+        """Timeline of product"""
+        pass
+
+    @property
+    @abstractmethod
+    def defline(self):
+        """Defline (SampleDef) of product"""
+        pass
+
+    @property
+    @abstractmethod
+    def simDim(self):
+        pass
+
+    @abstractmethod
+    def allocate(self, prdTimeline: torch.Tensor, prdDefline: SampleDef):
+        """Allocator / setter for prdTimeline and prdDefline"""
+        pass
+
+    @abstractmethod
+    def simulate(self, *args, **kwargs):
         pass
 
 
@@ -73,25 +123,24 @@ def mcSim(
         model:  Model,
         rng:    RNG,
         N:      int):
-    """
-    Template algorithm for running Monte Carlo simulation
 
-    :param port:    Portfolio of products to value
-    :param model:   Model to simulate from
-    :param rng:     Random number generator
-    :param N:       Number of paths to simulate
-    :return:        Payoffs
-    """
+    cModel = copy(model)
+    cRng = copy(rng)
 
-    tl = prd.timeline
+    # Allocate and initialize results, model and rng
+    nPay = len(prd.payoffLabels)
+    results = torch.empty(size=(N, nPay))
+    cModel.allocate(prd.timeline, prd.defline)
+    simDim = cModel.simDim
+    cRng.simDim = simDim
 
-    # simulation
-    for k, s in enumerate(tl):
-        Z = rng.next_G()
-        x = model.simulate(Z)
+    # Iterate over paths
+    for i in range(N):
+        Z = cRng.next_G()
+        cModel.simulate(Z)
 
-    return payoffs
-    
+
+
 
 
 if __name__ == '__main__':

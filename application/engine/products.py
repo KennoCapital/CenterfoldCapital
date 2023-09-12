@@ -1,41 +1,75 @@
 import torch
-from abc import ABC, abstractmethod
 from application.engine.mcBase import Product, SampleDef
-
-
-class ProductEuropean(Product):
-    def __init__(self,
-                 strike: torch.tensor,
-                 expiry: torch.tensor,
-                 label: str or None = None):
-        self.label = label if label is not None else f'{type(self).__name__} with strike {strike} and expiry {expiry}'
-        self.strike = strike
-        self.expiry = expiry
-        self.timeline = expiry
-
-    @abstractmethod
-    def payoff(self, *args, **kwargs) -> torch.tensor:
-        pass
 
 
 class Caplet(Product):
     def __init__(self,
-                 strike: torch.tensor,
-                 expiry: torch.tensor,
-                 delta: torch.tensor,
-                 label: str or None=None):
-        self.defline = SampleDef(
-            fwdMats=expiry,
-            discMats=expiry,
-            numeriare=True
-        )
+                 strike: torch.Tensor,
+                 start: torch.Tensor,
+                 expiry: torch.Tensor,
+                 delta: torch.Tensor):
+        self.strike = strike
+        self.start = start
+        self.expiry = expiry
         self.delta = delta
-        self.label = label if label is not None else (f'{type(self).__name__} with strike {strike}, expiry {expiry}, '
-                                                      f'and accrual period {delta}')
-        super().__init__(strike=strike, expiry=expiry, label=self.label)
 
-    def payoff(self, spot):
-        return self.delta * torch.maximum(spot - self.strike, torch.tensor(0.0))
+        self._timeline = expiry
+        self._defline = SampleDef(
+            fwdMats=start,
+            discMats=expiry
+        )
+        self._payoffLabels = '1'
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def payoffLabels(self):
+        return self._payoffLabels
+
+    def payoff(self, fwd):
+        return self.delta * torch.maximum(fwd - self.strike, torch.tensor(0.0))
+
+
+class Cap(Product):
+    def __init__(self,
+                 strike: torch.Tensor,
+                 start: torch.Tensor,
+                 expiry: torch.Tensor,
+                 delta: torch.Tensor):
+        self.strike = strike
+        self.start = start
+        self.expiry = expiry
+        self.delta = delta
+
+        self._timeline = torch.linspace(float(start), float(expiry), int((expiry-start)/delta+1))
+        self._defline = SampleDef(
+            fwdMats=self.timeline[:-1],
+            discMats=self.timeline[1:]
+        )
+        self._payoffLabels = [str(float(t)) + 'y' for t in self.timeline[:-1]]
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def payoffLabels(self):
+        return self._payoffLabels
+
+    def payoff(self, fwd):
+        return torch.sum()
+
+
 
 
 if __name__ == '__main__':
@@ -46,3 +80,4 @@ if __name__ == '__main__':
     )
 
     print(cpl.defline)
+

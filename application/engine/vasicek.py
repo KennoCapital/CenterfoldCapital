@@ -1,14 +1,14 @@
 import torch
 import scipy
 from application.utils.torch_utils import N_cdf
-from application.engine.model import Model
+from application.engine.mcBase import Model, SampleDef, Sample
 
 
 class Vasicek(Model):
     """
         dr(t) = a*[b-r(t)]*dt + sigma*dW(t)
     """
-    def __init__(self, a, b, sigma, use_ATS=False):
+    def __init__(self, a, b, sigma, r0=None, use_ATS=False):
         """
         :param a:           Mean reversion rate
         :param b:           Long term mean rate
@@ -18,7 +18,38 @@ class Vasicek(Model):
         self.a = a
         self.b = b
         self.sigma = sigma
+        self.r0 = r0
         self.use_ATS = use_ATS
+
+        self._timeline = None
+        self._defline = None
+        self._simDim = None
+        self._disc = None
+        self._fwd = None
+
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def simDim(self):
+        return len(self.timeline) - 1
+
+    def allocate(self, prdTimeline: torch.Tensor, prdDefline: SampleDef):
+        self._timeline = prdTimeline
+
+        if 0.0 not in prdTimeline:  # Today on timeline
+            self._timeline = torch.concat([torch.tensor([0.0]), self._timeline], dim=0)
+        self._defline = prdDefline
+
+        # Allocate
+        self._disc = torch.full(size=(len(prdTimeline), len(prdDefline.discMats)), fill_value=torch.nan)
+        self._fwd = torch.full(size=(len(prdTimeline), len(prdDefline.fwdMats)), fill_value=torch.nan)
 
     def _calc_fwd_vol(self, t):
         """sigma(0,t) = sigma * exp{ -a * t }"""
@@ -76,13 +107,26 @@ class Vasicek(Model):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
         return torch.sum(self.calc_cpl(r0, t, delta, K))
 
-    def simulate(self, r0, Z, dt):
+    def _fillScenario(self,
+                      idx:  int,
+                      t:    torch.Tensor,
+                      r:    torch.Tensor,
+                      s:    Sample,
+                      sDef: SampleDef):
+        s[idx] = self.calc_fwd(r0, t, delta)
+
+
+    def simulate(self, Z, path):
         """
         `Exact` simulation of the short rate, r(t) using
         Eq.(3.46), p. 110 - Glasserman (2003):
         """
-        return torch.exp(-self.a * dt) * r0 + self.b * (1 - torch.exp(-self.a * dt)) + \
-            self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
+        r = self.r0
+
+        for k, t in enumerate(self.timeline):
+            # TODO
+             r =  torch.exp(-self.a * dt) * r + self.b * (1 - torch.exp(-self.a * dt)) + \
+             self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
 
     def simulate_euler(self, r0, Z, dt):
         """
