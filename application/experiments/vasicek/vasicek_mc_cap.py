@@ -3,12 +3,15 @@ from application.engine.products import Cap
 from application.engine.vasicek import Vasicek
 import torch
 
-seed = 1234
+torch.set_printoptions(8)
+torch.set_default_dtype(torch.float64)
+
+seed = None
 
 N = 1024
 
 a = torch.tensor(0.86)
-b = torch.tensor(0.08)
+b = torch.tensor(0.09)
 sigma = torch.tensor(0.0148)
 r0 = torch.tensor(0.08)
 
@@ -18,8 +21,9 @@ expiry = torch.tensor(1.0)
 
 t = torch.linspace(float(delta), float(expiry), int(expiry/delta))
 
-model = Vasicek(a, b, sigma, r0)
+model = Vasicek(a, b, sigma, r0, False)
 swap_rate = model.calc_swap_rate(r0, t, delta)
+
 
 rng = RNG(seed=seed, use_av=True)
 
@@ -30,10 +34,11 @@ prd = Cap(
     delta=delta
 )
 
-
 print(
-    mcSim(prd, model, rng, N)  # TODO this gives wrong price
+    mcSim(prd, model, rng, N)
 )
 
-
+print(
+    model.calc_cap(r0, t, delta, swap_rate)
+)
 

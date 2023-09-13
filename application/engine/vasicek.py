@@ -67,7 +67,7 @@ class Vasicek(Model):
         # Allocate state variables (short rate), zcb and fwd
         self._x = torch.full(size=(len(self.timeline), N), fill_value=torch.nan)
         self._zcb = torch.full(size=(len(self.defline.zcbMats), N), fill_value=torch.nan)
-        self._fwd = torch.full(size=(len(self.defline.fwdMats), N), fill_value=torch.nan)
+        self._fwd = torch.full(size=(len(self.defline.fwdFixings), N), fill_value=torch.nan)
 
     def _calc_fwd_vol(self, t):
         """sigma(0,t) = sigma * exp{ -a * t }"""
@@ -139,15 +139,16 @@ class Vasicek(Model):
 
         # Iterate over model's timeline
         for k, s in enumerate(self.timeline[1:]):
-            self._x[k+1, :] = torch.exp(-self.a * dt[k]) * self._x[k, :] + self.b * (1 - torch.exp(-self.a * dt[k])) + \
-                        self.sigma * Z[k, ] * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt[k])))
+            self._x[k+1, :] = torch.exp(-self.a * dt[k]) * self._x[k, :] + \
+                              self.b * (1 - torch.exp(-self.a * dt[k])) + \
+                              self.sigma * Z[k, ] * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt[k])))
 
             if s in self.defline.zcbMats:
-                self._zcb[idx_zcb, :] = self.calc_zcb(self._x[k, :], s)
+                self._zcb[idx_zcb, :] = self.calc_zcb(self._x[k+1, :], 0.25)
                 idx_zcb += 1
 
-            if s in self.defline.fwdMats:
-                self._fwd[idx_fwd, :] = self.calc_fwd(self._x[k, :], s, self.defline.fwdDeltas[idx_fwd])
+            if s in self.defline.fwdFixings:
+                self._fwd[idx_fwd, :] = self.calc_fwd(self._x[k+1, :], 0, self.defline.fwdDeltas[idx_fwd])
                 idx_fwd += 1
 
         return self._x, self._zcb, self._fwd

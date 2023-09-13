@@ -53,13 +53,13 @@ class RNG:
 class SampleDef:
     """
         Definition of what must be sampled (on a specific event date)
-            - zcbMats  Maturities of the discounts on this event date
-            - fwdMats   Maturities of forwards on this event date
-            - fwdDeltas Accuracy period of each forward
+            - zcbMats       Maturities of the discounts on this event date
+            - fwdFixings    Fixing date of forwards. The `T` in F(t, T, T+delta)
+            - fwdDeltas     Accuracy period of each forward
 
     """
     zcbMats:    torch.Tensor
-    fwdMats:    torch.Tensor
+    fwdFixings:    torch.Tensor
     fwdDeltas:  torch.Tensor
 
 
@@ -138,7 +138,6 @@ class Model(ABC):
         pass
 
 
-
 def mcSim(
         prd:    Product,
         model:  Model,
@@ -149,9 +148,6 @@ def mcSim(
     cRng = copy(rng)
 
     # Allocate and initialize results, model and rng
-    nPay = len(prd.payoffLabels)
-    results = torch.empty(size=(N, nPay))
-
     cModel.allocate(prd.timeline, prd.defline, N)
 
     # Set dimensions
@@ -169,7 +165,7 @@ def mcSim(
 
     payoff_pv = cModel.disc_curve * payoff
 
-    npv = torch.sum(payoff_pv, dim=1)
+    npv = torch.sum(payoff_pv, dim=0)
 
     return torch.mean(npv)
 
