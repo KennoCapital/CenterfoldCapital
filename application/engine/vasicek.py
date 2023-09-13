@@ -26,7 +26,6 @@ class Vasicek(Model):
         self._defline = None
         self._disc_curve = None
         self._x = None
-        self._zcb = None
         self._fwd = None
 
 
@@ -47,10 +46,6 @@ class Vasicek(Model):
         return self._x
 
     @property
-    def zcb(self):
-        return self._zcb
-
-    @property
     def fwd(self):
         return self._fwd
 
@@ -62,11 +57,10 @@ class Vasicek(Model):
         self._defline = prdDefline
 
         # Calculate discount curve
-        self._disc_curve = self.calc_zcb(self.r0, prdDefline.zcbMats).reshape(-1, 1)
+        self._disc_curve = self.calc_zcb(self.r0, prdDefline.discMats).reshape(-1, 1)
 
-        # Allocate state variables (short rate), zcb and fwd
+        # Allocate state variables (short rate) and fwd
         self._x = torch.full(size=(len(self.timeline), N), fill_value=torch.nan)
-        self._zcb = torch.full(size=(len(self.defline.zcbMats), N), fill_value=torch.nan)
         self._fwd = torch.full(size=(len(self.defline.fwdFixings), N), fill_value=torch.nan)
 
     def _calc_fwd_vol(self, t):
@@ -134,8 +128,7 @@ class Vasicek(Model):
         dt = self.timeline[1:] - self.timeline[:-1]
 
         self._x[0, :] = self.r0
-        idx_zcb = 0
-        idx_fwd = 0
+        idx = 0
 
         # Iterate over model's timeline
         for k, s in enumerate(self.timeline[1:]):
@@ -143,15 +136,11 @@ class Vasicek(Model):
                               self.b * (1 - torch.exp(-self.a * dt[k])) + \
                               self.sigma * Z[k, ] * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt[k])))
 
-            if s in self.defline.zcbMats:
-                self._zcb[idx_zcb, :] = self.calc_zcb(self._x[k+1, :], 0.25)
-                idx_zcb += 1
-
             if s in self.defline.fwdFixings:
-                self._fwd[idx_fwd, :] = self.calc_fwd(self._x[k+1, :], 0, self.defline.fwdDeltas[idx_fwd])
-                idx_fwd += 1
+                self._fwd[idx, :] = self.calc_fwd(self._x[k+1, :], 0, self.defline.fwdDeltas[idx])
+                idx += 1
 
-        return self._x, self._zcb, self._fwd
+        return self._x, self._fwd
 
     def simulate_euler(self, r0, Z, dt):
         """

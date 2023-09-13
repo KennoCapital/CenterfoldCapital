@@ -53,13 +53,13 @@ class RNG:
 class SampleDef:
     """
         Definition of what must be sampled (on a specific event date)
-            - zcbMats       Maturities of the discounts on this event date
+            - discMats      Maturities of the discounts on this event date, i.e. `T` in P(0, T)
             - fwdFixings    Fixing date of forwards. The `T` in F(t, T, T+delta)
-            - fwdDeltas     Accuracy period of each forward
+            - fwdDeltas     Accuracy period of each forward, `delta` in F(,t, T, T+delta)
 
     """
-    zcbMats:    torch.Tensor
-    fwdFixings:    torch.Tensor
+    discMats:   torch.Tensor
+    fwdFixings: torch.Tensor
     fwdDeltas:  torch.Tensor
 
 
@@ -83,7 +83,7 @@ class Product(ABC):
         pass
 
     @abstractmethod
-    def payoff(self, zcb, fwd):
+    def payoff(self, fwd):
         pass
 
 
@@ -114,13 +114,7 @@ class Model(ABC):
 
     @property
     @abstractmethod
-    def zcb(self):
-        """ZCB sampled according to the defline"""
-        pass
-
-    @property
-    @abstractmethod
-    def zcb(self):
+    def fwd(self):
         """FWD sampled according to the defline"""
         pass
 
@@ -158,10 +152,10 @@ def mcSim(
     Z = cRng.gaussMat()
 
     # Simulate state variables, and calculate zcb and fwd
-    X, zcb, fwd = cModel.simulate(Z)
+    X, fwd = cModel.simulate(Z)
 
     # Calculate payoffs
-    payoff = prd.payoff(zcb, fwd)
+    payoff = prd.payoff(fwd)
 
     payoff_pv = cModel.disc_curve * payoff
 

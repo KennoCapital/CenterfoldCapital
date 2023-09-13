@@ -6,7 +6,7 @@ import torch
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
-seed = None
+seed = 1234
 
 N = 1024
 

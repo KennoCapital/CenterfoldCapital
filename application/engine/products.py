@@ -15,7 +15,7 @@ class Caplet(Product):
 
         self._timeline = expiry
         self._defline = SampleDef(
-            zcbMats=expiry,
+            discMats=expiry,
             fwdFixings=start,
             fwdDeltas=delta
         )
@@ -33,7 +33,7 @@ class Caplet(Product):
     def payoffLabels(self):
         return self._payoffLabels
 
-    def payoff(self, zcb, fwd):
+    def payoff(self, fwd):
         return self.delta * torch.maximum(fwd - self.strike, torch.tensor(0.0))
 
 
@@ -50,7 +50,7 @@ class Cap(Product):
 
         self._timeline = torch.linspace(float(start), float(expiry), int((expiry-start)/delta+1))
         self._defline = SampleDef(
-            zcbMats=self.timeline[1:],
+            discMats=self.timeline[1:],
             fwdFixings=self.timeline[:-1],
             fwdDeltas=self.delta * torch.ones_like(self.timeline[1:])
         )
@@ -68,7 +68,7 @@ class Cap(Product):
     def payoffLabels(self):
         return self._payoffLabels
 
-    def payoff(self, zcb, fwd):
+    def payoff(self, fwd):
         return self.delta * torch.maximum(fwd - self.strike, torch.tensor(0.0))
 
 
