@@ -52,7 +52,7 @@ class Cap(Product):
         self._defline = SampleDef(
             discMats=self.timeline[1:],
             fwdFixings=self.timeline[:-1],
-            fwdDeltas=self.delta * torch.ones_like(self.timeline[1:])
+            fwdDeltas=self.delta * torch.ones_like(self.timeline[:-1])
         )
         self._payoffLabels = [str(float(t)) + 'y' for t in self.timeline[:-1]]
 

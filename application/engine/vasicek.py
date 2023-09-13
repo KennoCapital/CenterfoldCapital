@@ -13,6 +13,7 @@ class Vasicek(Model):
         :param a:           Mean reversion rate
         :param b:           Long term mean rate
         :param sigma:       Volatility,
+        :param r0:          Initial value of instantaneous short rate
         :param use_ATS:     Use Affine Term Structure specification to calculate ZCB prices
         """
         self.a = a
@@ -78,7 +79,6 @@ class Vasicek(Model):
             TL.append(eulerTimeline)
         self._timeline = torch.unique(torch.concat(TL, dim=0), sorted=True)
 
-
         # Copy defline from product
         self._defline = prdDefline
 
@@ -88,6 +88,46 @@ class Vasicek(Model):
         # Allocate state variables (short rate) and fwd
         self._x = torch.full(size=(len(self.timeline), N), fill_value=torch.nan)
         self._fwd = torch.full(size=(len(self.defline.fwdFixings), N), fill_value=torch.nan)
+
+    def _exact_step(self, x, dt, Z):
+        """
+        Exact` simulation of the short rate, r(t), using
+            Eq. (3.46), p. 110 - Glasserman (2003)
+        """
+        return torch.exp(-self.a * dt) * x + \
+            self.b * (1 - torch.exp(-self.a * dt)) + \
+            self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
+
+    def _euler_step(self, x, dt, Z):
+        """
+        Euler discretiation of the short rate, r(t), using
+            p. 110 - Glasserman (2003)
+        """
+        return x + self.a * (self.b - x) * dt + self.sigma * torch.sqrt(dt) * Z
+
+    def simulate(self, Z):
+        # Decide function for performing simulation of state variable
+        if self.eulerTimeline is not None:
+            step_func = self._euler_step
+        else:
+            step_func = self._exact_step
+
+        # Calculate size of time steps
+        dt = self.timeline[1:] - self.timeline[:-1]
+
+        # Initialize state variables and set auxiliary index
+        self._x[0, :] = self.r0
+        idx = 0
+
+        # Iterate over model's timeline
+        for k, s in enumerate(self.timeline[1:]):
+            self._x[k+1, :] = step_func(self.x[k, :], dt[k], Z[k, :])
+
+            if s in self.defline.fwdFixings:
+                self._fwd[idx, :] = self.calc_fwd(self._x[k+1, :], 0, self.defline.fwdDeltas[idx])
+                idx += 1
+
+        return self._x, self._fwd
 
     def _calc_fwd_vol(self, t):
         """sigma(0,t) = sigma * exp{ -a * t }"""
@@ -144,41 +184,6 @@ class Vasicek(Model):
     def calc_cap(self, r0, t, delta, K):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
         return torch.sum(self.calc_cpl(r0, t, delta, K))
-
-    def _exact_step(self, x, dt, Z):
-        return torch.exp(-self.a * dt) * x + \
-            self.b * (1 - torch.exp(-self.a * dt)) + \
-            self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
-
-    def _euler_step(self, x, dt, Z):
-        return x + self.a * (self.b - x) * dt + self.sigma * torch.sqrt(dt) * Z
-
-    def simulate(self, Z):
-        """
-        `Exact` simulation of the short rate, r(t) using
-            Eq. (3.46), p. 110 - Glasserman (2003)
-        Euler discretiation of the short rate, r(t) using
-        """
-
-        if self.eulerTimeline is not None:
-            step_func = self._euler_step
-        else:
-            step_func = self._exact_step
-
-        dt = self.timeline[1:] - self.timeline[:-1]
-
-        self._x[0, :] = self.r0
-        idx = 0
-
-        # Iterate over model's timeline
-        for k, s in enumerate(self.timeline[1:]):
-            self._x[k+1, :] = step_func(self.x[k, :], dt[k], Z[k, :])
-
-            if s in self.defline.fwdFixings:
-                self._fwd[idx, :] = self.calc_fwd(self._x[k+1, :], 0, self.defline.fwdDeltas[idx])
-                idx += 1
-
-        return self._x, self._fwd
 
 
 def calibrate_vasicek(maturities, strikes, market_prices, a=1.00, b=0.05, sigma=0.2, r0=0.05, delta=0.25):

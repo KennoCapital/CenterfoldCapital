@@ -6,9 +6,9 @@ import torch
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
-seed = None
+seed = 1234
 
-N = 100000
+N = 1024
 
 a = torch.tensor(0.86)
 b = torch.tensor(0.09)

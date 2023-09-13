@@ -1,7 +1,6 @@
 import torch
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
-from copy import copy
 
 
 class RNG:
@@ -157,35 +156,22 @@ def mcSim(
         hTL:    torch.Tensor or None = None,
         eTL:    torch.Tensor or None = None):
 
-    cModel = copy(model)
-    cRng = copy(rng)
-
     # Allocate and initialize results, model and rng
-    cModel.allocate(prd.timeline, prd.defline, N, hTL, eTL)
+    model.allocate(prd.timeline, prd.defline, N, hTL, eTL)
 
     # Set dimensions
-    cRng.N = N
-    cRng.M = len(cModel.timeline) - 1
+    rng.N = N
+    rng.M = len(model.timeline) - 1
 
     # Draw random variables
-    Z = cRng.gaussMat()
+    Z = rng.gaussMat()
 
     # Simulate state variables and fwd
-    X, fwd = cModel.simulate(Z)
+    X, fwd = model.simulate(Z)
 
     # Calculate payoffs
     payoff = prd.payoff(fwd)
-
-    payoff_pv = cModel.disc_curve * payoff
-
+    payoff_pv = model.disc_curve * payoff
     npv = torch.sum(payoff_pv, dim=0)
-
     return torch.mean(npv)
-
-
-
-
-
-
-
 
