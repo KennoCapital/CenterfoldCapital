@@ -71,22 +71,3 @@ class Cap(Product):
     def payoff(self, fwd):
         return self.delta * torch.maximum(fwd - self.strike, torch.tensor(0.0))
 
-
-
-if __name__ == '__main__':
-    cpl = Caplet(
-        start=torch.tensor(0.25),
-        strike=torch.tensor(0.05),
-        expiry=torch.tensor(1.0),
-        delta=torch.tensor(0.25)
-    )
-
-    cap = Cap(
-        start=torch.tensor(0.25),
-        strike=torch.tensor(0.05),
-        expiry=torch.tensor(1.0),
-        delta=torch.tensor(0.25)
-    )
-
-    print(cap.timeline)
-    print(cap.defline)

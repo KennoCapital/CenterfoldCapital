@@ -96,6 +96,18 @@ class Model(ABC):
 
     @property
     @abstractmethod
+    def hedgeTimeline(self):
+        """Timeline with required hedge-points"""
+        pass
+
+    @property
+    @abstractmethod
+    def eulerTimeline(self):
+        """Timeline with additional timepoints for euler discretization"""
+        pass
+
+    @property
+    @abstractmethod
     def defline(self):
         """Defline (SampleDef) of product"""
         pass
@@ -119,7 +131,12 @@ class Model(ABC):
         pass
 
     @abstractmethod
-    def allocate(self, prdTimeline: torch.Tensor, prdDefline: SampleDef, N):
+    def allocate(self,
+                 prdTimeline:   torch.Tensor,
+                 prdDefline:    SampleDef,
+                 N:             int,
+                 hedgeTimeline: torch.Tensor,
+                 eulerTimeline: torch.Tensor):
         """Allocator / setter for prdTimeline and prdDefline"""
         pass
 
@@ -136,13 +153,15 @@ def mcSim(
         prd:    Product,
         model:  Model,
         rng:    RNG,
-        N:      int):
+        N:      int,
+        hTL:    torch.Tensor or None = None,
+        eTL:    torch.Tensor or None = None):
 
     cModel = copy(model)
     cRng = copy(rng)
 
     # Allocate and initialize results, model and rng
-    cModel.allocate(prd.timeline, prd.defline, N)
+    cModel.allocate(prd.timeline, prd.defline, N, hTL, eTL)
 
     # Set dimensions
     cRng.N = N
@@ -151,7 +170,7 @@ def mcSim(
     # Draw random variables
     Z = cRng.gaussMat()
 
-    # Simulate state variables, and calculate zcb and fwd
+    # Simulate state variables and fwd
     X, fwd = cModel.simulate(Z)
 
     # Calculate payoffs

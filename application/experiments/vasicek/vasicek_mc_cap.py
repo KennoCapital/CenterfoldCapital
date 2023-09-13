@@ -6,9 +6,9 @@ import torch
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
-seed = 1234
+seed = None
 
-N = 1024
+N = 100000
 
 a = torch.tensor(0.86)
 b = torch.tensor(0.09)
@@ -18,6 +18,9 @@ r0 = torch.tensor(0.08)
 start = torch.tensor(0.25)
 delta = torch.tensor(0.25)
 expiry = torch.tensor(1.0)
+
+hTl = torch.linspace(0.0, 1.0, 101)     # Hedge time points
+eTL = torch.linspace(0.0, 1.0, 1001)    # Euler time steps
 
 t = torch.linspace(float(delta), float(expiry), int(expiry/delta))
 
@@ -35,7 +38,7 @@ prd = Cap(
 )
 
 print(
-    mcSim(prd, model, rng, N)
+    mcSim(prd, model, rng, N, hTl, eTL)
 )
 
 print(

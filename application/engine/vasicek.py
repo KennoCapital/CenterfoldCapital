@@ -27,11 +27,21 @@ class Vasicek(Model):
         self._disc_curve = None
         self._x = None
         self._fwd = None
+        self._hedgeTimeline = None
+        self._eulerTimeline = None
 
 
     @property
     def timeline(self):
         return self._timeline
+
+    @property
+    def hedgeTimeline(self):
+        return self._hedgeTimeline
+
+    @property
+    def eulerTimeline(self):
+        return self._eulerTimeline
 
     @property
     def defline(self):
@@ -49,11 +59,27 @@ class Vasicek(Model):
     def fwd(self):
         return self._fwd
 
-    def allocate(self, prdTimeline: torch.Tensor, prdDefline: SampleDef, N):
-        self._timeline = prdTimeline
+    def allocate(self,
+                 prdTimeline:   torch.Tensor,
+                 prdDefline:    SampleDef,
+                 N:             int,
+                 hedgeTimeline: torch.Tensor or None = None,
+                 eulerTimeline: torch.Tensor or None = None):
 
-        if 0.0 not in prdTimeline:  # Today on timeline
-            self._timeline = torch.concat([torch.tensor([0.0]), self._timeline], dim=0)
+        # Construct timeline
+        TL = [prdTimeline]
+        if 0.0 not in prdTimeline:
+            TL.append(torch.tensor([0.0]))
+        if hedgeTimeline is not None:
+            self._hedgeTimeline = hedgeTimeline
+            TL.append(hedgeTimeline)
+        if eulerTimeline is not None:
+            self._eulerTimeline = eulerTimeline
+            TL.append(eulerTimeline)
+        self._timeline = torch.unique(torch.concat(TL, dim=0), sorted=True)
+
+
+        # Copy defline from product
         self._defline = prdDefline
 
         # Calculate discount curve
@@ -119,11 +145,25 @@ class Vasicek(Model):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
         return torch.sum(self.calc_cpl(r0, t, delta, K))
 
+    def _exact_step(self, x, dt, Z):
+        return torch.exp(-self.a * dt) * x + \
+            self.b * (1 - torch.exp(-self.a * dt)) + \
+            self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
+
+    def _euler_step(self, x, dt, Z):
+        return x + self.a * (self.b - x) * dt + self.sigma * torch.sqrt(dt) * Z
+
     def simulate(self, Z):
         """
         `Exact` simulation of the short rate, r(t) using
-        Eq.(3.46), p. 110 - Glasserman (2003):
+            Eq. (3.46), p. 110 - Glasserman (2003)
+        Euler discretiation of the short rate, r(t) using
         """
+
+        if self.eulerTimeline is not None:
+            step_func = self._euler_step
+        else:
+            step_func = self._exact_step
 
         dt = self.timeline[1:] - self.timeline[:-1]
 
@@ -132,22 +172,13 @@ class Vasicek(Model):
 
         # Iterate over model's timeline
         for k, s in enumerate(self.timeline[1:]):
-            self._x[k+1, :] = torch.exp(-self.a * dt[k]) * self._x[k, :] + \
-                              self.b * (1 - torch.exp(-self.a * dt[k])) + \
-                              self.sigma * Z[k, ] * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt[k])))
+            self._x[k+1, :] = step_func(self.x[k, :], dt[k], Z[k, :])
 
             if s in self.defline.fwdFixings:
                 self._fwd[idx, :] = self.calc_fwd(self._x[k+1, :], 0, self.defline.fwdDeltas[idx])
                 idx += 1
 
         return self._x, self._fwd
-
-    def simulate_euler(self, r0, Z, dt):
-        """
-        p. 110 - Glasserman (2003)
-        """
-        # return r0 + self.a * (self.b - r0) * dt + self.sigma * torch.sqrt(dt) * Z
-        raise NotImplementedError
 
 
 def calibrate_vasicek(maturities, strikes, market_prices, a=1.00, b=0.05, sigma=0.2, r0=0.05, delta=0.25):
