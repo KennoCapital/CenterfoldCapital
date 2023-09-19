@@ -19,7 +19,6 @@ start = torch.tensor(0.25)
 delta = torch.tensor(0.25)
 expiry = torch.tensor(1.0)
 
-hTl = torch.linspace(0.0, 1.0, 101)     # Hedge time points
 eTL = torch.linspace(0.0, 1.0, 1001)    # Euler time steps
 
 t = torch.linspace(float(delta), float(expiry), int(expiry/delta))
@@ -38,10 +37,9 @@ prd = Cap(
 )
 
 print(
-    mcSim(prd, model, rng, N, hTl, eTL)
+    mcSim(prd, model, rng, N)
 )
 
 print(
     model.calc_cap(r0, t, delta, swap_rate)
 )
-

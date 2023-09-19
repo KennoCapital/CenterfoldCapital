@@ -1,7 +1,6 @@
 import torch
-from dataclasses import dataclass
+from application.engine.products import Scenario, Product, SampleDef
 from abc import ABC, abstractmethod
-
 
 class RNG:
     """Random Number Generator"""
@@ -48,55 +47,12 @@ class RNG:
             return torch.concat([U, 1-U], dim=1)
         return torch.rand(size=(self.N, ), generator=self.gen)
 
-@dataclass
-class SampleDef:
-    """
-        Definition of what must be sampled (on a specific event date)
-            - discMats      Maturities of the discounts on this event date, i.e. `T` in P(0, T)
-            - fwdFixings    Fixing date of forwards. The `T` in F(t, T, T+delta)
-            - fwdDeltas     Accuracy period of each forward, `delta` in F(,t, T, T+delta)
-
-    """
-    discMats:   torch.Tensor
-    fwdFixings: torch.Tensor
-    fwdDeltas:  torch.Tensor
-
-
-
-class Product(ABC):
-
-    @property
-    @abstractmethod
-    def timeline(self):
-        pass
-
-    @property
-    @abstractmethod
-    def defline(self):
-        pass
-
-    @property
-    @abstractmethod
-    def payoffLabels(self):
-        """Labeling of the payoffs for a product"""
-        pass
-
-    @abstractmethod
-    def payoff(self, fwd):
-        pass
-
 
 class Model(ABC):
     @property
     @abstractmethod
     def timeline(self):
         """Timeline of product"""
-        pass
-
-    @property
-    @abstractmethod
-    def hedgeTimeline(self):
-        """Timeline with required hedge-points"""
         pass
 
     @property
@@ -125,18 +81,18 @@ class Model(ABC):
 
     @property
     @abstractmethod
-    def fwd(self):
-        """FWD sampled according to the defline"""
+    def paths(self):
+        """Returns the samples of the market variables"""
         pass
 
     @abstractmethod
     def allocate(self,
-                 prdTimeline:   torch.Tensor,
-                 prdDefline:    SampleDef,
-                 N:             int,
-                 hedgeTimeline: torch.Tensor,
-                 eulerTimeline: torch.Tensor):
-        """Allocator / setter for prdTimeline and prdDefline"""
+                 prdTimeline:       torch.Tensor,
+                 prdDefline:        list[SampleDef],
+                 prdPaymentDates:   torch.Tensor,
+                 N:                 int,
+                 eulerTimeline:     torch.Tensor):
+        """Method for allocating objects and performing pre-calculations"""
         pass
 
     @abstractmethod
@@ -144,20 +100,18 @@ class Model(ABC):
         pass
 
     @abstractmethod
-    def simulate(self, Z):
+    def simulate(self, Z: torch.Tensor):
         pass
-
 
 def mcSim(
         prd:    Product,
         model:  Model,
         rng:    RNG,
         N:      int,
-        hTL:    torch.Tensor or None = None,
-        eTL:    torch.Tensor or None = None):
+        eTL:    torch.Tensor = torch.tensor([])):
 
     # Allocate and initialize results, model and rng
-    model.allocate(prd.timeline, prd.defline, N, hTL, eTL)
+    model.allocate(prd.timeline, prd.defline, prd.paymentDates, N, eTL)
 
     # Set dimensions
     rng.N = N
@@ -167,11 +121,17 @@ def mcSim(
     Z = rng.gaussMat()
 
     # Simulate state variables and fwd
-    X, fwd = model.simulate(Z)
+    paths = model.simulate(Z)
 
     # Calculate payoffs
-    payoff = prd.payoff(fwd)
+    payoff = prd.payoff(paths)
+
+    # Discount to present value
     payoff_pv = model.disc_curve * payoff
-    npv = torch.sum(payoff_pv, dim=0)
+
+    # Sum across times
+    npv = torch.sum(payoff_pv, dim=1)
+
+    # Monte Carlo Estimator
     return torch.mean(npv)
 

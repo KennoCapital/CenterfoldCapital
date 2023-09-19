@@ -1,8 +1,8 @@
 import torch
 import scipy
 from application.utils.torch_utils import N_cdf
-from application.engine.mcBase import Model, SampleDef
-
+from application.engine.mcBase import Model
+from application.engine.products import forward, swap, swap_rate, SampleDef, Sample
 
 class Vasicek(Model):
     """
@@ -27,18 +27,13 @@ class Vasicek(Model):
         self._defline = None
         self._disc_curve = None
         self._x = None
-        self._fwd = None
-        self._hedgeTimeline = None
+        self._paths = None
         self._eulerTimeline = None
-
+        self._tl_idx_mkt = None
 
     @property
     def timeline(self):
         return self._timeline
-
-    @property
-    def hedgeTimeline(self):
-        return self._hedgeTimeline
 
     @property
     def eulerTimeline(self):
@@ -57,37 +52,37 @@ class Vasicek(Model):
         return self._x
 
     @property
-    def fwd(self):
-        return self._fwd
+    def paths(self):
+        return self._paths
 
     def allocate(self,
-                 prdTimeline:   torch.Tensor,
-                 prdDefline:    SampleDef,
-                 N:             int,
-                 hedgeTimeline: torch.Tensor or None = None,
-                 eulerTimeline: torch.Tensor or None = None):
+                 prdTimeline:       torch.Tensor,
+                 defline:           list[SampleDef],
+                 prdPaymentDates:   torch.Tensor,
+                 N:                 int,
+                 eulerTimeline:     torch.Tensor = torch.tensor([])):
 
-        # Construct timeline
-        TL = [prdTimeline]
-        if 0.0 not in prdTimeline:
-            TL.append(torch.tensor([0.0]))
-        if hedgeTimeline is not None:
-            self._hedgeTimeline = hedgeTimeline
-            TL.append(hedgeTimeline)
-        if eulerTimeline is not None:
-            self._eulerTimeline = eulerTimeline
-            TL.append(eulerTimeline)
+        TL = [torch.tensor([0.0]), prdTimeline, eulerTimeline]
+        self._eulerTimeline = eulerTimeline
         self._timeline = torch.unique(torch.concat(TL, dim=0), sorted=True)
 
-        # Copy defline from product
-        self._defline = prdDefline
+        self._defline = defline
 
-        # Calculate discount curve
-        self._disc_curve = self.calc_zcb(self.r0, prdDefline.discMats).reshape(-1, 1)
+        self._disc_curve = self.calc_zcb(self.r0, prdPaymentDates)
 
-        # Allocate state variables (short rate) and fwd
+        # Allocate space for state and paths (market variables)
+        n = len(prdTimeline)
         self._x = torch.full(size=(len(self.timeline), N), fill_value=torch.nan)
-        self._fwd = torch.full(size=(len(self.defline.fwdFixings), N), fill_value=torch.nan)
+
+        self._paths = [
+            Sample(
+                fwd=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].fwdRates))],
+                irs=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].irs))]
+            ) for j in range(n)
+        ]
+
+        # Specify indices of when to compute market variables
+        self._tl_idx_mkt = [t in prdTimeline for t in self.timeline]
 
     def _exact_step(self, x, dt, Z):
         """
@@ -107,7 +102,7 @@ class Vasicek(Model):
 
     def simulate(self, Z):
         # Decide function for performing simulation of state variable
-        if self.eulerTimeline is not None:
+        if len(self.eulerTimeline) > 0:
             step_func = self._euler_step
         else:
             step_func = self._exact_step
@@ -120,14 +115,23 @@ class Vasicek(Model):
         idx = 0
 
         # Iterate over model's timeline
-        for k, s in enumerate(self.timeline[1:]):
+        for k in range(len(self.timeline[1:])):
+            # State variable
             self._x[k+1, :] = step_func(self.x[k, :], dt[k], Z[k, :])
 
-            if s in self.defline.fwdFixings:
-                self._fwd[idx, :] = self.calc_fwd(self._x[k+1, :], 0, self.defline.fwdDeltas[idx])
-                idx += 1
+            # Samples (market variables)
+            if self._tl_idx_mkt[k+1]:
+                for j in range(len(self.paths[idx].fwd)):
+                    self._paths[idx].fwd[j] = self.calc_fwd(self._x[k+1, :], 0, self.defline[idx].fwdRates[j].delta)
 
-        return self._x, self._fwd
+                for j in range(len(self.paths[idx].irs)):
+                    self._paths[idx].irs[j] = self.calc_swap(self._x[k+1, :],
+                                                             0,
+                                                             self.defline[idx].irs[j].delta,
+                                                             self.defline[idx].irs[j].fixRate,
+                                                             self.defline[idx].irs[j].Notional)
+                idx += 1
+        return self.paths
 
     def _calc_fwd_vol(self, t):
         """sigma(0,t) = sigma * exp{ -a * t }"""
@@ -153,15 +157,17 @@ class Vasicek(Model):
         )
 
     def calc_fwd(self, r0, t, delta):
-        """F(0; t, t+delta) = 1/delta * (P(0,t) / P(0,t+delta) - 1)"""
         zcb_t = self.calc_zcb(r0, t)
         zcb_tdt = self.calc_zcb(r0, t + delta)
-        return 1 / delta * (zcb_t / zcb_tdt - 1)
+        return forward(zcb_t, zcb_tdt, delta)
+
+    def calc_swap(self, r0, t, delta, K=None, N=torch.tensor(1.0)):
+        zcb = self.calc_zcb(r0, t)
+        return swap(zcb, delta, K, N)
 
     def calc_swap_rate(self, r0, t, delta):
-        """R(0) = [ P(0,T0) - P(0,Tn) ] / [delta * sum_{i=1}^n P(0,Ti) ]"""
         zcb = self.calc_zcb(r0, t)
-        return (zcb[0] - zcb[-1]) / (delta * torch.sum(zcb[1:]))
+        return swap_rate(zcb, delta)
 
     def calc_cpl(self, r0, t, delta, K):
         """
