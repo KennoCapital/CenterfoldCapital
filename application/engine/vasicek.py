@@ -1,24 +1,137 @@
 import torch
 import scipy
 from application.utils.torch_utils import N_cdf
-from application.engine.model import Model
-
+from application.engine.mcBase import Model
+from application.engine.products import forward, swap, swap_rate, SampleDef, Sample
 
 class Vasicek(Model):
     """
         dr(t) = a*[b-r(t)]*dt + sigma*dW(t)
     """
-    def __init__(self, a, b, sigma, use_ATS=False):
+    def __init__(self, a, b, sigma, r0=None, use_ATS=False):
         """
         :param a:           Mean reversion rate
         :param b:           Long term mean rate
         :param sigma:       Volatility,
+        :param r0:          Initial value of instantaneous short rate
         :param use_ATS:     Use Affine Term Structure specification to calculate ZCB prices
         """
         self.a = a
         self.b = b
         self.sigma = sigma
+        self.r0 = r0
         self.use_ATS = use_ATS
+
+        # Attributes for Monte Carlo
+        self._timeline = None
+        self._defline = None
+        self._disc_curve = None
+        self._x = None
+        self._paths = None
+        self._eulerTimeline = None
+        self._tl_idx_mkt = None
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def eulerTimeline(self):
+        return self._eulerTimeline
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def disc_curve(self):
+        return self._disc_curve
+
+    @property
+    def x(self):
+        return self._x
+
+    @property
+    def paths(self):
+        return self._paths
+
+    def allocate(self,
+                 prdTimeline:       torch.Tensor,
+                 defline:           list[SampleDef],
+                 prdPaymentDates:   torch.Tensor,
+                 N:                 int,
+                 eulerTimeline:     torch.Tensor = torch.tensor([])):
+
+        TL = [torch.tensor([0.0]), prdTimeline, eulerTimeline]
+        self._eulerTimeline = eulerTimeline
+        self._timeline = torch.unique(torch.concat(TL, dim=0), sorted=True)
+
+        self._defline = defline
+
+        self._disc_curve = self.calc_zcb(self.r0, prdPaymentDates)
+
+        # Allocate space for state and paths (market variables)
+        n = len(prdTimeline)
+        self._x = torch.full(size=(len(self.timeline), N), fill_value=torch.nan)
+
+        self._paths = [
+            Sample(
+                fwd=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].fwdRates))],
+                irs=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].irs))]
+            ) for j in range(n)
+        ]
+
+        # Specify indices of when to compute market variables
+        self._tl_idx_mkt = [t in prdTimeline for t in self.timeline]
+
+    def _exact_step(self, x, dt, Z):
+        """
+        Exact` simulation of the short rate, r(t), using
+            Eq. (3.46), p. 110 - Glasserman (2003)
+        """
+        return torch.exp(-self.a * dt) * x + \
+            self.b * (1 - torch.exp(-self.a * dt)) + \
+            self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
+
+    def _euler_step(self, x, dt, Z):
+        """
+        Euler discretiation of the short rate, r(t), using
+            p. 110 - Glasserman (2003)
+        """
+        return x + self.a * (self.b - x) * dt + self.sigma * torch.sqrt(dt) * Z
+
+    def simulate(self, Z):
+        # Decide function for performing simulation of state variable
+        if len(self.eulerTimeline) > 0:
+            step_func = self._euler_step
+        else:
+            step_func = self._exact_step
+
+        # Calculate size of time steps
+        dt = self.timeline[1:] - self.timeline[:-1]
+
+        # Initialize state variables and set auxiliary index
+        self._x[0, :] = self.r0
+        idx = 0
+
+        # Iterate over model's timeline
+        for k in range(len(self.timeline[1:])):
+            # State variable
+            self._x[k+1, :] = step_func(self.x[k, :], dt[k], Z[k, :])
+
+            # Samples (market variables)
+            if self._tl_idx_mkt[k+1]:
+                for j in range(len(self.paths[idx].fwd)):
+                    self._paths[idx].fwd[j] = self.calc_fwd(self._x[k+1, :], 0, self.defline[idx].fwdRates[j].delta)
+
+                for j in range(len(self.paths[idx].irs)):
+                    self._paths[idx].irs[j] = self.calc_swap(self._x[k+1, :],
+                                                             0,
+                                                             self.defline[idx].irs[j].delta,
+                                                             self.defline[idx].irs[j].fixRate,
+                                                             self.defline[idx].irs[j].Notional)
+                idx += 1
+        return self.paths
 
     def _calc_fwd_vol(self, t):
         """sigma(0,t) = sigma * exp{ -a * t }"""
@@ -44,15 +157,17 @@ class Vasicek(Model):
         )
 
     def calc_fwd(self, r0, t, delta):
-        """F(0; t, t+delta) = 1/delta * (P(0,t) / P(0,t+delta) - 1)"""
         zcb_t = self.calc_zcb(r0, t)
         zcb_tdt = self.calc_zcb(r0, t + delta)
-        return 1 / delta * (zcb_t / zcb_tdt - 1)
+        return forward(zcb_t, zcb_tdt, delta)
+
+    def calc_swap(self, r0, t, delta, K=None, N=torch.tensor(1.0)):
+        zcb = self.calc_zcb(r0, t)
+        return swap(zcb, delta, K, N)
 
     def calc_swap_rate(self, r0, t, delta):
-        """R(0) = [ P(0,T0) - P(0,Tn) ] / [delta * sum_{i=1}^n P(0,Ti) ]"""
         zcb = self.calc_zcb(r0, t)
-        return (zcb[0] - zcb[-1]) / (delta * torch.sum(zcb[1:]))
+        return swap_rate(zcb, delta)
 
     def calc_cpl(self, r0, t, delta, K):
         """
@@ -75,20 +190,6 @@ class Vasicek(Model):
     def calc_cap(self, r0, t, delta, K):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
         return torch.sum(self.calc_cpl(r0, t, delta, K))
-
-    def simulate(self, r0, Z, dt):
-        """
-        `Exact` simulation of the short rate, r(t) using
-        Eq.(3.46), p. 110 - Glasserman (2003):
-        """
-        return torch.exp(-self.a * dt) * r0 + self.b * (1 - torch.exp(-self.a * dt)) + \
-            self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
-
-    def simulate_euler(self, r0, Z, dt):
-        """
-        p. 110 - Glasserman (2003)
-        """
-        return r0 + self.a * (self.b - r0) * dt + self.sigma * torch.sqrt(dt) * Z
 
 
 def calibrate_vasicek(maturities, strikes, market_prices, a=1.00, b=0.05, sigma=0.2, r0=0.05, delta=0.25):
