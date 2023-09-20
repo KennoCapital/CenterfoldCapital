@@ -1,5 +1,5 @@
 import torch
-from application.engine.products import Scenario, Product, SampleDef
+from application.engine.products import Product, SampleDef
 from abc import ABC, abstractmethod
 
 class RNG:
@@ -134,4 +134,3 @@ def mcSim(
 
     # Monte Carlo Estimator
     return torch.mean(npv)
-

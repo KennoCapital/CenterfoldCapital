@@ -1,33 +1,7 @@
 import torch
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
-
-
-def max0(x):
-    return torch.maximum(x, torch.tensor(0.0))
-
-
-def annuity():
-    raise NotImplementedError
-
-
-def forward(zcb1, zcb2, delta):
-    """F(t,T,T+delta) = 1 / delta * ( P(t,T) / P(t,T+delta) - 1 )"""
-    return 1 / delta * (zcb1 / zcb2 - 1)
-
-
-def swap(zcb:       torch.Tensor,
-         delta:     torch.Tensor,
-         K:         torch.Tensor or None = None,
-         N:         torch.Tensor = torch.tensor(1.0)):
-    """S(0) = N * [ P(0,T0) - P(0,Tn) - K * delta * sum_{i=1}^n P(0,Ti) ]"""
-    if K is None:
-        K = swap_rate(zcb, delta)
-    return N * (zcb[0] - zcb[-1] - K * delta * torch.sum(zcb[1:]))
-
-def swap_rate(zcb: torch.Tensor, delta: torch.Tensor):
-    """R(0) = [ P(0,T0) - P(0,Tn) ] / [delta * sum_{i=1}^n P(0,Ti) ]"""
-    return (zcb[0] - zcb[-1]) / (delta * torch.sum(zcb[1:]))
+from application.utils.torch_utils import max0
 
 
 @dataclass
@@ -36,6 +10,10 @@ class InterestRateSwapDef:
     fixingDates:   torch.Tensor
     fixRate:       torch.Tensor
     notional:      torch.Tensor = torch.tensor(1.0)
+
+    def __post_init__(self):
+        self.delta = (self.fixingDates[1] - self.fixingDates[0]).view(1)  # Assumes constant delta
+        self.t = torch.concat([self.fixingDates, self.fixingDates[-1] + self.delta], dim=0).reshape(-1, 1)
 
 
 @dataclass
@@ -102,7 +80,7 @@ class Caplet(Product):
         self.start = start
         self.delta = delta
 
-        self._timeline = start
+        self._timeline = start.view(1)
         self._defline = [SampleDef(
             fwdRates=[ForwardRateDef(start, start + delta)],
             irs=[]
@@ -143,10 +121,11 @@ class Cap(Product):
         self.delta = delta
 
         self._timeline = torch.linspace(float(start), float(expiry-delta), int((expiry-delta-start)/delta+1))
-        self._defline = [SampleDef(
-            fwdRates=[ForwardRateDef(t, t + delta)],
-            irs=[]
-        ) for t in self.timeline]
+        self._defline = [
+            SampleDef(
+                fwdRates=[ForwardRateDef(t, t + delta)],
+                irs=[]
+            ) for t in self.timeline]
         self._payoffLabels = [f'({t}, {t+delta})' for t in self.timeline]
         self._paymentDates = self.timeline + delta
 
@@ -168,4 +147,59 @@ class Cap(Product):
 
     def payoff(self, paths):
         res = [self.delta * max0(s.fwd[0].reshape(-1, 1) - self.strike) for s in paths]
+        return torch.concat(res, dim=1)
+
+
+class EuropeanPayerSwaption(Product):
+    def __init__(self,
+                 strike:                torch.Tensor,
+                 exerciseDate:          torch.Tensor,
+                 delta:                 torch.Tensor,
+                 swapLastFixingDate:    torch.Tensor,
+                 swapFirstFixingDate:   torch.Tensor = torch.tensor([]),
+                 notional:              torch.Tensor = torch.tensor([1.0])):
+        self.strike = strike
+        self.exerciseDate = exerciseDate
+        self.swapLastFixingDate = swapLastFixingDate
+        self.delta = delta
+        self.swapFirstFixingDate = swapFirstFixingDate
+        self.notional = notional
+
+        if len(swapFirstFixingDate) == 0 or swapFirstFixingDate is None:
+            self.swapFirstFixingDate = exerciseDate
+
+        self._timeline = exerciseDate.view(1)
+        swapFixingDates = torch.linspace(
+            float(self.swapFirstFixingDate),
+            float(self.swapLastFixingDate),
+            int((self.swapLastFixingDate - self.swapFirstFixingDate) / self.delta) + 1
+        )
+
+        self._defline = [
+            SampleDef(
+                fwdRates=[],
+                irs=[InterestRateSwapDef(fixingDates=swapFixingDates, fixRate=self.strike, notional=self.notional)]
+            )
+        ]
+        self._payoffLabels = [f'{exerciseDate}']
+        self._paymentDates = exerciseDate
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def paymentDates(self):
+        return self._paymentDates
+
+    @property
+    def payoffLabels(self):
+        return self._payoffLabels
+
+    def payoff(self, paths):
+        res = [max0(s.irs[0].reshape(-1, 1)) for s in paths]
         return torch.concat(res, dim=1)

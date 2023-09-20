@@ -2,7 +2,9 @@ import torch
 import scipy
 from application.utils.torch_utils import N_cdf
 from application.engine.mcBase import Model
-from application.engine.products import forward, swap, swap_rate, SampleDef, Sample
+from application.engine.products import SampleDef, Sample
+from application.engine.linearProducts import forward, swap, swap_rate
+
 
 class Vasicek(Model):
     """
@@ -73,7 +75,6 @@ class Vasicek(Model):
         # Allocate space for state and paths (market variables)
         n = len(prdTimeline)
         self._x = torch.full(size=(len(self.timeline), N), fill_value=torch.nan)
-
         self._paths = [
             Sample(
                 fwd=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].fwdRates))],
@@ -115,21 +116,23 @@ class Vasicek(Model):
         idx = 0
 
         # Iterate over model's timeline
-        for k in range(len(self.timeline[1:])):
+        for k, s in enumerate(self.timeline[1:]):
             # State variable
             self._x[k+1, :] = step_func(self.x[k, :], dt[k], Z[k, :])
 
             # Samples (market variables)
             if self._tl_idx_mkt[k+1]:
                 for j in range(len(self.paths[idx].fwd)):
-                    self._paths[idx].fwd[j] = self.calc_fwd(self._x[k+1, :], 0, self.defline[idx].fwdRates[j].delta)
+                    self._paths[idx].fwd[j] = self.calc_fwd(r0=self._x[k+1, :],
+                                                            t=0,
+                                                            delta=self.defline[idx].fwdRates[j].delta)
 
                 for j in range(len(self.paths[idx].irs)):
-                    self._paths[idx].irs[j] = self.calc_swap(self._x[k+1, :],
-                                                             0,
-                                                             self.defline[idx].irs[j].delta,
-                                                             self.defline[idx].irs[j].fixRate,
-                                                             self.defline[idx].irs[j].Notional)
+                    self._paths[idx].irs[j] = self.calc_swap(r0=self._x[k+1, :],
+                                                             t=self.defline[idx].irs[j].t - s,
+                                                             delta=self.defline[idx].irs[j].delta,
+                                                             K=self.defline[idx].irs[j].fixRate,
+                                                             N=self.defline[idx].irs[j].notional)
                 idx += 1
         return self.paths
 
@@ -162,10 +165,12 @@ class Vasicek(Model):
         return forward(zcb_t, zcb_tdt, delta)
 
     def calc_swap(self, r0, t, delta, K=None, N=torch.tensor(1.0)):
+        """t = T_0, ..., T_n (future dates)"""
         zcb = self.calc_zcb(r0, t)
         return swap(zcb, delta, K, N)
 
     def calc_swap_rate(self, r0, t, delta):
+        """t = T_0, ..., T_n (future dates)"""
         zcb = self.calc_zcb(r0, t)
         return swap_rate(zcb, delta)
 
