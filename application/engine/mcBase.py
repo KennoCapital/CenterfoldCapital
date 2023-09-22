@@ -103,6 +103,8 @@ class Model(ABC):
     def simulate(self, Z: torch.Tensor):
         pass
 
+
+
 def mcSim(
         prd:    Product,
         model:  Model,
@@ -133,5 +135,5 @@ def mcSim(
     npv = torch.sum(payoff_pv, dim=1)
 
     # Monte Carlo Estimator
-    return torch.mean(npv)
+    return torch.mean(npv), paths
 
