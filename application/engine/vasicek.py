@@ -1,7 +1,7 @@
 import torch
 import scipy
 from application.utils.torch_utils import N_cdf
-from application.engine.mcBase import Model
+from application.engine.mcBase import Model, MEASURES
 from application.engine.products import SampleDef, Sample
 from application.engine.linearProducts import forward, swap, swap_rate
 
@@ -10,24 +10,35 @@ class Vasicek(Model):
     """
         dr(t) = a*[b-r(t)]*dt + sigma*dW(t)
     """
-    def __init__(self, a, b, sigma, r0=None, use_ATS=False):
+    def __init__(self,
+                 a,
+                 b,
+                 sigma,
+                 r0=None,
+                 use_ATS: bool = False,
+                 measure: str = 'risk_neutral'):
         """
-        :param a:           Mean reversion rate
-        :param b:           Long term mean rate
-        :param sigma:       Volatility,
-        :param r0:          Initial value of instantaneous short rate
-        :param use_ATS:     Use Affine Term Structure specification to calculate ZCB prices
+        :param a:               Mean reversion rate
+        :param b:               Long term mean rate
+        :param sigma:           Volatility,
+        :param r0:              Initial value of instantaneous short rate
+        :param measure:         Specifies which measure to simulate under
+        :param use_ATS:         Use Affine Term Structure specification to calculate ZCB prices
         """
         self.a = a
         self.b = b
         self.sigma = sigma
         self.r0 = r0
+        self.measure = measure
         self.use_ATS = use_ATS
+
+        if measure not in MEASURES:
+            raise NotImplementedError(f'The measure "{measure}" is not implemented. '
+                                      f'Use one of the following measures: {MEASURES}')
 
         # Attributes for Monte Carlo
         self._timeline = None
         self._defline = None
-        self._disc_curve = None
         self._x = None
         self._paths = None
         self._eulerTimeline = None
@@ -46,10 +57,6 @@ class Vasicek(Model):
         return self._defline
 
     @property
-    def disc_curve(self):
-        return self._disc_curve
-
-    @property
     def x(self):
         return self._x
 
@@ -60,17 +67,14 @@ class Vasicek(Model):
     def allocate(self,
                  prdTimeline:       torch.Tensor,
                  defline:           list[SampleDef],
-                 prdPaymentDates:   torch.Tensor,
                  N:                 int,
-                 eulerTimeline:     torch.Tensor = torch.tensor([])):
+                 dTimeline:         torch.Tensor = torch.tensor([])):
 
-        TL = [torch.tensor([0.0]), prdTimeline, eulerTimeline]
-        self._eulerTimeline = eulerTimeline
+        TL = [torch.tensor([0.0]), prdTimeline, dTimeline]
+        self._eulerTimeline = dTimeline
         self._timeline = torch.unique(torch.concat(TL, dim=0), sorted=True)
 
         self._defline = defline
-
-        self._disc_curve = self.calc_zcb(self.r0, prdPaymentDates)
 
         # Allocate space for state and paths (market variables)
         n = len(prdTimeline)
@@ -78,7 +82,9 @@ class Vasicek(Model):
         self._paths = [
             Sample(
                 fwd=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].fwdRates))],
-                irs=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].irs))]
+                irs=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].irs))],
+                disc=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].discMats))],
+                numeraire=torch.full(size=(N, ), fill_value=torch.nan) if defline[j].numeraire else None
             ) for j in range(n)
         ]
 
@@ -115,10 +121,18 @@ class Vasicek(Model):
         self._x[0, :] = self.r0
         idx = 0
 
+        # Initialize numeraire
+        numeraire = torch.ones_like(self.x[0, :])
+
         # Iterate over model's timeline
         for k, s in enumerate(self.timeline[1:]):
             # State variable
             self._x[k+1, :] = step_func(self.x[k, :], dt[k], Z[k, :])
+
+            # Numeraire
+            if self.measure == 'risk_neutral':
+                # Trapezoidal rule: B(t) = exp{ int_0^t r(s) ds } ~ exp{sum[ r(t) * dt ]}
+                numeraire *= torch.exp(0.5 * (self._x[k+1, :] + self._x[k, :]) * dt[k])
 
             # Samples (market variables)
             if self._tl_idx_mkt[k+1]:
@@ -133,7 +147,16 @@ class Vasicek(Model):
                                                              delta=self.defline[idx].irs[j].delta,
                                                              K=self.defline[idx].irs[j].fixRate,
                                                              N=self.defline[idx].irs[j].notional)
+
+                for j in range(len(self.paths[idx].disc)):
+                    self._paths[idx].disc[j] = self.calc_zcb(r0=self._x[k+1, :],
+                                                             t=self.defline[idx].discMats[j] - s)
+
+                if self.paths[idx].numeraire is not None:
+                    self._paths[idx].numeraire = numeraire
+
                 idx += 1
+
         return self.paths
 
     def _calc_fwd_vol(self, t):
