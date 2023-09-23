@@ -2,6 +2,9 @@ import torch
 from application.engine.products import Product, SampleDef
 from abc import ABC, abstractmethod
 
+MEASURES = ['risk_neutral', 'terminal']
+
+
 class RNG:
     """Random Number Generator"""
     def __init__(self,
@@ -69,12 +72,6 @@ class Model(ABC):
 
     @property
     @abstractmethod
-    def disc_curve(self):
-        """Discount curve for payments P(0, T)"""
-        pass
-
-    @property
-    @abstractmethod
     def x(self):
         """State variables X(t)"""
         pass
@@ -89,7 +86,6 @@ class Model(ABC):
     def allocate(self,
                  prdTimeline:       torch.Tensor,
                  prdDefline:        list[SampleDef],
-                 prdPaymentDates:   torch.Tensor,
                  N:                 int,
                  eulerTimeline:     torch.Tensor):
         """Method for allocating objects and performing pre-calculations"""
@@ -108,10 +104,10 @@ def mcSim(
         model:  Model,
         rng:    RNG,
         N:      int,
-        eTL:    torch.Tensor = torch.tensor([])):
+        dTL:    torch.Tensor = torch.tensor([])):
 
     # Allocate and initialize results, model and rng
-    model.allocate(prd.timeline, prd.defline, prd.paymentDates, N, eTL)
+    model.allocate(prd.timeline, prd.defline, N, dTL)
 
     # Set dimensions
     rng.N = N
@@ -126,11 +122,13 @@ def mcSim(
     # Calculate payoffs
     payoff = prd.payoff(paths)
 
+    return payoff
+
     # Discount to present value
-    payoff_pv = model.disc_curve * payoff
+    # payoff_pv = model.disc_curve * payoff
 
     # Sum across times
-    npv = torch.sum(payoff_pv, dim=1)
+    # npv = torch.sum(payoff_pv, dim=1)
 
     # Monte Carlo Estimator
-    return torch.mean(npv)
+    # return torch.mean(npv)

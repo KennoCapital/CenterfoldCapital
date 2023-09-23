@@ -31,6 +31,8 @@ class SampleDef:
     """ Definition of what must be sampled on an event date `t` """
     fwdRates:   list[ForwardRateDef]
     irs:        list[InterestRateSwapDef]
+    discMats:   torch.Tensor = torch.tensor([])
+    numeraire:  bool = True
 
 
 @dataclass
@@ -38,6 +40,8 @@ class Sample:
     """ Collection of market observables on an event date `t` """
     fwd:        list[torch.Tensor]
     irs:        list[torch.Tensor]
+    disc:       list[torch.Tensor]
+    numeraire:  torch.Tensor
 
 
 Scenario = list[Sample]
@@ -57,11 +61,6 @@ class Product(ABC):
 
     @property
     @abstractmethod
-    def paymentDates(self):
-        pass
-
-    @property
-    @abstractmethod
     def payoffLabels(self):
         """Labeling of the payoffs for a product"""
         pass
@@ -76,17 +75,25 @@ class Caplet(Product):
                  strike: torch.Tensor,
                  start: torch.Tensor,
                  delta: torch.Tensor):
+        """
+            A caplet pays
+                delta * max{ F(t, t+delta) - K; 0.0 }   @   t + delta
+        """
         self.strike = strike
         self.start = start
         self.delta = delta
 
         self._timeline = start.view(1)
-        self._defline = [SampleDef(
-            fwdRates=[ForwardRateDef(start, start + delta)],
-            irs=[]
-        )]
+
+        self._defline = [
+            SampleDef(fwdRates=[
+                ForwardRateDef(start, start + delta)],
+                irs=[],
+                discMats=torch.tensor([]),
+                numeraire=True)
+        ]
         self._payoffLabels = '1'
-        self._paymentDates = torch.tensor([start + delta])
+        # self._paymentDates = torch.tensor([start + delta])
 
     @property
     def timeline(self):
@@ -97,16 +104,12 @@ class Caplet(Product):
         return self._defline
 
     @property
-    def paymentDates(self):
-        return self._paymentDates
-
-    @property
     def payoffLabels(self):
         return self._payoffLabels
 
     def payoff(self, paths: Scenario):
-        res = [self.delta * max0(s.fwd[0].reshape(-1, 1) - self.strike) for s in paths]
-        return torch.concat(res, dim=1)
+        res = self.delta * max0(paths[0].fwd[0] - self.strike) / paths[0].numeraire
+        return res
 
 
 class Cap(Product):
@@ -124,10 +127,11 @@ class Cap(Product):
         self._defline = [
             SampleDef(
                 fwdRates=[ForwardRateDef(t, t + delta)],
-                irs=[]
+                irs=[],
+                numeraire=True
             ) for t in self.timeline]
         self._payoffLabels = [f'({t}, {t+delta})' for t in self.timeline]
-        self._paymentDates = self.timeline + delta
+        # self._paymentDates = self.timeline + delta
 
     @property
     def timeline(self):
@@ -136,10 +140,6 @@ class Cap(Product):
     @property
     def defline(self):
         return self._defline
-
-    @property
-    def paymentDates(self):
-        return self._paymentDates
 
     @property
     def payoffLabels(self):
@@ -178,11 +178,11 @@ class EuropeanPayerSwaption(Product):
         self._defline = [
             SampleDef(
                 fwdRates=[],
-                irs=[InterestRateSwapDef(fixingDates=swapFixingDates, fixRate=self.strike, notional=self.notional)]
+                irs=[InterestRateSwapDef(fixingDates=swapFixingDates, fixRate=self.strike, notional=self.notional)],
+                numeraire=True
             )
         ]
         self._payoffLabels = [f'{exerciseDate}']
-        self._paymentDates = exerciseDate
 
     @property
     def timeline(self):
@@ -191,10 +191,6 @@ class EuropeanPayerSwaption(Product):
     @property
     def defline(self):
         return self._defline
-
-    @property
-    def paymentDates(self):
-        return self._paymentDates
 
     @property
     def payoffLabels(self):
