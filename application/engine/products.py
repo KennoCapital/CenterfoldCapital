@@ -84,7 +84,7 @@ class Caplet(Product):
         self.delta = delta
 
         self._timeline = start.view(1)
-        
+
         self._defline = [
             SampleDef(
                 fwdRates=[ForwardRateDef(start, start + delta)],
