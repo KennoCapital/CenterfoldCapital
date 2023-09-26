@@ -17,8 +17,8 @@ b = torch.tensor(0.09)
 sigma = torch.tensor(0.0148)
 r0 = torch.tensor(0.08)
 
-start = torch.tensor(1.0)
-delta = torch.tensor(5.0)
+start = torch.tensor(5.0)
+delta = torch.tensor(15.0)
 
 dTL = torch.linspace(0.0, start + delta, int(52 * (start + delta)))
 
@@ -39,7 +39,7 @@ payoff = mcSim(prd, model, rng, N, dTL)
 print(torch.mean(payoff))
 
 print(
-    model.calc_cpl(r0, torch.tensor([start, start+delta]), delta, swap_rate)
+    model.calc_cpl(r0, torch.tensor([start, start + delta]), delta, swap_rate)
 )
 
 

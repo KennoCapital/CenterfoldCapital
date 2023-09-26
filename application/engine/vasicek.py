@@ -124,6 +124,30 @@ class Vasicek(Model):
         # Initialize numeraire
         numeraire = torch.ones_like(self.x[0, :])
 
+        # Samples at time 0
+        if self._tl_idx_mkt[0]:
+            if self.measure == 'risk_neutral':
+                for j in range(len(self.paths[idx].fwd)):
+                    self._paths[idx].fwd[j] = self.calc_fwd(r0=self._x[0, :],
+                                                            t=self.defline[idx].fwdRates[j].startDate,
+                                                            delta=self.defline[idx].fwdRates[j].delta)
+
+                for j in range(len(self.paths[idx].irs)):
+                    self._paths[idx].irs[j] = self.calc_swap(r0=self._x[0, :],
+                                                             t=self.defline[idx].irs[j].t,
+                                                             delta=self.defline[idx].irs[j].delta,
+                                                             K=self.defline[idx].irs[j].fixRate,
+                                                             N=self.defline[idx].irs[j].notional)
+
+                for j in range(len(self.paths[idx].disc)):
+                    self._paths[idx].disc[j] = self.calc_zcb(r0=self._x[0, :],
+                                                             t=self.defline[idx].discMats[j])
+
+                if self.paths[idx].numeraire is not None:
+                    self._paths[idx].numeraire = numeraire
+
+            idx += 1
+
         # Iterate over model's timeline
         for k, s in enumerate(self.timeline[1:]):
             # State variable
@@ -132,30 +156,32 @@ class Vasicek(Model):
             # Numeraire
             if self.measure == 'risk_neutral':
                 # Trapezoidal rule: B(t) = exp{ int_0^t r(s) ds } ~ exp{sum[ r(t) * dt ]}
-                numeraire *= torch.exp(0.5 * (self._x[k+1, :] + self._x[k, :]) * dt[k])
+                numeraire *= torch.exp(0.5 * (self._x[k + 1, :] + self._x[k, :]) * dt[k])
 
             # Samples (market variables)
-            if self._tl_idx_mkt[k+1]:
+            if self._tl_idx_mkt[k + 1]:
                 for j in range(len(self.paths[idx].fwd)):
-                    self._paths[idx].fwd[j] = self.calc_fwd(r0=self._x[k+1, :],
-                                                            t=0,
+                    self._paths[idx].fwd[j] = self.calc_fwd(r0=self._x[k + 1, :],
+                                                            t=self.defline[idx].fwdRates[j].startDate - s,
                                                             delta=self.defline[idx].fwdRates[j].delta)
 
                 for j in range(len(self.paths[idx].irs)):
-                    self._paths[idx].irs[j] = self.calc_swap(r0=self._x[k+1, :],
+                    self._paths[idx].irs[j] = self.calc_swap(r0=self._x[k + 1, :],
                                                              t=self.defline[idx].irs[j].t - s,
                                                              delta=self.defline[idx].irs[j].delta,
                                                              K=self.defline[idx].irs[j].fixRate,
                                                              N=self.defline[idx].irs[j].notional)
 
                 for j in range(len(self.paths[idx].disc)):
-                    self._paths[idx].disc[j] = self.calc_zcb(r0=self._x[k+1, :],
+                    self._paths[idx].disc[j] = self.calc_zcb(r0=self._x[k + 1, :],
                                                              t=self.defline[idx].discMats[j] - s)
 
                 if self.paths[idx].numeraire is not None:
                     self._paths[idx].numeraire = numeraire
 
                 idx += 1
+
+
 
         return self.paths
 

@@ -84,14 +84,16 @@ class Caplet(Product):
         self.delta = delta
 
         self._timeline = start.view(1)
-
+        
         self._defline = [
-            SampleDef(fwdRates=[
-                ForwardRateDef(start, start + delta)],
+            SampleDef(
+                fwdRates=[ForwardRateDef(start, start + delta)],
                 irs=[],
-                discMats=torch.tensor([]),
-                numeraire=True)
+                discMats=torch.tensor([start+delta]),
+                numeraire=True
+            )
         ]
+
         self._payoffLabels = '1'
         # self._paymentDates = torch.tensor([start + delta])
 
@@ -108,8 +110,7 @@ class Caplet(Product):
         return self._payoffLabels
 
     def payoff(self, paths: Scenario):
-        res = self.delta * max0(paths[0].fwd[0] - self.strike) / paths[0].numeraire
-        return res
+        return self.delta * max0(paths[0].fwd[0] - self.strike) / paths[0].numeraire * paths[0].disc[0]
 
 
 class Cap(Product):
