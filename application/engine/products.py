@@ -139,24 +139,28 @@ class Caplet(Product):
 
 class Cap(Product):
     def __init__(self,
-                 strike: torch.Tensor,
-                 start: torch.Tensor,
-                 expiry: torch.Tensor,
-                 delta: torch.Tensor):
+                 strike:            torch.Tensor,
+                 firstFixingDate:   torch.Tensor,
+                 lastFixingDate:    torch.Tensor,
+                 delta:             torch.Tensor):
         self.strike = strike
-        self.start = start
-        self.expiry = expiry
+        self.firstFixingDate = firstFixingDate
+        self.lastFixingDate = lastFixingDate
         self.delta = delta
 
-        self._timeline = torch.linspace(float(start), float(expiry-delta), int((expiry-delta-start)/delta+1))
+        self._timeline = torch.linspace(float(firstFixingDate),
+                                        float(lastFixingDate),
+                                        int((lastFixingDate-firstFixingDate) / delta + 1))
         self._defline = [
             SampleDef(
                 fwdRates=[ForwardRateDef(t, t + delta)],
                 irs=[],
+                discMats=torch.tensor([t + delta]),
                 numeraire=True
-            ) for t in self.timeline]
-        self._payoffLabels = [f'({t}, {t+delta})' for t in self.timeline]
-        # self._paymentDates = self.timeline + delta
+            ) for t in self._timeline
+        ]
+
+        self._payoffLabels = [f'{delta} x max[ F({t},{t+delta})-{strike} ; 0.0]' for t in self._timeline]
 
     @property
     def timeline(self):
