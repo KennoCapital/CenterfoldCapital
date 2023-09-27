@@ -8,7 +8,7 @@ torch.set_default_dtype(torch.float64)
 
 seed = 1234
 
-N = 4
+N = 50000
 
 measure = 'risk_neutral'
 
@@ -17,31 +17,34 @@ b = torch.tensor(0.09)
 sigma = torch.tensor(0.0148)
 r0 = torch.tensor(0.08)
 
-start = torch.tensor(0.25)
+firstFixingDate = torch.tensor(0.25)
+lastFixingDate = torch.tensor(0.75)
 delta = torch.tensor(0.25)
-expiry = torch.tensor(1.0)
 
-eTL = torch.linspace(0.0, 1.0, 1001)    # Euler time steps
+strike = torch.tensor(0.084)
 
-t = torch.linspace(float(delta), float(expiry), int(expiry/delta))
+dTL = torch.linspace(0.0, lastFixingDate + delta, int(50 * (lastFixingDate + delta) + 1))
 
 model = Vasicek(a, b, sigma, r0, False, measure)
-swap_rate = model.calc_swap_rate(r0, t, delta)
-
 
 rng = RNG(seed=seed, use_av=True)
 
 prd = Cap(
-    strike=swap_rate,
-    start=start,
-    expiry=expiry,
+    strike=strike,
+    firstFixingDate=firstFixingDate,
+    lastFixingDate=lastFixingDate,
     delta=delta
 )
 
-print(
-    mcSim(prd, model, rng, N)
-)
+t_event_dates = torch.concat([prd.timeline, (lastFixingDate + delta).view(1)])
 
-print(
-    model.calc_cap(r0, t, delta, swap_rate)
-)
+cashflows = mcSim(prd, model, rng, N, dTL)
+print('Cashflows: \n', cashflows)
+
+payoff = torch.sum(cashflows, dim=0)
+print('Payoffs:\n', payoff)
+
+mc_price = torch.mean(payoff)
+print('MC Price =', mc_price)
+
+print('Model price =', model.calc_cap(r0, t_event_dates, delta, strike))

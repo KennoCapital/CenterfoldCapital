@@ -83,7 +83,6 @@ class Caplet(Product):
         self.start = start
         self.delta = delta
 
-
         self._timeline = start.view(1)
         
         self._defline = [
@@ -115,9 +114,7 @@ class Caplet(Product):
         ]
         """
 
-
-        self._payoffLabels = '1'
-        # self._paymentDates = torch.tensor([start + delta])
+        self._payoffLabels = [f'{delta}*max[ F({t},{t+delta})-{strike} ; 0.0]' for t in self._timeline]
 
     @property
     def timeline(self):
@@ -134,7 +131,6 @@ class Caplet(Product):
     def payoff(self, paths: Scenario):
         return self.delta * max0(paths[0].fwd[0] - self.strike) / paths[0].numeraire * paths[0].disc[0]
         #return self.delta * max0(paths[0].fwd[0] - self.strike) / paths[1].numeraire
-
 
 
 class Cap(Product):
@@ -160,7 +156,7 @@ class Cap(Product):
             ) for t in self._timeline
         ]
 
-        self._payoffLabels = [f'{delta} x max[ F({t},{t+delta})-{strike} ; 0.0]' for t in self._timeline]
+        self._payoffLabels = [f'{delta}*max[ F({t},{t+delta})-{strike} ; 0.0]' for t in self._timeline]
 
     @property
     def timeline(self):
@@ -175,8 +171,8 @@ class Cap(Product):
         return self._payoffLabels
 
     def payoff(self, paths):
-        res = [self.delta + max0(p.fwd[0] - self.strike) / p.numeraire * p.disc[0] for p in paths]
-        return torch.concat(res, dim=1)
+        res = [self.delta * max0(p.fwd[0] - self.strike) / p.numeraire * p.disc[0] for p in paths]
+        return torch.vstack(res)
 
 
 class EuropeanPayerSwaption(Product):
