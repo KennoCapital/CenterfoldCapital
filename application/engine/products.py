@@ -277,3 +277,54 @@ class EuropeanReceiverSwaption(Product):
     def payoff(self, paths):
         res = [max0(-s.irs[0]) / s.numeraire * s.disc[0] for s in paths]
         return torch.vstack(res)
+
+class BermudanPayerSwaption(Product):
+    def __init__(self,
+                 strike:                torch.Tensor,
+                 exerciseDates:         torch.Tensor,
+                 delta:                 torch.Tensor,
+                 swapLastFixingDate:    torch.Tensor,
+                 swapFirstFixingDate:   torch.Tensor = torch.tensor([]),
+                 notional:              torch.Tensor = torch.tensor([1.0])):
+        self.strike = strike
+        self.exerciseDates = exerciseDates
+        self.swapLastFixingDate = swapLastFixingDate
+        self.delta = delta
+        self.swapFirstFixingDate = swapFirstFixingDate
+        self.notional = notional
+
+        if len(swapFirstFixingDate) == 0 or swapFirstFixingDate is None:
+            self.swapFirstFixingDate = exerciseDates[0]
+
+        self._timeline = exerciseDates
+        swapFixingDates = [torch.linspace(
+            float(t),
+            float(self.swapLastFixingDate),
+            int((self.swapLastFixingDate - t) / self.delta) + 1
+        ) for t in exerciseDates]
+
+        self._defline = [
+            SampleDef(
+                fwdRates=[],
+                irs=[InterestRateSwapDef(fixingDates=swapFixingDates[t], fixRate=self.strike, notional=self.notional)],
+                discMats= swapFixingDates[t] + self.delta,
+                numeraire=True
+            ) for t in range(len(self._timeline))
+        ]
+        self._payoffLabels = [f' max[ swap({t}) ; 0.0]' for t in exerciseDates]
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def payoffLabels(self):
+        return self._payoffLabels
+
+    def payoff(self, paths):
+        res = [max0(s.irs[0]) / s.numeraire * s.disc[0] for s in paths]
+        return torch.vstack(res)
