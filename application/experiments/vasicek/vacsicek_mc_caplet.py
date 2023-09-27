@@ -22,7 +22,7 @@ delta = torch.tensor(15.0)
 
 dTL = torch.linspace(0.0, start + delta, int(52 * (start + delta)))
 
-model = Vasicek(a, b, sigma, r0, False, measure)
+model = Vasicek(a, b, sigma, r0, True, measure)
 swap_rate = torch.tensor(0.084)
 
 
@@ -36,10 +36,10 @@ prd = Caplet(
 
 payoff = mcSim(prd, model, rng, N, dTL)
 
-print(torch.mean(payoff))
-
 print(
-    model.calc_cpl(r0, torch.tensor([start, start + delta]), delta, swap_rate)
+    'MC price =', torch.mean(payoff)
 )
 
-
+print(
+    'Analytical price =', model.calc_cpl(r0, torch.tensor([start, start + delta]), delta, swap_rate)
+)

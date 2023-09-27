@@ -144,7 +144,7 @@ class Vasicek(Model):
                                                              t=self.defline[idx].discMats[j])
 
                 if self.paths[idx].numeraire is not None:
-                    self._paths[idx].numeraire = numeraire
+                    self._paths[idx].numeraire[:] = numeraire
 
             idx += 1
 
@@ -177,12 +177,9 @@ class Vasicek(Model):
                                                              t=self.defline[idx].discMats[j] - s)
 
                 if self.paths[idx].numeraire is not None:
-                    self._paths[idx].numeraire = numeraire
+                    self._paths[idx].numeraire[:] = numeraire
 
                 idx += 1
-
-
-
         return self.paths
 
     def _calc_fwd_vol(self, t):
