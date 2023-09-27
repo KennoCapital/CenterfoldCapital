@@ -36,8 +36,13 @@ prd = EuropeanPayerSwaption(
     delta=delta
 )
 
-print(
-    mcSim(prd, model, rng, N)
-)
+print("=====================================================")
+print("European swaption pricing with MC & Vasicek")
+print("Strike = ", swap_rate)
+print("Exercise date = ", exerciseDate)
+print('Accrual period = ', delta)
+print("Swap last fixing date = ", swapLastFixingDate)
 
-
+cashflows = mcSim(prd, model, rng, N)
+price = torch.mean(cashflows)
+print('Price =', price)
