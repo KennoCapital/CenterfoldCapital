@@ -175,7 +175,7 @@ class Cap(Product):
         return self._payoffLabels
 
     def payoff(self, paths):
-        res = [self.delta * max0(s.fwd[0].reshape(-1, 1) - self.strike) for s in paths]
+        res = [self.delta + max0(p.fwd[0] - self.strike) / p.numeraire * p.disc[0] for p in paths]
         return torch.concat(res, dim=1)
 
 
