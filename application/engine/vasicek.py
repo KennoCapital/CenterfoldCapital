@@ -15,14 +15,16 @@ class Vasicek(Model):
                  b,
                  sigma,
                  r0=None,
-                 use_ATS: bool = False,
-                 measure: str = 'risk_neutral'):
+                 use_ATS:   bool = False,
+                 use_euler: bool = False,
+                 measure:   str = 'risk_neutral'):
         """
         :param a:               Mean reversion rate
         :param b:               Long term mean rate
         :param sigma:           Volatility,
         :param r0:              Initial value of instantaneous short rate
         :param measure:         Specifies which measure to simulate under
+        :param use_euler:       Use Euler discretization (True) or Exact method (False) for simulation of short rate
         :param use_ATS:         Use Affine Term Structure specification to calculate ZCB prices
         """
         self.a = a
@@ -30,6 +32,7 @@ class Vasicek(Model):
         self.sigma = sigma
         self.r0 = r0
         self.measure = measure
+        self.use_euler = use_euler
         self.use_ATS = use_ATS
 
         if measure not in MEASURES:
@@ -109,7 +112,7 @@ class Vasicek(Model):
 
     def simulate(self, Z):
         # Decide function for performing simulation of state variable
-        if len(self.eulerTimeline) > 0:
+        if self.use_euler:
             step_func = self._euler_step
         else:
             step_func = self._exact_step
@@ -124,29 +127,33 @@ class Vasicek(Model):
         # Initialize numeraire
         numeraire = torch.ones_like(self.x[0, :])
 
-        # Samples at time 0
-        if self._tl_idx_mkt[0]:
+        def _fillSample(x):
+            nonlocal idx, s, numeraire
             if self.measure == 'risk_neutral':
                 for j in range(len(self.paths[idx].fwd)):
-                    self._paths[idx].fwd[j] = self.calc_fwd(r0=self._x[0, :],
-                                                            t=self.defline[idx].fwdRates[j].startDate,
+                    self._paths[idx].fwd[j] = self.calc_fwd(r0=x,
+                                                            t=self.defline[idx].fwdRates[j].startDate - s,
                                                             delta=self.defline[idx].fwdRates[j].delta)
 
                 for j in range(len(self.paths[idx].irs)):
-                    self._paths[idx].irs[j] = self.calc_swap(r0=self._x[0, :],
-                                                             t=self.defline[idx].irs[j].t,
+                    self._paths[idx].irs[j] = self.calc_swap(r0=x,
+                                                             t=self.defline[idx].irs[j].t - s,
                                                              delta=self.defline[idx].irs[j].delta,
                                                              K=self.defline[idx].irs[j].fixRate,
                                                              N=self.defline[idx].irs[j].notional)
 
                 for j in range(len(self.paths[idx].disc)):
-                    self._paths[idx].disc[j] = self.calc_zcb(r0=self._x[0, :],
-                                                             t=self.defline[idx].discMats[j])
+                    self._paths[idx].disc[j] = self.calc_zcb(r0=x,
+                                                             t=self.defline[idx].discMats[j] - s)
 
                 if self.paths[idx].numeraire is not None:
                     self._paths[idx].numeraire[:] = numeraire
 
             idx += 1
+
+        # Samples at time 0
+        if self._tl_idx_mkt[0]:
+            _fillSample(x=self._x[0, :])
 
         # Iterate over model's timeline
         for k, s in enumerate(self.timeline[1:]):
@@ -160,26 +167,8 @@ class Vasicek(Model):
 
             # Samples (market variables)
             if self._tl_idx_mkt[k + 1]:
-                for j in range(len(self.paths[idx].fwd)):
-                    self._paths[idx].fwd[j] = self.calc_fwd(r0=self._x[k + 1, :],
-                                                            t=self.defline[idx].fwdRates[j].startDate - s,
-                                                            delta=self.defline[idx].fwdRates[j].delta)
+                _fillSample(x=self._x[k + 1, :])
 
-                for j in range(len(self.paths[idx].irs)):
-                    self._paths[idx].irs[j] = self.calc_swap(r0=self._x[k + 1, :],
-                                                             t=self.defline[idx].irs[j].t - s,
-                                                             delta=self.defline[idx].irs[j].delta,
-                                                             K=self.defline[idx].irs[j].fixRate,
-                                                             N=self.defline[idx].irs[j].notional)
-
-                for j in range(len(self.paths[idx].disc)):
-                    self._paths[idx].disc[j] = self.calc_zcb(r0=self._x[k + 1, :],
-                                                             t=self.defline[idx].discMats[j] - s)
-
-                if self.paths[idx].numeraire is not None:
-                    self._paths[idx].numeraire[:] = numeraire
-
-                idx += 1
         return self.paths
 
     def _calc_fwd_vol(self, t):
