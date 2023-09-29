@@ -51,8 +51,13 @@ class Product(ABC):
 
     @property
     @abstractmethod
-    def timeline(self):
+    def timeline(self) -> torch.Tensor:
         pass
+
+    @property
+    def Tn(self):
+        """Timepoint used for terminal measure"""
+        return self.timeline[-1]
 
     @property
     @abstractmethod
@@ -62,7 +67,6 @@ class Product(ABC):
     @property
     @abstractmethod
     def payoffLabels(self):
-        """Labeling of the payoffs for a product"""
         pass
 
     @abstractmethod
@@ -82,39 +86,49 @@ class Caplet(Product):
         self.strike = strike
         self.start = start
         self.delta = delta
+        self._Tn = start + delta
 
-        self._timeline = start.view(1)
-
+        '''
+        # The straight forward definition
+        self._timeline = torch.concat([torch.tensor([0.0]), start.view(1), (start + delta).view(1)])
         self._defline = [
             SampleDef(
-                fwdRates=[ForwardRateDef(start, start + delta)],
-                irs=[],
-                discMats=torch.tensor([start+delta]),
+                fwdRates=[], irs=[], discMats=torch.tensor([]),
+                numeraire=True
+            ),
+            SampleDef(
+                fwdRates=[ForwardRateDef(start, start+delta)],
+                irs=[], discMats=torch.tensor([]),
+                numeraire=False
+            ),
+            SampleDef(
+                fwdRates=[], irs=[], discMats=torch.tensor([]),
                 numeraire=True
             )
         ]
+        '''
 
-
-        """
-        self._timeline = torch.concat([start.view(1), (start + delta).view(1)])
-
+        # Discounting the payment from T+delta to T
+        self._timeline = torch.concat([torch.tensor([0.0]), start.view(1)])
         self._defline = [
-            SampleDef(
-                fwdRates=[ForwardRateDef(start, start + delta)],
-                irs=[],
-                discMats=torch.tensor([]),
-                numeraire=False
-            ),
             SampleDef(
                 fwdRates=[],
                 irs=[],
                 discMats=torch.tensor([]),
                 numeraire=True
+            ),
+            SampleDef(
+                fwdRates=[ForwardRateDef(start, start + delta)],
+                irs=[],
+                discMats=torch.tensor([start + delta]),
+                numeraire=True
             )
         ]
-        """
+        self._payoffLabels = [f'{delta}*max[F({t},{t + delta})-{strike} ; 0.0]' for t in self._timeline[1]]
 
-        self._payoffLabels = [f'{delta}*max[ F({t},{t+delta})-{strike} ; 0.0]' for t in self._timeline]
+    @property
+    def Tn(self):
+        return self._Tn
 
     @property
     def timeline(self):
@@ -129,8 +143,8 @@ class Caplet(Product):
         return self._payoffLabels
 
     def payoff(self, paths: Scenario):
-        return self.delta * max0(paths[0].fwd[0] - self.strike) / paths[0].numeraire * paths[0].disc[0]
-        #return self.delta * max0(paths[0].fwd[0] - self.strike) / paths[1].numeraire
+        # return self.delta * max0(paths[1].fwd[0] - self.strike) * paths[0].numeraire / paths[2].numeraire
+        return self.delta * max0(paths[1].fwd[0] - self.strike) * paths[0].numeraire / paths[1].numeraire * paths[1].disc[0]
 
 
 class Cap(Product):
@@ -144,23 +158,79 @@ class Cap(Product):
         self.lastFixingDate = lastFixingDate
         self.delta = delta
 
-        self._timeline = torch.linspace(float(firstFixingDate),
-                                        float(lastFixingDate),
-                                        int((lastFixingDate-firstFixingDate) / delta + 1))
+        self._Tn = lastFixingDate + delta
+
+        '''
+       # The straight forward definition
+
+        self._timeline = torch.concat([
+            torch.tensor([0.0]),
+            torch.linspace(float(firstFixingDate),
+                           float(lastFixingDate + delta),
+                           int((lastFixingDate-firstFixingDate+delta) / delta) + 1)
+            ])
+
         self._defline = [
+            SampleDef(
+                fwdRates=[], irs=[], discMats=torch.tensor([]),
+                numeraire=True
+            ),
+            SampleDef(
+                fwdRates=[ForwardRateDef(firstFixingDate, firstFixingDate + delta)],
+                irs=[], discMats=torch.tensor([]),
+                numeraire=False
+            )
+        ]
+
+        self._defline += [
+                SampleDef(
+                    fwdRates=[ForwardRateDef(t, t + delta)],
+                    irs=[], discMats=torch.tensor([]),
+                    numeraire=True
+                ) for t in self.timeline[2:-1]
+        ]
+
+        self._defline += [
+            SampleDef(
+                fwdRates=[], irs=[], discMats=torch.tensor([]),
+                numeraire=True
+            )
+        ]
+        self._payoffLabels = [f'{delta}*max[F({t},{t+delta})-{strike} ; 0.0]' for t in self._timeline[1:-1]]
+
+        '''
+        # Discounting the payment from T+delta to T
+        self._timeline = torch.concat([
+            torch.tensor([0.0]),
+            torch.linspace(float(firstFixingDate),
+                           float(lastFixingDate),
+                           int((lastFixingDate - firstFixingDate) / delta + 1))
+        ])
+
+        self._defline = [
+            SampleDef(
+                fwdRates=[], irs=[], discMats=torch.tensor([]),
+                numeraire=True
+            )
+        ]
+
+        self._defline += [
             SampleDef(
                 fwdRates=[ForwardRateDef(t, t + delta)],
                 irs=[],
                 discMats=torch.tensor([t + delta]),
                 numeraire=True
-            ) for t in self._timeline
+            ) for t in self.timeline[1:]
         ]
-
-        self._payoffLabels = [f'{delta}*max[ F({t},{t+delta})-{strike} ; 0.0]' for t in self._timeline]
+        self._payoffLabels = [f'{delta}*max[F({t},{t + delta})-{strike} ; 0.0]' for t in self._timeline[1:]]
 
     @property
     def timeline(self):
         return self._timeline
+
+    @property
+    def Tn(self):
+        return self._Tn
 
     @property
     def defline(self):
@@ -171,9 +241,13 @@ class Cap(Product):
         return self._payoffLabels
 
     def payoff(self, paths):
-        res = [self.delta * max0(p.fwd[0] - self.strike) / p.numeraire * p.disc[0] for p in paths]
+        '''
+        res = [self.delta * max0(paths[i].fwd[0] - self.strike) * paths[0].numeraire / paths[i+1].numeraire
+               for i in range(1, len(paths)-1)]  # No cashflows for the first and last sample
+        '''
+        res = [self.delta * max0(paths[i].fwd[0] - self.strike) * paths[0].numeraire / paths[i].numeraire * paths[i].disc[0]
+               for i in range(1, len(paths))]
         return torch.vstack(res)
-
 
 class EuropeanPayerSwaption(Product):
     def __init__(self,

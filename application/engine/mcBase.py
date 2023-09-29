@@ -60,7 +60,7 @@ class Model(ABC):
 
     @property
     @abstractmethod
-    def eulerTimeline(self):
+    def dTimeline(self):
         """Timeline with additional timepoints for euler discretization"""
         pass
 
@@ -84,10 +84,9 @@ class Model(ABC):
 
     @abstractmethod
     def allocate(self,
-                 prdTimeline:       torch.Tensor,
-                 prdDefline:        list[SampleDef],
-                 N:                 int,
-                 eulerTimeline:     torch.Tensor):
+                 prd:       Product,
+                 N:         int,
+                 dTimeline: torch.Tensor):
         """Method for allocating objects and performing pre-calculations"""
         pass
 
@@ -107,7 +106,7 @@ def mcSim(
         dTL:    torch.Tensor = torch.tensor([])):
 
     # Allocate and initialize results, model and rng
-    model.allocate(prd.timeline, prd.defline, N, dTL)
+    model.allocate(prd, N, dTL)
 
     # Set dimensions
     rng.N = N

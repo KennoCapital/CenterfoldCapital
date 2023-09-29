@@ -6,7 +6,7 @@ import torch
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
-seed = 1234
+seed = None
 
 N = 50000
 
@@ -25,7 +25,7 @@ strike = torch.tensor(0.084)
 
 dTL = torch.linspace(0.0, lastFixingDate + delta, int(50 * (lastFixingDate + delta) + 1))
 
-model = Vasicek(a, b, sigma, r0, False, measure)
+model = Vasicek(a, b, sigma, r0, True, False, measure)
 
 rng = RNG(seed=seed, use_av=True)
 
@@ -39,12 +39,12 @@ prd = Cap(
 t_event_dates = torch.concat([prd.timeline, (lastFixingDate + delta).view(1)])
 
 cashflows = mcSim(prd, model, rng, N, dTL)
-print('Cashflows: \n', cashflows)
+print('Cashflows: \n', cashflows, '\n')
 
 payoff = torch.sum(cashflows, dim=0)
-print('Payoffs:\n', payoff)
+print('Payoffs:\n', payoff, '\n')
 
 mc_price = torch.mean(payoff)
-print('MC Price =', mc_price)
+print('MC Price =', mc_price, '\n')
 
-print('Model price =', model.calc_cap(r0, t_event_dates, delta, strike))
+print('Model price =', model.calc_cap(r0, t_event_dates, delta, strike), '\n')
