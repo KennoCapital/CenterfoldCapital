@@ -10,7 +10,7 @@ seed = None
 
 N = 50000
 
-measure = 'risk_neutral'
+measure = 'terminal'
 
 a = torch.tensor(0.86)
 b = torch.tensor(0.09)
@@ -22,7 +22,7 @@ delta = torch.tensor(15.0)
 
 dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
 
-model = Vasicek(a, b, sigma, r0, True, measure)
+model = Vasicek(a, b, sigma, r0, True, False, measure)
 swap_rate = torch.tensor(0.084)
 
 
@@ -43,3 +43,10 @@ print(
 print(
     'Analytical price =', model.calc_cpl(r0, torch.tensor([start, start + delta]), delta, swap_rate)
 )
+
+
+#import timeit
+#execution_time = timeit.repeat(lambda: torch.mean(mcSim(prd, model, rng, N, dTL)), number=1, repeat=100)
+#print(
+#    torch.mean(torch.tensor(execution_time))
+#)

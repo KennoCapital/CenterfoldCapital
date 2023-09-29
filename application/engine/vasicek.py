@@ -2,7 +2,7 @@ import torch
 import scipy
 from application.utils.torch_utils import N_cdf
 from application.engine.mcBase import Model, MEASURES
-from application.engine.products import SampleDef, Sample
+from application.engine.products import Product, Sample
 from application.engine.linearProducts import forward, swap, swap_rate
 
 
@@ -44,16 +44,17 @@ class Vasicek(Model):
         self._defline = None
         self._x = None
         self._paths = None
-        self._eulerTimeline = None
+        self._dTimeline = None
         self._tl_idx_mkt = None
+        self._Tn = None
 
     @property
     def timeline(self):
         return self._timeline
 
     @property
-    def eulerTimeline(self):
-        return self._eulerTimeline
+    def dTimeline(self):
+        return self._dTimeline
 
     @property
     def defline(self):
@@ -68,47 +69,57 @@ class Vasicek(Model):
         return self._paths
 
     def allocate(self,
-                 prdTimeline:       torch.Tensor,
-                 defline:           list[SampleDef],
+                 prd:               Product,
                  N:                 int,
                  dTimeline:         torch.Tensor = torch.tensor([])):
 
-        TL = [torch.tensor([0.0]), prdTimeline, dTimeline]
-        self._eulerTimeline = dTimeline
+        TL = [torch.tensor([0.0]), prd.timeline, dTimeline]
+        self._dTimeline = dTimeline
         self._timeline = torch.unique(torch.concat(TL, dim=0), sorted=True)
+        self._defline = prd.defline
 
-        self._defline = defline
+        self._Tn = prd.Tn
 
         # Allocate space for state and paths (market variables)
-        n = len(prdTimeline)
         self._x = torch.full(size=(len(self.timeline), N), fill_value=torch.nan)
         self._paths = [
             Sample(
-                fwd=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].fwdRates))],
-                irs=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].irs))],
-                disc=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(defline[j].discMats))],
-                numeraire=torch.full(size=(N, ), fill_value=torch.nan) if defline[j].numeraire else None
-            ) for j in range(n)
+                fwd=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(prd.defline[j].fwdRates))],
+                irs=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(prd.defline[j].irs))],
+                disc=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(prd.defline[j].discMats))],
+                numeraire=torch.full(size=(N, ), fill_value=torch.nan) if prd.defline[j].numeraire else None
+            ) for j in range(len(prd.timeline))
         ]
 
         # Specify indices of when to compute market variables
-        self._tl_idx_mkt = [t in prdTimeline for t in self.timeline]
+        self._tl_idx_mkt = [t in prd.timeline for t in self.timeline]
 
-    def _exact_step(self, x, dt, Z):
+    def _exact_step(self, x, dt, Z, s):
         """
         Exact` simulation of the short rate, r(t), using
             Eq. (3.46), p. 110 - Glasserman (2003)
         """
-        return torch.exp(-self.a * dt) * x + \
-            self.b * (1 - torch.exp(-self.a * dt)) + \
-            self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
+        if self.measure == 'risk_neutral':
+            return torch.exp(-self.a * dt) * x + \
+                self.b * (1 - torch.exp(-self.a * dt)) + \
+                self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
 
-    def _euler_step(self, x, dt, Z):
+        if self.measure == 'terminal':
+            return torch.exp(-self.a * dt) * x + \
+                (self.b - self.sigma ** 2 * self._calc_B(self._Tn-s)) * (1 - torch.exp(-self.a * dt)) + \
+                self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
+
+    def _euler_step(self, x, dt, Z, s):
         """
         Euler discretiation of the short rate, r(t), using
             p. 110 - Glasserman (2003)
         """
-        return x + self.a * (self.b - x) * dt + self.sigma * torch.sqrt(dt) * Z
+        if self.measure == 'risk_neutral':
+            return x + self.a * (self.b - x) * dt + self.sigma * torch.sqrt(dt) * Z
+
+        if self.measure == 'terminal':
+            return x + self.a * ((self.b - self.sigma ** 2 * self._calc_B(self._Tn-s)) - x) * dt + \
+                self.sigma * torch.sqrt(dt) * Z
 
     def simulate(self, Z):
         # Decide function for performing simulation of state variable
@@ -120,34 +131,56 @@ class Vasicek(Model):
         # Calculate size of time steps
         dt = self.timeline[1:] - self.timeline[:-1]
 
-        # Initialize state variables and set auxiliary index
-        self._x[0, :] = self.r0
+        # Set auxiliary index for samples and auxiliary variable for calculating the integral of the short rate
         idx = 0
+        s = 0
+        sum_x = torch.zeros_like(self.x[0, :])
 
-        # Initialize numeraire
-        numeraire = torch.ones_like(self.x[0, :])
+        # Initialize state variable
+        self._x[0, :] = self.r0
 
         def _fillSample(x):
-            nonlocal idx, s, numeraire
+            nonlocal idx, s, sum_x
             if self.measure == 'risk_neutral':
                 for j in range(len(self.paths[idx].fwd)):
-                    self._paths[idx].fwd[j] = self.calc_fwd(r0=x,
-                                                            t=self.defline[idx].fwdRates[j].startDate - s,
-                                                            delta=self.defline[idx].fwdRates[j].delta)
+                    self._paths[idx].fwd[j][:] = self.calc_fwd(r0=x,
+                                                               t=self.defline[idx].fwdRates[j].startDate - s,
+                                                               delta=self.defline[idx].fwdRates[j].delta)
 
                 for j in range(len(self.paths[idx].irs)):
-                    self._paths[idx].irs[j] = self.calc_swap(r0=x,
-                                                             t=self.defline[idx].irs[j].t - s,
-                                                             delta=self.defline[idx].irs[j].delta,
-                                                             K=self.defline[idx].irs[j].fixRate,
-                                                             N=self.defline[idx].irs[j].notional)
+                    self._paths[idx].irs[j][:] = self.calc_swap(r0=x,
+                                                                t=self.defline[idx].irs[j].t - s,
+                                                                delta=self.defline[idx].irs[j].delta,
+                                                                K=self.defline[idx].irs[j].fixRate,
+                                                                N=self.defline[idx].irs[j].notional)
 
                 for j in range(len(self.paths[idx].disc)):
-                    self._paths[idx].disc[j] = self.calc_zcb(r0=x,
-                                                             t=self.defline[idx].discMats[j] - s)
+                    self._paths[idx].disc[j][:] = self.calc_zcb(r0=x,
+                                                                t=self.defline[idx].discMats[j] - s)
 
                 if self.paths[idx].numeraire is not None:
-                    self._paths[idx].numeraire[:] = numeraire
+                    self._paths[idx].numeraire[:] = torch.exp(sum_x)
+
+            if self.measure == 'terminal':
+                for j in range(len(self.paths[idx].fwd)):
+                    self._paths[idx].fwd[j][:] = self.calc_fwd(r0=x,
+                                                               t=self.defline[idx].fwdRates[j].startDate - s,
+                                                               delta=self.defline[idx].fwdRates[j].delta)
+
+                for j in range(len(self.paths[idx].irs)):
+                    self._paths[idx].irs[j][:] = self.calc_swap(r0=x,
+                                                                t=self.defline[idx].irs[j].t - s,
+                                                                delta=self.defline[idx].irs[j].delta,
+                                                                K=self.defline[idx].irs[j].fixRate,
+                                                                N=self.defline[idx].irs[j].notional)
+
+                for j in range(len(self.paths[idx].disc)):
+                    self._paths[idx].disc[j][:] = self.calc_zcb(r0=x,
+                                                                t=self.defline[idx].discMats[j] - s)
+
+                if self.paths[idx].numeraire is not None:
+                    self._paths[idx].numeraire[:] = self.calc_zcb(r0=x,
+                                                                  t=self._Tn - s)
 
             idx += 1
 
@@ -158,12 +191,11 @@ class Vasicek(Model):
         # Iterate over model's timeline
         for k, s in enumerate(self.timeline[1:]):
             # State variable
-            self._x[k+1, :] = step_func(self.x[k, :], dt[k], Z[k, :])
+            self._x[k+1, :] = step_func(self.x[k, :], dt[k], Z[k, :], s)
 
-            # Numeraire
             if self.measure == 'risk_neutral':
-                # Trapezoidal rule: B(t) = exp{ int_0^t r(s) ds } ~ exp{sum[ r(t) * dt ]}
-                numeraire *= torch.exp(0.5 * (self._x[k + 1, :] + self._x[k, :]) * dt[k])
+                # Trapezoidal rule: int_0^t r(s) ds ~ sum[ 0.5 * (r(t+dt)-r(t)) * dt ]
+                sum_x += 0.5 * (self._x[k + 1, :] + self._x[k, :]) * dt[k]
 
             # Samples (market variables)
             if self._tl_idx_mkt[k + 1]:
