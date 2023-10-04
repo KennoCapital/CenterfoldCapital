@@ -35,6 +35,38 @@ v = x.clone()
 phi1, phi2, phi3, phi4, phi5, phi6 = x.clone(), x.clone(), x.clone(), x.clone(), x.clone(), x.clone()
 
 
+def correlatedBrownians(Z, simDim, rho):
+    """ Generate correlated Brownian motions """
+    # Covariance matrix
+    if simDim > 1:
+        # we would need a cov matrix for each simulation dimension
+        covMat = torch.empty((simDim, 2, 2))
+
+        # but we only have two sources of randomness
+        for i in range(len(rho)):
+            covMat[i, 0, 1] = rho[i]
+            covMat[i, 1, 0] = rho[i]
+    else:
+        covMat = torch.tensor([[1.0, rho],
+                               [rho, 1.0]])
+
+    print(covMat)
+    # Cholesky decomposition: covMat = L x L^T
+    L = torch.linalg.cholesky(covMat)
+    print(L)
+    # Correlated BMs: W = Z x L^T
+    W = Z @ L.t()
+
+    return W
+rho = torch.tensor([0.5])
+Z = torch.randn(size=(2, N, M))
+W = correlatedBrownians(Z, 1, rho)
+
+plt.figure()
+plt.plot(W[:,0], color='blue')
+plt.plot(W[:,1], color = 'red')
+plt.title('Correlated BMs w Cholesky')
+plt.show()
 
 for  i in range(1, N):
     dv = kappa * (theta - v[i - 1,:]) * dt + sigma * torch.sqrt(v[i - 1,:]).t() * dWv[i,:]

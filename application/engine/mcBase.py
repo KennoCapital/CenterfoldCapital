@@ -11,14 +11,15 @@ class RNG:
                  M:         int or None = None,
                  N:         int or None = None,
                  seed:      int or None = None,
-                 use_av:    bool = True):
+                 use_av:    bool = True,
+                 simDim:    int = 1):
 
         self.M = M
         self.N = N
         self.seed = seed
         self.use_av = use_av
+        self.simDim = simDim
 
-        self.simDim = None
         if seed is None:
             self.gen = torch.Generator()
             self.gen.seed()
@@ -29,12 +30,12 @@ class RNG:
         if self.use_av and self.N % 2 != 0:
             raise ValueError('Number of paths (N) must be even when using antithetic variates!')
 
-    def gaussMat(self):
+    def gaussCube(self):
         if self.use_av:
             self._check_av_dim()
-            Z = torch.randn(size=(self.M, self.N // 2), generator=self.gen)
-            return torch.concat([Z, -Z], dim=1)
-        return torch.randn(size=(self.M, self.N), generator=self.gen)
+            Z = torch.randn(size=(self.simDim, self.M, self.N // 2), generator=self.gen)
+            return torch.concat([Z, -Z], dim=2).squeeze()
+        return torch.randn(size=(self.simDim, self.M, self.N), generator=self.gen)
 
     def next_G(self):
         """Returns a vector (tensor) N Gaussian distributed variables"""
@@ -104,17 +105,20 @@ def mcSim(
         model:  Model,
         rng:    RNG,
         N:      int,
-        dTL:    torch.Tensor = torch.tensor([])):
+        dTL:    torch.Tensor = torch.tensor([]),
+        simDim:    int = 1):
 
     # Allocate and initialize results, model and rng
     model.allocate(prd.timeline, prd.defline, N, dTL)
 
+    # todo: move RNG outside
     # Set dimensions
     rng.N = N
     rng.M = len(model.timeline) - 1
+    rng.simDim = simDim
 
     # Draw random variables
-    Z = rng.gaussMat()
+    Z = rng.gaussCube()
 
     # Simulate state variables and fwd
     paths = model.simulate(Z)
