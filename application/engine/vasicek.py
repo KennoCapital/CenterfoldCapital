@@ -87,7 +87,8 @@ class Vasicek(Model):
                 fwd=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(prd.defline[j].fwdRates))],
                 irs=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(prd.defline[j].irs))],
                 disc=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(prd.defline[j].discMats))],
-                numeraire=torch.full(size=(N, ), fill_value=torch.nan) if prd.defline[j].numeraire else None
+                numeraire=torch.full(size=(N, ), fill_value=torch.nan) if prd.defline[j].numeraire else None,
+                x=torch.full(size=(N, ), fill_value=torch.nan) if prd.defline[j].stateVar else None
             ) for j in range(len(prd.timeline))
         ]
 
@@ -161,6 +162,9 @@ class Vasicek(Model):
                 if self.paths[idx].numeraire is not None:
                     self._paths[idx].numeraire[:] = torch.exp(sum_x)
 
+                if self.paths[idx].x is not None:
+                    self._paths[idx].x[:] = x
+
             if self.measure == 'terminal':
                 for j in range(len(self.paths[idx].fwd)):
                     self._paths[idx].fwd[j][:] = self.calc_fwd(r0=x,
@@ -181,6 +185,9 @@ class Vasicek(Model):
                 if self.paths[idx].numeraire is not None:
                     self._paths[idx].numeraire[:] = self.calc_zcb(r0=x,
                                                                   t=self._Tn - s)
+
+                if self.paths[idx].x is not None:
+                    self._paths[idx].x[:] = x
 
             idx += 1
 

@@ -1,6 +1,8 @@
 import torch
-from application.engine.products import Product, SampleDef
+from application.engine.products import Product, CallableProduct, Scenario
+from application.engine.regressor import OLSRegressor
 from abc import ABC, abstractmethod
+
 
 MEASURES = ['risk_neutral', 'terminal']
 
@@ -98,12 +100,11 @@ class Model(ABC):
     def simulate(self, Z: torch.Tensor):
         pass
 
-def mcSim(
-        prd:    Product,
-        model:  Model,
-        rng:    RNG,
-        N:      int,
-        dTL:    torch.Tensor = torch.tensor([])):
+def mcSimPaths(prd:    Product,
+               model:  Model,
+               rng:    RNG,
+               N:      int,
+               dTL:    torch.Tensor = torch.tensor([])):
 
     # Allocate and initialize results, model and rng
     model.allocate(prd, N, dTL)
@@ -118,16 +119,79 @@ def mcSim(
     # Simulate state variables and fwd
     paths = model.simulate(Z)
 
+    return paths
+
+
+def mcSim(
+        prd:    Product,
+        mdl:    Model,
+        rng:    RNG,
+        N:      int,
+        dTL:    torch.Tensor = torch.tensor([])):
+    # Simulate paths
+    paths = mcSimPaths(prd, mdl, rng, N, dTL)
+
     # Calculate payoffs
     payoff = prd.payoff(paths)
 
     return payoff
 
-    # Discount to present value
-    # payoff_pv = model.disc_curve * payoff
 
-    # Sum across times
-    # npv = torch.sum(payoff_pv, dim=1)
 
-    # Monte Carlo Estimator
-    # return torch.mean(npv)
+
+class LSMC:
+    def __init__(self,
+                 reg:   OLSRegressor):
+        self.reg = reg
+        self.coef = None
+        self._N = None  # Number of paths
+        self._M = None  # Number of regression times
+
+    def backward(self,
+                 prd:   CallableProduct,
+                 paths: Scenario):
+        # Determine exercise values
+        ev = prd.exercise_value(paths)
+
+        self._M = len(prd.exercise_dates) - 1
+
+        self._eps = 1E-12
+
+        # Perform regression over backwards recursion and store coefficients
+        w = []
+        for k in range(self._M - 1, -1, -1):
+            self.reg.fit(X=paths[k + 1].x, y=ev[k])
+            w.insert(0, self.reg.coef)
+
+        self.coef = torch.vstack(w)
+
+    def forward(self,
+                prd:    CallableProduct,
+                paths:  Scenario):
+
+        # Exercise values
+        ev = prd.exercise_value(paths)
+        self._N = ev.size()[1]
+
+        alive = torch.ones(size=(self._N, ), dtype=torch.bool)
+        stopping_idx = torch.full(size=(self._N, ), fill_value=torch.nan)
+
+        for k in range(self._M):
+            print(k)
+            self.reg.set_coef(coef=self.coef[k])
+
+            # Continuation values
+            print('x: ', paths[k+1].x)
+            cv = self.reg.predict(X=paths[k + 1].x)
+
+            print('cv: ', cv)
+            exercise = ev[k] > cv + self._eps
+            alive = torch.logical_and(alive, exercise)
+            stopping_idx[exercise] = k
+
+        return stopping_idx
+
+
+
+
+
