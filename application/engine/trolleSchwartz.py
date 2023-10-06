@@ -99,8 +99,7 @@ class trolleSchwartz(Model):
 
         # Allocate space for state and paths (market variables)
         n = len(prdTimeline)
-        # state vars: x, v, phi1, phi2, phi3, phi4, phi5, phi6
-        # i.e. 8 state variables for each simDim
+        # 8 state vars: x, v, phi1, phi2, phi3, phi4, phi5, phi6
         # [simDim x 8 x timeline x paths]
         self._x = torch.full(size=(self.simDim, 8, len(self.timeline), N), fill_value=torch.nan)
 
@@ -138,17 +137,23 @@ class trolleSchwartz(Model):
 
         return W
 
-    def sigma(self, tau):
+    def _sigma(self, t, T):
         """sigma(0,t) = (alpha0 + alpha1(T-t)) * exp^{ -gamma *(T-t) }"""
-        return (self.alpha0 + self.alpha1 * (tau)) * torch.exp(-self.gamma * (tau))
+        return (self.alpha0 + self.alpha1 * (T-t)) * torch.exp(-self.gamma * (T-t))
 
-    def _euler_step(self, x, v, phi1, phi2, phi3, phi4, phi5, phi6, dt, dWf, dWv):
+    def _euler_step(self, X, dt, Z):
         """
-        Euler discretisation of the state variables
+        Euler discretisation of the state variables:
+        X = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
         """
+        # todo: consider subsetting X instead of unpacking
+        # how does this affect the autograd?
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in X]
+
+        dWf, dWv = self.correlatedBrownians(Z)
 
         dx = -self.gamma * x * dt + torch.sqrt(v) * dWf
-        dv = self.kappa * (self.theta - v) * dt + sigma() * torch.sqrt(v) * dWv #todo: check sigma
+        dv = self.kappa * (self.theta - v) * dt + self._sigma(t=0, T=dt) * torch.sqrt(v) * dWv
 
         dphi1 = (x - self.gamma * phi1) * dt
         dphi2 = (v - self.gamma * phi2) * dt
@@ -178,7 +183,7 @@ class trolleSchwartz(Model):
         # Initialize state variables
         for i in range(self.simDim):
             # set initial values to same for all paths
-            self._x[i,:, 0, :] = torch.tensor([[self.x0[i],
+            self._x[i, :, 0, :] = torch.tensor([[self.x0[i],
                                self.v0[i],
                                self.phi1_0[i], self.phi2_0[i], self.phi3_0[i],
                                self.phi4_0[i], self.phi5_0[i], self.phi6_0[i]] for _ in range(8)])
@@ -186,25 +191,25 @@ class trolleSchwartz(Model):
         idx = 0
 
         # Initialize numeraire
-        numeraire = torch.ones_like(self.x[0,0,0, :])
+        numeraire = torch.ones_like(self._x[0, 0, 0, :])
 
         def _fillSample(x):
             nonlocal idx, s, numeraire
             if self.measure == 'risk_neutral':
                 for j in range(len(self.paths[idx].fwd)):
-                    self._paths[idx].fwd[j] = self.calc_fwd(r0=x, #todo: rewrite this method
+                    self._paths[idx].fwd[j] = self.calc_fwd(X=x,
                                                             t=self.defline[idx].fwdRates[j].startDate - s,
                                                             delta=self.defline[idx].fwdRates[j].delta)
 
                 for j in range(len(self.paths[idx].irs)):
-                    self._paths[idx].irs[j] = self.calc_swap(r0=x, #todo: rewrite this method
+                    self._paths[idx].irs[j] = self.calc_swap(X=x,
                                                              t=self.defline[idx].irs[j].t - s,
                                                              delta=self.defline[idx].irs[j].delta,
                                                              K=self.defline[idx].irs[j].fixRate,
                                                              N=self.defline[idx].irs[j].notional)
 
                 for j in range(len(self.paths[idx].disc)):
-                    self._paths[idx].disc[j] = self.calc_zcb(r0=x, #todo: rewrite this method
+                    self._paths[idx].disc[j] = self.calc_zcb(X=x,
                                                              t=self.defline[idx].discMats[j] - s)
 
                 if self.paths[idx].numeraire is not None:
@@ -219,6 +224,7 @@ class trolleSchwartz(Model):
         # Iterate over model's timeline
         for k, s in enumerate(self.timeline[1:]):
             # State variable
+
             self._x[:,:,k+1, :] = step_func(self.x[:,:,k, :], dt[k], Z[k, :])
 
             # Numeraire
@@ -233,39 +239,65 @@ class trolleSchwartz(Model):
         return self.paths
 
 
-    def calc_zcb(self, r0, t): # todo rewrite this method
-        """P(0, t)=exp{ -A(0,t) - B(0,t) * r(t)}"""
-        if self.use_ATS:
-            return torch.exp(-self._calc_A(t) - self._calc_B(t) * r0)
+    def calc_zcb(self, PT, Pt, X, t, T):
+        """
+        # todo: not sure how to set PT (and Pt, unless we have Pt=P(0,0)= 1.0)
+        P(t, T)=P(0,T)/P(0,t) * exp{sum_i(Bx_i(T-t)x_i(t)) + sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))}
 
-        sigma_fwd = self._calc_fwd_vol(t)
-        return torch.exp(
-            (r0 - self.b) * (torch.exp(-self.a * t) - 1) / self.a - \
-            self.b * t + sigma_fwd ** 2 * t / (2 * self.a ** 2) + \
-            sigma_fwd ** 2 * (4 * torch.exp(-self.a * t) - torch.exp(-2 * self.a * t) - 3) / (4 * self.a ** 3)
-        )
+        Note:
+        X = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
+        """
+        # todo: consider subsetting X instead of unpacking
+        # how does this affect the autograd?
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in X]
 
-    def calc_fwd(self, r0, t, delta): # todo rewrite this method
-        zcb_t = self.calc_zcb(r0, t)
-        zcb_tdt = self.calc_zcb(r0, t + delta)
+        Bx = self.alpha1 / self.gamma * ( (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1) + \
+                                          (T-t) * torch.exp(-self.gamma*(T-t)) )
+        Bphi1 = self.alpha1 / self.gamma * ( torch.exp(-self.gamma*(T-t)) - 1 )
+        Bphi2 = torch.pow(self.alpha1 / self.gamma, 2) * (1/self.gamma + self.alpha0/self.alpha1) *\
+                ( (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1) + \
+                  (T-t) * torch.exp(-self.gamma*(T-t)) )
+        Bphi3 = - self.alpha1 / torch.pow(self.gamma, 2) * ( (self.alpha1 / (2*torch.pow(self.gamma,2)) + self.alpha0 / self.gamma +\
+                                                              torch.pow(self.alpha0,2) / (2*self.alpha1) ) * (torch.exp(-2*self.gamma*(T-t)) - 1) +\
+                                                             (self.alpha1 / self.gamma + self.alpha0) * (T-t) * torch.exp(-2*self.gamma*(T-t)) +\
+                                                             self.alpha1 / 2 * (T-t)**2 * torch.exp(-2*self.gamma*(T-t)) )
+        Bphi4 = torch.pow(self.alpha1 / self.gamma,2) * (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1)
+        Bphi5 = - self.alpha1 / torch.pow(self.gamma,2) * ( (self.alpha1 / self.gamma + self.alpha0) * \
+                                                            (torch.exp(-2*self.gamma*(T-t)) -1) + self.alpha1 * (T-t) * torch.exp(-2*self.gamma*(T-t)) )
+        Bphi6 = - 0.5 * torch.pow(self.alpha1 / self.gamma,2) * (torch.exp(-2*self.gamma*(T-t)) - 1)
+
+        # sum_i(Bx_i(T-t)x_i(t))
+        Bx_sum = Bx @ x[:,t,:]
+
+        # sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))
+        Bphi_sum = Bphi1 @ phi1[:,t,:] + Bphi2 @ phi2[:,t,:] + Bphi3 @ phi3[:,t,:] + Bphi4 @ phi4[:,t,:] + Bphi5 @ phi5[:,t,:] + Bphi6 @ phi6[:,t,:]
+
+        return PT / Pt * torch.exp(Bx_sum + Bphi_sum)
+
+    def calc_fwd(self, X, t, delta):
+        # todo: not sure how to set PT and Pt
+        zcb_t = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
+        zcb_tdt = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t+delta)
         return forward(zcb_t, zcb_tdt, delta)
 
-    def calc_swap(self, r0, t, delta, K=None, N=torch.tensor(1.0)): # todo rewrite this method
+    def calc_swap(self, X, t, delta, K=None, N=torch.tensor(1.0)):
         """t = T_0, ..., T_n (future dates)"""
-        zcb = self.calc_zcb(r0, t)
+        # todo: not sure how to set PT and Pt
+        zcb = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
         return swap(zcb, delta, K, N)
 
-    def calc_swap_rate(self, x, t, delta):
+    def calc_swap_rate(self, X, t, delta):
         """t = T_0, ..., T_n (future dates)"""
-        zcb = self.calc_zcb(x, t)
+        # todo: not sure how to set PT and Pt
+        zcb = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
         return swap_rate(zcb, delta)
 
-    def calc_cpl(self, x, t, delta, K): # todo rewrite this method
+    def calc_cpl(self, X, t, delta, K): # todo rewrite this method
         """
            Revise Trolle-Schwartz on this
                 Cpl(0; t, t+delta) = P(0,t) * N(d1) - P(0,t+delta) / K_bar * N(d2)
         """
-        zcb = self.calc_zcb(x, t)
+        zcb = self.calc_zcb(X, t)
 
         K_bar = 1 / (1 + delta * K)
         vol_integral = self.sigma ** 2 / (2 * self.a ** 3) * (

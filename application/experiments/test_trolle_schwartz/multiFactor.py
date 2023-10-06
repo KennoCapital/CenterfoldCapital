@@ -111,3 +111,29 @@ plt.plot(phi6, color = 'pink', label='phi6')
 plt.legend()
 plt.title('state vars phis')
 plt.show()
+
+
+def Bx(gamma, alpha0, alpha1, t, T):
+    return alpha1 / gamma * ( (1/gamma + alpha0/alpha1) * (torch.exp(-gamma*(T-t)) - 1) + (T-t) * torch.exp(-gamma*(T-t)) )
+
+def Bphi1(gamma, alpha1, t,T):
+    return alpha1 / gamma * ( torch.exp(-gamma*(T-t)) - 1 )
+
+def Bphi2(gamma, alpha0, alpha1, t,T):
+    return torch.pow(alpha1 / gamma, 2) * (1/gamma + alpha0/alpha1) * ( (1/gamma + alpha0/alpha1)* (torch.exp(-gamma*(T-t)) - 1) + (T-t) * torch.exp(-gamma*(T-t)) )
+    
+def Bphi3(gamma, alpha0, alpha1, t,T):
+    return - alpha1 / torch.pow(gamma, 2) * ( (alpha1 / (2*torch.pow(gamma,2)) + alpha0 / gamma + torch.pow(alpha0,2) / (2*alpha1) ) * (torch.exp(-2*gamma*(T-t)) - 1) + (alpha1 / gamma + alpha0) * (T-t) * torch.exp(-2*gamma*(T-t)) + alpha1 / 2 * (T-t)**2 * torch.exp(-2*gamma*(T-t)) )
+
+def Bphi4(gamma, alpha0, alpha1, t,T):
+    return torch.pow(alpha1 / gamma,2) * (1/gamma + alpha0/alpha1) * (torch.exp(-gamma*(T-t)) - 1)
+        
+def Bphi5(gamma, alpha0, alpha1, t,T):
+    return - alpha1 / torch.pow(gamma,2) * ( (alpha1 / gamma + alpha0) * (torch.exp(-2*gamma*(T-t)) -1) + alpha1 * (T-t) * torch.exp(-2*gamma*(T-t)) )
+        
+def Bphi6(gamma, alpha1, t,T):
+    return - 0.5 * torch.pow(alpha1 / gamma,2) * (torch.exp(-2*gamma*(T-t)) - 1)
+
+
+
+
