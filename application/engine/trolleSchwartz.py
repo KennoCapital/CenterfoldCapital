@@ -9,7 +9,7 @@ from application.engine.linearProducts import forward, swap, swap_rate
 class trolleSchwartz(Model):
     """
         state variables:
-        dx, dv, dphi1, dph2, dphi3, dphi4, dphi5, dphi6
+        x, v, phi1, ph2, phi3, phi4, phi5, phi6
     """
     def __init__(self,
                  gamma,
@@ -20,7 +20,7 @@ class trolleSchwartz(Model):
                  alpha1,
                  x0, v0, phi1_0, phi2_0, phi3_0, phi4_0, phi5_0, phi6_0,
                  simDim: int = 1,
-                 use_euler: bool = False,
+                 use_euler: bool = True,
                  measure:   str = 'risk_neutral'):
         """
         :param a:               Mean reversion rate
@@ -100,9 +100,19 @@ class trolleSchwartz(Model):
         # Allocate space for state and paths (market variables)
         n = len(prdTimeline)
         # 8 state vars: x, v, phi1, phi2, phi3, phi4, phi5, phi6
-        # [simDim x 8 x timeline x paths]
-        self._x = torch.full(size=(self.simDim, 8, len(self.timeline), N), fill_value=torch.nan)
+        self._x = torch.full(size=(self.simDim, len(self.timeline), N), fill_value=torch.nan)
+        self._v = torch.clone(self._x)
+        self._phi1 = torch.clone(self._x)
+        self._phi2 = torch.clone(self._x)
+        self._phi3 = torch.clone(self._x)
+        self._phi4 = torch.clone(self._x)
+        self._phi5 = torch.clone(self._x)
+        self._phi6 = torch.clone(self._x)
 
+        # self._x = torch.full(size=(self.simDim, 8, len(self.timeline), N), fill_value=torch.nan)
+
+        # for each event date we have a Sample object
+        # which contains lists of fwdRates, irs, discMats, numeraire
         self._paths = [
             Sample(
                 fwd=[torch.full(size=(N,), fill_value=torch.nan) for _ in range(len(defline[j].fwdRates))],
@@ -115,7 +125,7 @@ class trolleSchwartz(Model):
         # Specify indices of when to compute market variables
         self._tl_idx_mkt = [t in prdTimeline for t in self.timeline]
 
-    def correlatedBrownians(self, Z):
+    def _correlatedBrownians(self, Z):
         """ Generate correlated Brownian motions """
         # Covariance matrix
         if self.simDim > 1:
@@ -131,29 +141,27 @@ class trolleSchwartz(Model):
                                    [self.rho, 1.0]])
 
         # Cholesky decomposition: covMat = L x L^T
-        L = torch.linalg.cholesky_ex(covMat)
+        L = torch.linalg.cholesky(covMat)
         # Correlated BMs: W = Z x L^T
-        W = Z @ L.t() #todo: consider reshaping Z
+        W = Z.reshape(-1,2) @ L.t()
 
-        return W
+        Wf = torch.cumsum(W[:,0], dim=0)
+        Wv = torch.cumsum(W[:,1], dim=0)
+
+        return Wf.reshape((len(self.timeline)-1,-1)), Wv.reshape((len(self.timeline)-1,-1))
 
     def _sigma(self, t, T):
         """sigma(0,t) = (alpha0 + alpha1(T-t)) * exp^{ -gamma *(T-t) }"""
         return (self.alpha0 + self.alpha1 * (T-t)) * torch.exp(-self.gamma * (T-t))
 
-    def _euler_step(self, X, dt, Z):
+    def _euler_step(self, x, v, phi1, phi2, phi3, phi4, phi5, phi6, dt, dWf, dWv):
         """
         Euler discretisation of the state variables:
-        X = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6
         """
-        # todo: consider subsetting X instead of unpacking
-        # how does this affect the autograd?
-        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in X]
 
-        dWf, dWv = self.correlatedBrownians(Z)
-
-        dx = -self.gamma * x * dt + torch.sqrt(v) * dWf
-        dv = self.kappa * (self.theta - v) * dt + self._sigma(t=0, T=dt) * torch.sqrt(v) * dWv
+        dx = -self.gamma * x * dt + torch.sqrt(v) * dWf * torch.sqrt(dt)
+        dv = self.kappa * (self.theta - v) * dt + self._sigma(t=0, T=dt) * torch.sqrt(v) * dWv * torch.sqrt(dt)
 
         dphi1 = (x - self.gamma * phi1) * dt
         dphi2 = (v - self.gamma * phi2) * dt
@@ -171,7 +179,7 @@ class trolleSchwartz(Model):
         phi5 += dphi5
         phi6 += dphi6
 
-        return [x,v,phi1,phi2,phi3,phi4,phi5,phi6]
+        return x,v,phi1,phi2,phi3,phi4,phi5,phi6
 
     def simulate(self, Z):
         # Decide function for performing simulation of state variable
@@ -180,18 +188,27 @@ class trolleSchwartz(Model):
         # Calculate size of time steps
         dt = self.timeline[1:] - self.timeline[:-1]
 
+        # Compute correlated Brownian motions
+        Wf, Wv = self._correlatedBrownians(Z)
+        print(Wf.size())
+        print(Wv.size())
+
         # Initialize state variables
-        for i in range(self.simDim):
-            # set initial values to same for all paths
-            self._x[i, :, 0, :] = torch.tensor([[self.x0[i],
-                               self.v0[i],
-                               self.phi1_0[i], self.phi2_0[i], self.phi3_0[i],
-                               self.phi4_0[i], self.phi5_0[i], self.phi6_0[i]] for _ in range(8)])
+        # set initial values to same for all paths
+        self._x[:, 0, :] = self.x0
+        self._v[:, 0, :] = self.v0
+        self._phi1[:, 0, :] = self.phi1_0
+        self._phi2[:, 0, :] = self.phi2_0
+        self._phi3[:, 0, :] = self.phi3_0
+        self._phi4[:, 0, :] = self.phi4_0
+        self._phi5[:, 0, :] = self.phi5_0
+        self._phi6[:, 0, :] = self.phi6_0
+
         # and set auxiliary index
         idx = 0
 
         # Initialize numeraire
-        numeraire = torch.ones_like(self._x[0, 0, 0, :])
+        numeraire = torch.ones_like(self._x[0, 0, :])
 
         def _fillSample(x):
             nonlocal idx, s, numeraire
@@ -219,23 +236,34 @@ class trolleSchwartz(Model):
 
         # Samples at time 0
         if self._tl_idx_mkt[0]:
-            _fillSample(x=self._x[:,:,0 :])
+            _fillSample(x=[self._x[:, 0, :], self._v[:, 0, :],
+                           self._phi1[:, 0, :], self._phi2[:, 0, :],
+                           self._phi3[:, 0, :], self._phi4[:, 0, :],
+                           self._phi5[:, 0, :], self._phi6[:, 0, :]])
 
         # Iterate over model's timeline
         for k, s in enumerate(self.timeline[1:]):
-            # State variable
 
-            self._x[:,:,k+1, :] = step_func(self.x[:,:,k, :], dt[k], Z[k, :])
+            # State variables using step function
+            self._x[:,k+1, :], self._v[:,k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
+            self._phi3[:,k+1, :], self._phi4[:,k+1, :], self._phi5[:,k+1, :], self._phi6[:,k+1, :] = \
+                step_func(self._x[:,k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :],
+                          self._phi3[:,k, :], self._phi4[:,k, :], self._phi5[:,k, :], self._phi6[:,k, :],
+                          dt[k], Wf[k, :], Wv[k, :])
+            #self._x[:,:,k+1, :] = step_func(self.x[:,:,k, :], dt[k], Z[k, :])
 
             # Numeraire
             if self.measure == 'risk_neutral':
                 # Trapezoidal rule: B(t) = exp{ int_0^t r(s) ds } ~ exp{sum[ r(t) * dt ]}
-                numeraire *= torch.exp(0.5 * (self._x[k + 1, :] + self._x[k, :]) * dt[k])
+                numeraire *= 1.0 #torch.exp(0.5 * (self._x[k + 1, :] + self._x[k, :]) * dt[k])
 
             # Samples (market variables)
             if self._tl_idx_mkt[k + 1]:
-                _fillSample(x=self._x[k + 1, :])
-
+                _fillSample(x=[self._x[:, k+1, :], self._v[:, k+1, :],
+                    self._phi1[:, k+1, :], self._phi2[:, k+1, :],
+                    self._phi3[:, k+1, :], self._phi4[:, k+1, :],
+                    self._phi5[:, k+1, :], self._phi6[:, k+1, :]]
+                            )
         return self.paths
 
 
@@ -247,8 +275,6 @@ class trolleSchwartz(Model):
         Note:
         X = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
         """
-        # todo: consider subsetting X instead of unpacking
-        # how does this affect the autograd?
         x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in X]
 
         Bx = self.alpha1 / self.gamma * ( (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1) + \
@@ -278,19 +304,19 @@ class trolleSchwartz(Model):
         # todo: not sure how to set PT and Pt
         zcb_t = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
         zcb_tdt = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t+delta)
-        return forward(zcb_t, zcb_tdt, delta)
+        return torch.tensor(1.0) #zcb_t, zcb_tdt, delta)
 
     def calc_swap(self, X, t, delta, K=None, N=torch.tensor(1.0)):
         """t = T_0, ..., T_n (future dates)"""
         # todo: not sure how to set PT and Pt
         zcb = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
-        return swap(zcb, delta, K, N)
+        return torch.tensor(1.0) #swap(zcb, delta, K, N)
 
     def calc_swap_rate(self, X, t, delta):
         """t = T_0, ..., T_n (future dates)"""
         # todo: not sure how to set PT and Pt
         zcb = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
-        return swap_rate(zcb, delta)
+        return torch.tensor(1.0) #swap_rate(zcb, delta)
 
     def calc_cpl(self, X, t, delta, K): # todo rewrite this method
         """
@@ -308,10 +334,10 @@ class trolleSchwartz(Model):
         d1 = (torch.log(zcb[:-1] * K_bar / zcb[1:]) + 0.5 * vol_integral) / torch.sqrt(vol_integral)
         d2 = d1 - torch.sqrt(vol_integral)
 
-        return None #zcb[:-1] * N_cdf(d1) - zcb[1:] / K_bar * N_cdf(d2)
+        return torch.tensor(1.0) # #zcb[:-1] * N_cdf(d1) - zcb[1:] / K_bar * N_cdf(d2)
 
     def calc_cap(self, x, t, delta, K):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
-        return torch.sum(self.calc_cpl(x, t, delta, K))
+        return torch.tensor(1.0) #torch.sum(self.calc_cpl(x, t, delta, K))
 
 

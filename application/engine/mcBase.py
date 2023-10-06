@@ -30,6 +30,8 @@ class RNG:
         if self.use_av and self.N % 2 != 0:
             raise ValueError('Number of paths (N) must be even when using antithetic variates!')
 
+    # todo consider gaussMat dependencies
+
     def gaussCube(self):
         if self.use_av:
             self._check_av_dim()

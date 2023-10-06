@@ -16,7 +16,7 @@ theta = torch.tensor(.04)
 
 sigma = torch.tensor(0.3)
 
-dWf = torch.normal(mean=0.0, std=np.sqrt(dt), size=(N, M))
+dWf = torch.normal(mean=0.0, std=np.sqrt(dt), size=(5, M))
 dWv = rho * dWf + torch.sqrt(1 - rho ** 2) * torch.normal(mean=0.0, std=np.sqrt(dt), size=(N, M))
 
 Wf = torch.cumsum(dWf, dim=0)
@@ -53,20 +53,31 @@ def correlatedBrownians(Z, simDim, rho):
     print(covMat)
     # Cholesky decomposition: covMat = L x L^T
     L = torch.linalg.cholesky(covMat)
-    print(L)
+    print(L.t().size())
     # Correlated BMs: W = Z x L^T
     W = Z @ L.t()
 
     return W
-rho = torch.tensor([0.5])
+rho = torch.tensor([rho])
+#Z = torch.normal(mean=0, std=np.sqrt(dt),size=(2, N, M))
 Z = torch.randn(size=(2, N, M))
-W = correlatedBrownians(Z, 1, rho)
+W = correlatedBrownians(Z.reshape(-1,2), 1, rho) *np.sqrt(dt)
 
 plt.figure()
 plt.plot(W[:,0], color='blue')
 plt.plot(W[:,1], color = 'red')
 plt.title('Correlated BMs w Cholesky')
 plt.show()
+
+Wf2 = torch.cumsum(W[:,0], dim=0)
+Wv2 = torch.cumsum(W[:,1], dim=0)
+plt.figure()
+plt.plot(Wf2, color='blue')
+plt.plot(Wv2, color = 'red')
+plt.title('Correlated BMs w Cholesky 2')
+plt.show()
+
+
 
 for  i in range(1, N):
     dv = kappa * (theta - v[i - 1,:]) * dt + sigma * torch.sqrt(v[i - 1,:]).t() * dWv[i,:]
