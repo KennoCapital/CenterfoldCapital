@@ -290,7 +290,7 @@ def calibrate_vasicek_cap(maturities, strikes, market_prices, a=1.00, b=0.05, si
 
     return scipy.optimize.minimize(
         fun=obj, x0=torch.tensor([a, b, sigma, r0]), method='Nelder-Mead', tol=1e-12,
-        bounds=[(1E-6, 100.0), (-0.05, 1.00), (1E-6, 5.00), (-0.05, 1.00)],
+        bounds=[(1E-12, 100.0), (-0.05, 1.00), (1E-12, 5.00), (-0.05, 1.00)],
         options={
             'xatol': 1e-12,
             'fatol': 1e-12,
@@ -318,7 +318,7 @@ def calibrate_vasicek_zcb_price(maturities, market_prices, a=1.00, b=0.05, sigma
 
     return scipy.optimize.minimize(
         fun=obj, x0=torch.tensor([a, b, sigma, r0]), method='Nelder-Mead', tol=1e-12,
-        bounds=[(1E-6, 100.0), (-0.05, 1.00), (1E-6, 5.00), (-0.05, 1.00)],
+        bounds=[(1E-12, 1.000), (-0.05, 1.00), (1E-12, 5.00), (-0.05, 1.00)],
         options={
             'xatol': 1e-12,
             'fatol': 1e-12,

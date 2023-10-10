@@ -36,5 +36,5 @@ if __name__ == '__main__':
     plt.title('ZCB yields')
     plt.show()
 
-    print(calib.x)
+    print('a = {},\nb = {},\nsigma = {},\nr0 = {}'.format(*[param for param in calib.x]))
 
