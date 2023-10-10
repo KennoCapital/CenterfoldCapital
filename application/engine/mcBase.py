@@ -116,7 +116,6 @@ class LSMC:
                  paths: Scenario):
         # Determine exercise values
         ev = prd.exercise_value(paths)
-        print(ev)
 
         self._M = len(prd.exercise_dates) - 1
 
