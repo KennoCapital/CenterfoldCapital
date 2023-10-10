@@ -79,7 +79,7 @@ class trolleSchwartz(Model):
 
     @property
     def x(self):
-        return self._x
+        return [self._x, self._v, self._phi1, self._phi2, self._phi3, self._phi4, self._phi5, self._phi6]
 
     @property
     def paths(self):
@@ -206,6 +206,7 @@ class trolleSchwartz(Model):
 
         # and set auxiliary index
         idx = 0
+        s = 0.0
 
         # Initialize numeraire
         numeraire = torch.ones_like(self._x[0, 0, :])
@@ -214,6 +215,9 @@ class trolleSchwartz(Model):
             nonlocal idx, s, numeraire
             if self.measure == 'risk_neutral':
                 for j in range(len(self.paths[idx].fwd)):
+                    print('t fwd fill', self.defline[idx].fwdRates[j].startDate)
+                    print('s', s)
+                    print('delta', self.defline[idx].fwdRates[j].delta)
                     self._paths[idx].fwd[j] = self.calc_fwd(X=x,
                                                             t=self.defline[idx].fwdRates[j].startDate - s,
                                                             delta=self.defline[idx].fwdRates[j].delta)
@@ -226,8 +230,12 @@ class trolleSchwartz(Model):
                                                              N=self.defline[idx].irs[j].notional)
 
                 for j in range(len(self.paths[idx].disc)):
-                    self._paths[idx].disc[j] = self.calc_zcb(X=x,
-                                                             t=self.defline[idx].discMats[j] - s)
+                    print('T', self.defline[idx].discMats[j] - s)
+                    self._paths[idx].disc[j] = self.calc_zcb(PT= 1.0,#todo: figure out this quantity
+                                                             Pt = 1.0,
+                                                             X=x,
+                                                             t=0,
+                                                             T=self.defline[idx].discMats[j] - s)
 
                 if self.paths[idx].numeraire is not None:
                     self._paths[idx].numeraire[:] = numeraire
@@ -236,10 +244,13 @@ class trolleSchwartz(Model):
 
         # Samples at time 0
         if self._tl_idx_mkt[0]:
+            print('in this if statement')
+            s = 0.0
             _fillSample(x=[self._x[:, 0, :], self._v[:, 0, :],
                            self._phi1[:, 0, :], self._phi2[:, 0, :],
                            self._phi3[:, 0, :], self._phi4[:, 0, :],
                            self._phi5[:, 0, :], self._phi6[:, 0, :]])
+            print('time-0 went well')
 
         # Iterate over model's timeline
         for k, s in enumerate(self.timeline[1:]):
@@ -259,11 +270,13 @@ class trolleSchwartz(Model):
 
             # Samples (market variables)
             if self._tl_idx_mkt[k + 1]:
+                print('in this other if statement')
                 _fillSample(x=[self._x[:, k+1, :], self._v[:, k+1, :],
                     self._phi1[:, k+1, :], self._phi2[:, k+1, :],
                     self._phi3[:, k+1, :], self._phi4[:, k+1, :],
                     self._phi5[:, k+1, :], self._phi6[:, k+1, :]]
                             )
+                print(f'time-{k}+1 went well')
         return self.paths
 
 
@@ -275,10 +288,19 @@ class trolleSchwartz(Model):
         Note:
         X = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
         """
+        #print('X size', X.size())
+        print(X)
+        print([i.size() for i in X])
         x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in X]
+        print('x,phi6')
+        print(x.size())
+        print(phi6.size())
 
         Bx = self.alpha1 / self.gamma * ( (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1) + \
                                           (T-t) * torch.exp(-self.gamma*(T-t)) )
+        print('Bx term1', self.alpha1 / self.gamma)
+        print('Bx term2', (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1))
+        print('Bx term3', (T-t) )
         Bphi1 = self.alpha1 / self.gamma * ( torch.exp(-self.gamma*(T-t)) - 1 )
         Bphi2 = torch.pow(self.alpha1 / self.gamma, 2) * (1/self.gamma + self.alpha0/self.alpha1) *\
                 ( (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1) + \
@@ -292,30 +314,33 @@ class trolleSchwartz(Model):
                                                             (torch.exp(-2*self.gamma*(T-t)) -1) + self.alpha1 * (T-t) * torch.exp(-2*self.gamma*(T-t)) )
         Bphi6 = - 0.5 * torch.pow(self.alpha1 / self.gamma,2) * (torch.exp(-2*self.gamma*(T-t)) - 1)
 
+        print('bx size', Bx.size())
+        print('x[:,t,:] size', x[t,:].size())
         # sum_i(Bx_i(T-t)x_i(t))
-        Bx_sum = Bx @ x[:,t,:]
+        #Bx_sum = Bx @ x[:,t,:]
+        #Bx_sum = Bx @ x # I expect we have already time-sliced
 
         # sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))
-        Bphi_sum = Bphi1 @ phi1[:,t,:] + Bphi2 @ phi2[:,t,:] + Bphi3 @ phi3[:,t,:] + Bphi4 @ phi4[:,t,:] + Bphi5 @ phi5[:,t,:] + Bphi6 @ phi6[:,t,:]
+        #Bphi_sum = Bphi1 @ phi1[:,t,:] + Bphi2 @ phi2[:,t,:] + Bphi3 @ phi3[:,t,:] + Bphi4 @ phi4[:,t,:] + Bphi5 @ phi5[:,t,:] + Bphi6 @ phi6[:,t,:]
 
-        return PT / Pt * torch.exp(Bx_sum + Bphi_sum)
+        return torch.tensor(1.0) #PT / Pt * torch.exp(Bx_sum + Bphi_sum)
 
     def calc_fwd(self, X, t, delta):
         # todo: not sure how to set PT and Pt
-        zcb_t = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
-        zcb_tdt = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t+delta)
+        #zcb_t = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
+        #zcb_tdt = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t+delta)
         return torch.tensor(1.0) #zcb_t, zcb_tdt, delta)
 
     def calc_swap(self, X, t, delta, K=None, N=torch.tensor(1.0)):
         """t = T_0, ..., T_n (future dates)"""
         # todo: not sure how to set PT and Pt
-        zcb = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
+        #zcb = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
         return torch.tensor(1.0) #swap(zcb, delta, K, N)
 
     def calc_swap_rate(self, X, t, delta):
         """t = T_0, ..., T_n (future dates)"""
         # todo: not sure how to set PT and Pt
-        zcb = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
+        #zcb = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
         return torch.tensor(1.0) #swap_rate(zcb, delta)
 
     def calc_cpl(self, X, t, delta, K): # todo rewrite this method
