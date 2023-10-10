@@ -7,14 +7,14 @@ import torch
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
-seed = 1234
+seed = None
 
 deg = 5
 n = 5000
 N = 50000
 notional = torch.tensor(1e6)
 
-measure = 'risk_neutral'
+measure = 'terminal'  # TODO prices vary a lot depending on the measure used
 
 a = torch.tensor(0.86)
 b = torch.tensor(0.09)
@@ -27,7 +27,7 @@ swapFirstFixingDate = torch.tensor(0.25)
 swapLastFixingDate = torch.tensor(30.0)
 strike = torch.tensor(0.084)
 
-dTL = torch.linspace(0.0, swapLastFixingDate + delta, int(50 * (swapLastFixingDate + delta) + 1))
+dTL = torch.linspace(0.0, float(exerciseDates[-1]), 50 * int(exerciseDates[-1]) + 1)
 
 model = Vasicek(a, b, sigma, r0, True, False, measure)
 
@@ -42,7 +42,7 @@ prd = BermudanPayerSwaption(
     notional=notional
 )
 
-poly_reg = PolynomialRegressor(deg=deg, standardize=True)
+poly_reg = PolynomialRegressor(deg=deg, standardize=False)
 lsmc = LSMC(reg=poly_reg)
 
 payoff = lsmcDefaultSim(
@@ -52,3 +52,4 @@ payoff = lsmcDefaultSim(
 price = torch.mean(torch.sum(payoff, dim=0))
 
 print(f'Price = {price}')
+

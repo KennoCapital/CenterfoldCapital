@@ -271,19 +271,20 @@ class Cap(Product):
                for i in range(1, len(paths))]
         return torch.vstack(res)
 
+
 class EuropeanPayerSwaption(Product):
     def __init__(self,
                  strike:                torch.Tensor,
                  exerciseDate:          torch.Tensor,
                  delta:                 torch.Tensor,
+                 swapFirstFixingDate:   torch.Tensor,
                  swapLastFixingDate:    torch.Tensor,
-                 swapFirstFixingDate:   torch.Tensor = torch.tensor([]),
                  notional:              torch.Tensor = torch.tensor([1.0])):
         self.strike = strike
         self.exerciseDate = exerciseDate
-        self.swapLastFixingDate = swapLastFixingDate
         self.delta = delta
         self.swapFirstFixingDate = swapFirstFixingDate
+        self.swapLastFixingDate = swapLastFixingDate
         self.notional = notional
 
         self._timeline = torch.concat([torch.tensor([0.0]), exerciseDate.view(1)])
@@ -334,14 +335,14 @@ class EuropeanReceiverSwaption(Product):
                  strike:                torch.Tensor,
                  exerciseDate:          torch.Tensor,
                  delta:                 torch.Tensor,
+                 swapFirstFixingDate: torch.Tensor,
                  swapLastFixingDate:    torch.Tensor,
-                 swapFirstFixingDate:   torch.Tensor = torch.tensor([]),
                  notional:              torch.Tensor = torch.tensor([1.0])):
         self.strike = strike
         self.exerciseDate = exerciseDate
-        self.swapLastFixingDate = swapLastFixingDate
         self.delta = delta
         self.swapFirstFixingDate = swapFirstFixingDate
+        self.swapLastFixingDate = swapLastFixingDate
         self.notional = notional
 
         self._timeline = torch.concat([torch.tensor([0.0]), exerciseDate.view(1)])

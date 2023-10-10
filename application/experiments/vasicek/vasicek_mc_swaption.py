@@ -2,51 +2,67 @@ from application.engine.mcBase import mcSim, RNG
 from application.engine.products import EuropeanPayerSwaption
 from application.engine.vasicek import Vasicek
 import torch
+import matplotlib.pyplot as plt
+
 
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
-seed = 1234
+if __name__ == '__main__':
+    seed = 1234
 
-N = 1024
+    rep = 100
+    N_list = [2 ** i for i in range(10, 21)]  # ~1k to 1m
 
-a = torch.tensor(0.86)
-b = torch.tensor(0.09)
-sigma = torch.tensor(0.0148)
-r0 = torch.tensor(0.08)
+    measure = 'terminal'
 
-exerciseDate = torch.tensor(0.25)
-delta = torch.tensor(0.25)
-swapFirstFixingDate = torch.tensor(0.25)
-swapLastFixingDate = torch.tensor(1.0)
+    a = torch.tensor(0.86)
+    b = torch.tensor(0.09)
+    sigma = torch.tensor(0.0148)
+    r0 = torch.tensor(0.08)
 
-t = torch.linspace(float(exerciseDate),
-                   float(swapLastFixingDate + delta),
-                   int((swapLastFixingDate + delta - exerciseDate)/delta + 1))
+    exerciseDate = torch.tensor(5.0)
+    delta = torch.tensor(0.5)
+    swapFirstFixingDate = torch.tensor(6.0)
+    swapLastFixingDate = torch.tensor(30.0)
+    notional = torch.tensor(1e6)
 
-model = Vasicek(a, b, sigma, r0, False)
-swap_rate = model.calc_swap_rate(r0, t, delta)
+    t = torch.linspace(float(swapFirstFixingDate),
+                       float(swapLastFixingDate),
+                       int((swapLastFixingDate - swapFirstFixingDate) / delta + 1))
+
+    if measure == 'risk_neutral':
+        dTL = torch.linspace(0.0, float(exerciseDate), int(50 * exerciseDate) + 1)
+    else:
+        dTL = torch.tensor([])
+
+    model = Vasicek(a, b, sigma, r0, False, use_euler=False, measure=measure)
+    swap_rate = model.calc_swap_rate(r0, t, delta)
+    rng = RNG(seed=seed, use_av=True)
+
+    prd = EuropeanPayerSwaption(
+        strike=swap_rate,
+        exerciseDate=exerciseDate,
+        swapFirstFixingDate=swapFirstFixingDate,
+        swapLastFixingDate=swapLastFixingDate,
+        delta=delta,
+        notional=notional
+    )
 
 
-rng = RNG(seed=seed, use_av=True)
+    def priceMC(N):
+        cashflows = mcSim(prd, model, rng, N, dTL)
+        price = torch.mean(cashflows)
+        return price
 
-prd = EuropeanPayerSwaption(
-    strike=swap_rate,
-    exerciseDate=exerciseDate,
-    swapLastFixingDate=swapLastFixingDate,
-    delta=delta
-)
 
-print("=====================================================")
-print("European swaption pricing with MC & Vasicek")
-print("Strike = ", swap_rate)
-print("Exercise date = ", exerciseDate)
-print('Accrual period = ', delta)
-print("Swap last fixing date = ", swapLastFixingDate)
+    res = torch.tensor([[priceMC(N) for N in N_list] for _ in range(rep)])
 
-cashflows = mcSim(prd, model, rng, N)
-price = torch.mean(cashflows)
-print('Price =', price)
-
-# TODO rewrite and test this example
-
+    # Plotting
+    plt.plot(N_list, torch.std(res / notional, dim=0))
+    plt.ylabel('std(Price / Notional)')
+    plt.xlabel('N')
+    plt.yscale('log', base=2)
+    plt.xscale('log', base=2)
+    plt.xticks(N_list, labels=N_list, rotation=45)
+    plt.show()

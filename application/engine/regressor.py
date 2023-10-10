@@ -3,18 +3,21 @@ import torch
 
 
 def normal_equation(X: torch.Tensor, y: torch.Tensor):
-    # TODO consider using SVD as described on page 6 in "LSM reloaded" by Brian and Antoine
-    ## SVD handles multi-coliniarity
     if y.dim() == 1:
         y = y.reshape(-1, 1)
     if X.dim() == 1:
         X = X.reshape(-1, 1)
 
+    # Use "sparse" SVD to handle matrices (X) without full rank low rank / linear in a memory efficient way
+    # See https://www2.math.ethz.ch/education/bachelor/lectures/hs2014/other/linalg_INFK/svdneu.pdf
+    # or LSM Reloaded page 6
+    U, S, Vh = torch.linalg.svd(X, full_matrices=False)
+    w = Vh.T @ torch.inverse(torch.diag(S)) @ U.T @ y
 
+    #XTX_inv = torch.pinverse(X.T @ X)
+    #XTy = X.T @ y
+    #w = XTX_inv @ XTy
 
-    XTX_inv = (X.T.mm(X)).inverse()
-    XTy = X.T.mm(y)
-    w = XTX_inv.mm(XTy)
     return w.squeeze()
 
 
