@@ -8,6 +8,7 @@ M = 1  # number of processes
 dt = T / N  # time step
 
 # params
+"""
 gamma = torch.tensor(0.75)
 
 rho = torch.tensor(0.9)
@@ -15,8 +16,16 @@ kappa = torch.tensor(1.0)
 theta = torch.tensor(.04)
 
 sigma = torch.tensor(0.3)
+"""
+kappa = torch.tensor(0.0553)
+sigma = torch.tensor(0.3325)
+alpha0 = torch.tensor(0.0045)
+alpha1 = torch.tensor(0.0131)
+gamma = torch.tensor(0.3341)
+rho = torch.tensor(0.4615)
+theta = torch.tensor(0.7542)
 
-dWf = torch.normal(mean=0.0, std=np.sqrt(dt), size=(5, M))
+dWf = torch.normal(mean=0.0, std=np.sqrt(dt), size=(N, M))
 dWv = rho * dWf + torch.sqrt(1 - rho ** 2) * torch.normal(mean=0.0, std=np.sqrt(dt), size=(N, M))
 
 Wf = torch.cumsum(dWf, dim=0)
@@ -123,27 +132,6 @@ plt.legend()
 plt.title('state vars phis')
 plt.show()
 
-
-def Bx(gamma, alpha0, alpha1, t, T):
-    return alpha1 / gamma * ( (1/gamma + alpha0/alpha1) * (torch.exp(-gamma*(T-t)) - 1) + (T-t) * torch.exp(-gamma*(T-t)) )
-
-def Bphi1(gamma, alpha1, t,T):
-    return alpha1 / gamma * ( torch.exp(-gamma*(T-t)) - 1 )
-
-def Bphi2(gamma, alpha0, alpha1, t,T):
-    return torch.pow(alpha1 / gamma, 2) * (1/gamma + alpha0/alpha1) * ( (1/gamma + alpha0/alpha1)* (torch.exp(-gamma*(T-t)) - 1) + (T-t) * torch.exp(-gamma*(T-t)) )
-    
-def Bphi3(gamma, alpha0, alpha1, t,T):
-    return - alpha1 / torch.pow(gamma, 2) * ( (alpha1 / (2*torch.pow(gamma,2)) + alpha0 / gamma + torch.pow(alpha0,2) / (2*alpha1) ) * (torch.exp(-2*gamma*(T-t)) - 1) + (alpha1 / gamma + alpha0) * (T-t) * torch.exp(-2*gamma*(T-t)) + alpha1 / 2 * (T-t)**2 * torch.exp(-2*gamma*(T-t)) )
-
-def Bphi4(gamma, alpha0, alpha1, t,T):
-    return torch.pow(alpha1 / gamma,2) * (1/gamma + alpha0/alpha1) * (torch.exp(-gamma*(T-t)) - 1)
-        
-def Bphi5(gamma, alpha0, alpha1, t,T):
-    return - alpha1 / torch.pow(gamma,2) * ( (alpha1 / gamma + alpha0) * (torch.exp(-2*gamma*(T-t)) -1) + alpha1 * (T-t) * torch.exp(-2*gamma*(T-t)) )
-        
-def Bphi6(gamma, alpha1, t,T):
-    return - 0.5 * torch.pow(alpha1 / gamma,2) * (torch.exp(-2*gamma*(T-t)) - 1)
 
 
 
