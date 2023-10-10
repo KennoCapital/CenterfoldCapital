@@ -1,4 +1,4 @@
-from application.engine.mcBase import mcSim, mcSimPaths, LSMC, RNG
+from application.engine.mcBase import lsmcDefaultSim, LSMC, RNG
 from application.engine.products import BermudanPayerSwaption
 from application.engine.vasicek import Vasicek
 from application.engine.regressor import PolynomialRegressor
@@ -43,12 +43,12 @@ prd = BermudanPayerSwaption(
 )
 
 poly_reg = PolynomialRegressor(deg=deg, standardize=True)
-
 lsmc = LSMC(reg=poly_reg)
 
-preSimPaths = mcSimPaths(prd, model, rng, n, dTL)
-lsmc.backward(prd, preSimPaths)
+payoff = lsmcDefaultSim(
+    prd=prd, mdl=model, rng=rng, N=N, n=n, lsmc=lsmc, reg=poly_reg, dTL=dTL
+)
 
-paths = mcSimPaths(prd, model, rng, N, dTL)
-lsmc.forward(prd, paths)
+price = torch.mean(torch.sum(payoff, dim=0))
 
+print(f'Price = {price}')

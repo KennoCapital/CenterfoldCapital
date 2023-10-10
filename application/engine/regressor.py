@@ -3,15 +3,19 @@ import torch
 
 
 def normal_equation(X: torch.Tensor, y: torch.Tensor):
+    # TODO consider using SVD as described on page 6 in "LSM reloaded" by Brian and Antoine
+    ## SVD handles multi-coliniarity
     if y.dim() == 1:
         y = y.reshape(-1, 1)
     if X.dim() == 1:
         X = X.reshape(-1, 1)
 
+
+
     XTX_inv = (X.T.mm(X)).inverse()
     XTy = X.T.mm(y)
     w = XTX_inv.mm(XTy)
-    return w.reshape(1, -1)
+    return w.squeeze()
 
 
 class StandardScaler:
@@ -50,8 +54,9 @@ class OLSRegressor(ABC):
     def predict(self, X: torch.Tensor):
         pass
 
+
 class PolynomialRegressor(OLSRegressor):
-    def __init__(self, deg: int, standardize: bool = False):
+    def __init__(self, deg: int = 5, standardize: bool = False):
         self.deg = deg
         self.standardize = standardize
         self._coef = None
@@ -90,5 +95,4 @@ class PolynomialRegressor(OLSRegressor):
 
     def predict(self, X, idx: int = None):
         phi = self._create_features(X)
-        return phi.mm(self._coef)
-
+        return phi.mm(self._coef).squeeze()

@@ -5,6 +5,13 @@ def annuity():
     raise NotImplementedError
 
 
+def zcb_yield_to_price(t, y):
+    return torch.exp(-y * t)
+
+def zcb_price_to_yield(t, zcb):
+    return - torch.log(zcb) / t
+
+
 def forward(zcb1, zcb2, delta):
     """F(t,T,T+delta) = 1 / delta * ( P(t,T) / P(t,T+delta) - 1 )"""
     return 1 / delta * (zcb1 / zcb2 - 1)

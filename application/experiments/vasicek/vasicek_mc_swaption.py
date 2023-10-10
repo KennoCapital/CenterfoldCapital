@@ -17,6 +17,7 @@ r0 = torch.tensor(0.08)
 
 exerciseDate = torch.tensor(0.25)
 delta = torch.tensor(0.25)
+swapFirstFixingDate = torch.tensor(0.25)
 swapLastFixingDate = torch.tensor(1.0)
 
 t = torch.linspace(float(exerciseDate),
@@ -46,3 +47,6 @@ print("Swap last fixing date = ", swapLastFixingDate)
 cashflows = mcSim(prd, model, rng, N)
 price = torch.mean(cashflows)
 print('Price =', price)
+
+# TODO rewrite and test this example
+

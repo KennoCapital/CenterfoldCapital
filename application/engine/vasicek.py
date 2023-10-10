@@ -253,6 +253,7 @@ class Vasicek(Model):
            Solution to Filipovic's prop. 7.2
                 Cpl(0; t, t+delta) = P(0,t) * N(d1) - P(0,t+delta) / K_bar * N(d2)
         """
+        # TODO rewrite this function so that t only needs to be t and not [t, t+delta]
         zcb = self.calc_zcb(r0, t)
 
         K_bar = 1 / (1 + delta * K)
@@ -271,7 +272,7 @@ class Vasicek(Model):
         return torch.sum(self.calc_cpl(r0, t, delta, K))
 
 
-def calibrate_vasicek(maturities, strikes, market_prices, a=1.00, b=0.05, sigma=0.2, r0=0.05, delta=0.25):
+def calibrate_vasicek_cap(maturities, strikes, market_prices, a=1.00, b=0.05, sigma=0.2, r0=0.05, delta=0.25):
     def obj(x):
         x = torch.tensor(x)
         a, b, sigma, r0 = x[0], x[1], x[2], x[3]
@@ -282,6 +283,34 @@ def calibrate_vasicek(maturities, strikes, market_prices, a=1.00, b=0.05, sigma=
             t = torch.linspace(start=delta, end=T, steps=int(T / delta))
             cap = model.calc_cap(r0, t, delta, strikes[i])
             model_prices[i] = cap
+
+        err = model_prices - market_prices
+        mse = torch.linalg.norm(err)**2
+        return mse
+
+    return scipy.optimize.minimize(
+        fun=obj, x0=torch.tensor([a, b, sigma, r0]), method='Nelder-Mead', tol=1e-12,
+        bounds=[(1E-6, 100.0), (-0.05, 1.00), (1E-6, 5.00), (-0.05, 1.00)],
+        options={
+            'xatol': 1e-12,
+            'fatol': 1e-12,
+            'maxiter': 2500,
+            'maxfev': 2500,
+            'adaptive': True,
+            'disp': True
+        })
+
+
+def calibrate_vasicek_zcb_price(maturities, market_prices, a=1.00, b=0.05, sigma=0.2, r0=0.05):
+    def obj(x):
+        x = torch.tensor(x)
+        a, b, sigma, r0 = x[0], x[1], x[2], x[3]
+        model = Vasicek(a, b, sigma)
+        model_prices = torch.empty_like(market_prices, dtype=torch.float64)
+
+        for i, T in enumerate(maturities):
+            zcb = model.calc_zcb(r0, T)
+            model_prices[i] = zcb
 
         err = model_prices - market_prices
         mse = torch.linalg.norm(err)**2

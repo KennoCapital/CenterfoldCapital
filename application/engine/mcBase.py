@@ -1,6 +1,6 @@
 import torch
 from application.engine.products import Product, CallableProduct, Scenario
-from application.engine.regressor import OLSRegressor
+from application.engine.regressor import OLSRegressor, PolynomialRegressor
 from abc import ABC, abstractmethod
 
 
@@ -100,42 +100,6 @@ class Model(ABC):
     def simulate(self, Z: torch.Tensor):
         pass
 
-def mcSimPaths(prd:    Product,
-               model:  Model,
-               rng:    RNG,
-               N:      int,
-               dTL:    torch.Tensor = torch.tensor([])):
-
-    # Allocate and initialize results, model and rng
-    model.allocate(prd, N, dTL)
-
-    # Set dimensions
-    rng.N = N
-    rng.M = len(model.timeline) - 1
-
-    # Draw random variables
-    Z = rng.gaussMat()
-
-    # Simulate state variables and fwd
-    paths = model.simulate(Z)
-
-    return paths
-
-
-def mcSim(
-        prd:    Product,
-        mdl:    Model,
-        rng:    RNG,
-        N:      int,
-        dTL:    torch.Tensor = torch.tensor([])):
-    # Simulate paths
-    paths = mcSimPaths(prd, mdl, rng, N, dTL)
-
-    # Calculate payoffs
-    payoff = prd.payoff(paths)
-
-    return payoff
-
 
 
 
@@ -174,24 +138,91 @@ class LSMC:
         self._N = ev.size()[1]
 
         alive = torch.ones(size=(self._N, ), dtype=torch.bool)
-        stopping_idx = torch.full(size=(self._N, ), fill_value=torch.nan)
+        stopping_idx = torch.full(size=(self._N, ), fill_value=self._M, dtype=torch.int)
 
         for k in range(self._M):
-            print(k)
             self.reg.set_coef(coef=self.coef[k])
 
             # Continuation values
-            print('x: ', paths[k+1].x)
             cv = self.reg.predict(X=paths[k + 1].x)
-
-            print('cv: ', cv)
             exercise = ev[k] > cv + self._eps
             alive = torch.logical_and(alive, exercise)
             stopping_idx[exercise] = k
 
         return stopping_idx
 
+def mcSimPaths(prd:    Product,
+               model:  Model,
+               rng:    RNG,
+               N:      int,
+               dTL:    torch.Tensor = torch.tensor([])):
+
+    # Allocate and initialize results, model and rng
+    model.allocate(prd, N, dTL)
+
+    # Set dimensions
+    rng.N = N
+    rng.M = len(model.timeline) - 1
+
+    # Draw random variables
+    Z = rng.gaussMat()
+
+    # Simulate state variables and fwd
+    paths = model.simulate(Z)
+
+    return paths
 
 
+def mcSim(
+        prd:    Product,
+        mdl:    Model,
+        rng:    RNG,
+        N:      int,
+        dTL:    torch.Tensor = torch.tensor([])):
+    # Simulate paths
+    paths = mcSimPaths(prd, mdl, rng, N, dTL)
+
+    # Calculate payoffs
+    payoff = prd.payoff(paths)
+
+    return payoff
 
 
+def lsmcPayoff(
+        prd:            CallableProduct,
+        preSimPaths:    Scenario,
+        paths:          Scenario,
+        lsmc:           LSMC):
+    # Fit estimator of continuation value using paths form the pre-simulation
+    lsmc.backward(prd, preSimPaths)
+
+    # Determine exercise indices of the paths used for pricing
+    exercise_idx = lsmc.forward(prd, paths)
+    prd.set_exercise_idx(exercise_idx=exercise_idx)
+
+    # Calculate payoffs
+    payoff = prd.payoff(paths)
+
+    return payoff
+
+
+def lsmcDefaultSim(
+        prd:            CallableProduct,
+        mdl:            Model,
+        rng:            RNG,
+        N:              int,
+        n:              int,
+        lsmc:           LSMC = None,
+        reg:            OLSRegressor = None,
+        dTL:            torch.Tensor = torch.Tensor([])):
+    if reg is None:
+        reg = PolynomialRegressor()
+    if lsmc is None:
+        lsmc = LSMC(reg=reg)
+
+    preSimPaths = mcSimPaths(prd, mdl, rng, n, dTL)
+    paths = mcSimPaths(prd, mdl, rng, N, dTL)
+
+    payoff = lsmcPayoff(prd=prd, preSimPaths=preSimPaths, paths=paths, lsmc=lsmc)
+
+    return payoff

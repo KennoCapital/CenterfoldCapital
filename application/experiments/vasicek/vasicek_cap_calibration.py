@@ -1,4 +1,4 @@
-from application.engine.vasicek import Vasicek, calibrate_vasicek
+from application.engine.vasicek import Vasicek, calibrate_vasicek_cap
 import torch
 
 torch.set_default_dtype(torch.float64)
@@ -26,7 +26,7 @@ if __name__ == '__main__':
         market_prices[i] = cap
 
     # Calibration
-    calib = calibrate_vasicek(maturities, strikes, market_prices)
+    calib = calibrate_vasicek_cap(maturities, strikes, market_prices)
     a, b, sigma, r0 = torch.tensor(calib.x)
 
     # Model prices
