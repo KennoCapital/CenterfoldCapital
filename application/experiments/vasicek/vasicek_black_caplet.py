@@ -10,8 +10,7 @@ if __name__ == '__main__':
     b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     r0 = torch.tensor(0.08)
-    n = int(T / delta - 1)
-    t = torch.linspace(start=delta, end=T, steps=n + 1)
+    t = torch.linspace(start=delta, end=T, steps=int(T / delta))
 
     # Calculate ATM cap price
     mld = Vasicek(a, b, sigma, use_ATS=True)
