@@ -13,8 +13,7 @@ class InterestRateSwapDef:
 
     def __post_init__(self):
         self.delta = (self.fixingDates[1] - self.fixingDates[0]).view(1)  # Assumes constant delta
-        self.t = self.fixingDates.reshape(-1, 1)#torch.concat([self.fixingDates, self.fixingDates[-1] + self.delta], dim=0).reshape(-1, 1)
-
+        self.t = self.fixingDates.reshape(-1, 1)
 
 @dataclass
 class ForwardRateDef:
