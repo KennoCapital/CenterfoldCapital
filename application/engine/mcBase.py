@@ -105,11 +105,15 @@ class Model(ABC):
 
 class LSMC:
     def __init__(self,
-                 reg:   OLSRegressor):
+                 reg:           OLSRegressor,
+                 use_only_itm:  bool = True):
         self.reg = reg
+        self.use_only_itm = use_only_itm
         self.coef = None
         self._N = None  # Number of paths
         self._M = None  # Number of regression times
+        self._eps = 1E-12
+        self._min_itm = 1024
 
     def backward(self,
                  prd:   CallableProduct,
@@ -124,7 +128,9 @@ class LSMC:
         # Perform regression over backwards recursion and store coefficients
         w = []
         for k in range(self._M - 1, -1, -1):
-            self.reg.fit(X=paths[k + 1].x, y=ev[k])
+            itm = ev[k] > 0.0 + self._eps
+            itm = itm if (self.use_only_itm and torch.sum(itm) >= self._min_itm) else torch.ones_like(ev[k], dtype=torch.bool)
+            self.reg.fit(X=paths[k + 1].x[itm], y=ev[k][itm])
             w.insert(0, self.reg.coef)
 
         self.coef = torch.vstack(w)
@@ -214,11 +220,12 @@ def lsmcDefaultSim(
         n:              int,
         lsmc:           LSMC = None,
         reg:            OLSRegressor = None,
+        use_only_itm:   bool = True,
         dTL:            torch.Tensor = torch.Tensor([])):
     if reg is None:
         reg = PolynomialRegressor()
     if lsmc is None:
-        lsmc = LSMC(reg=reg)
+        lsmc = LSMC(reg=reg, use_only_itm=use_only_itm)
 
     preSimPaths = mcSimPaths(prd, mdl, rng, n, dTL)
     paths = mcSimPaths(prd, mdl, rng, N, dTL)

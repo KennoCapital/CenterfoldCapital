@@ -392,13 +392,13 @@ class BermudanPayerSwaption(CallableProduct):
                  strike:                torch.Tensor,
                  exerciseDates:         torch.Tensor,
                  delta:                 torch.Tensor,
+                 swapFirstFixingDate:   torch.Tensor,
                  swapLastFixingDate:    torch.Tensor,
-                 swapFirstFixingDate:   torch.Tensor = torch.tensor([]),
                  notional:              torch.Tensor = torch.tensor([1.0])):
         self.strike = strike
         self._exerciseDates = exerciseDates
-        self.swapLastFixingDate = swapLastFixingDate
         self.delta = delta
+        self.swapLastFixingDate = swapLastFixingDate
         self.swapFirstFixingDate = swapFirstFixingDate
         self.notional = notional
         self._exercise_idx = None
@@ -407,7 +407,7 @@ class BermudanPayerSwaption(CallableProduct):
         self._k = int(not self._exerciseAtTimeZero)  # Auxiliary index used in the methods `payoff` and `early_exercise`
 
         swapFixingDates = [torch.linspace(
-            float(t),
+            t,
             float(self.swapLastFixingDate),
             int((self.swapLastFixingDate - t) / self.delta) + 1
         ) for t in exerciseDates]
@@ -441,12 +441,14 @@ class BermudanPayerSwaption(CallableProduct):
         self._defline += [
             SampleDef(
                 fwdRates=[],
-                irs=[InterestRateSwapDef(fixingDates=swapFixingDates[t], fixRate=self.strike, notional=self.notional)],
+                irs=[InterestRateSwapDef(fixingDates=swapFixingDates[j], fixRate=self.strike, notional=self.notional)],
                 discMats=torch.tensor([]),
                 numeraire=True,
                 stateVar=True
-            ) for t in range(len(self._timeline[1:]))
+            ) for j in range(1, len(self._timeline))
         ]
+
+
         self._payoffLabels = [f'max[swap({t}) ; 0.0]' for t in exerciseDates]
 
     @property
@@ -470,7 +472,7 @@ class BermudanPayerSwaption(CallableProduct):
         return self._exercise_idx
 
     def exercise_value(self, paths: Scenario):
-        res = [max0(s.irs[0]) * paths[0].numeraire / s.numeraire for s in paths[self._k:]]
+        res = [max0(paths[j].irs[0]) * paths[0].numeraire / paths[j].numeraire for j in range(self._k, len(paths))]
         return torch.vstack(res)
 
     def set_exercise_idx(self, exercise_idx: torch.Tensor):

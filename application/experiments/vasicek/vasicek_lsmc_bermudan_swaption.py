@@ -8,24 +8,24 @@ torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
-    seed = 1234
+    seed = None
 
     deg = 5
-    n = 25000
-    N = 500000
+    n = 5000
+    N = 50000
 
-    measure = 'risk_neutral'
+    measure = 'terminal'
 
     a = torch.tensor(0.86)
     b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     r0 = torch.tensor(0.08)
 
-    exerciseDates = torch.tensor([5.0, 10.0, 15.0])
+    exerciseDates = torch.tensor([0.0, 5.0, 10.0, 15.0])
     delta = torch.tensor(0.25)
-    swapFirstFixingDate = torch.tensor(0.25)
+    swapFirstFixingDate = torch.tensor(15.0)
     swapLastFixingDate = torch.tensor(30.0)
-    strike = torch.tensor(0.084)
+    # strike = torch.tensor(0.09102013)
     notional = torch.tensor(1e6)
 
     if measure == 'risk_neutral':
@@ -33,7 +33,12 @@ if __name__ == '__main__':
     else:
         dTL = torch.tensor([])
 
-    model = Vasicek(a, b, sigma, r0, True, False, measure)
+    model = Vasicek(a, b, sigma, r0, False, False, measure)
+
+    t = torch.linspace(float(swapFirstFixingDate),
+                       float(swapLastFixingDate + delta),
+                       int((swapLastFixingDate - swapFirstFixingDate + delta) / delta) + 1)
+    strike = model.calc_swap_rate(r0, t, delta)
 
     rng = RNG(seed=seed, use_av=True)
 
@@ -47,7 +52,7 @@ if __name__ == '__main__':
         notional=notional
     )
 
-    poly_reg = PolynomialRegressor(deg=deg, standardize=False)
+    poly_reg = PolynomialRegressor(deg=deg, standardize=True)
     lsmc = LSMC(reg=poly_reg)
 
     payoff = lsmcDefaultSim(
@@ -55,6 +60,7 @@ if __name__ == '__main__':
     )
 
     price_bermudan_payer_swpt = torch.mean(torch.sum(payoff, dim=0))
+    print(bermudan_payer_swpt.exercise_idx)
 
     print(f'BermudanPayerSwpt = {price_bermudan_payer_swpt}')
 
