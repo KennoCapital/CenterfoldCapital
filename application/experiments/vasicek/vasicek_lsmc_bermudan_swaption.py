@@ -60,7 +60,6 @@ if __name__ == '__main__':
     )
 
     price_bermudan_payer_swpt = torch.mean(torch.sum(payoff, dim=0))
-    print(bermudan_payer_swpt.exercise_idx)
 
     print(f'BermudanPayerSwpt = {price_bermudan_payer_swpt}')
 
