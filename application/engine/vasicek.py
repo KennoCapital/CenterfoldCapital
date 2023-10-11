@@ -239,14 +239,16 @@ class Vasicek(Model):
         return forward(zcb_t, zcb_tdt, delta)
 
     def calc_swap(self, r0, t, delta, K=None, N=torch.tensor(1.0)):
-        """t = T_0, ..., T_n (future dates)"""
+        """t = T_0, ..., T_{n-1} (fixing dates)"""
         zcb = self.calc_zcb(r0, t)
+        zcb_tdt = self.calc_zcb(r0, t[-1] + delta).view(-1)
         return swap(zcb, delta, K, N)
 
     def calc_swap_rate(self, r0, t, delta):
-        """t = T_0, ..., T_n (future dates)"""
+        """t = T_0, ..., T_{n-1} (fixing dates)"""
         zcb = self.calc_zcb(r0, t)
-        return swap_rate(zcb, delta)
+        zcb_tdt = self.calc_zcb(r0, t[-1] + delta).view(-1)
+        return swap_rate(torch.concat([zcb, zcb_tdt]), delta)
 
     def calc_cpl(self, r0, t, delta, K):
         """

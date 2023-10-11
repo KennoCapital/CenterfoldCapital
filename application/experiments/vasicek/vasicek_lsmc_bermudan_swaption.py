@@ -36,8 +36,8 @@ if __name__ == '__main__':
     model = Vasicek(a, b, sigma, r0, False, False, measure)
 
     t = torch.linspace(float(swapFirstFixingDate),
-                       float(swapLastFixingDate + delta),
-                       int((swapLastFixingDate - swapFirstFixingDate + delta) / delta) + 1)
+                       float(swapLastFixingDate),
+                       int((swapLastFixingDate - swapFirstFixingDate) / delta) + 1)
     strike = model.calc_swap_rate(r0, t, delta)
 
     rng = RNG(seed=seed, use_av=True)
