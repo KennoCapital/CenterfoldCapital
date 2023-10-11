@@ -13,8 +13,7 @@ class InterestRateSwapDef:
 
     def __post_init__(self):
         self.delta = (self.fixingDates[1] - self.fixingDates[0]).view(1)  # Assumes constant delta
-        self.t = torch.concat([self.fixingDates, self.fixingDates[-1] + self.delta], dim=0).reshape(-1, 1)
-
+        self.t = self.fixingDates.reshape(-1, 1)
 
 @dataclass
 class ForwardRateDef:
@@ -33,6 +32,7 @@ class SampleDef:
     irs:        list[InterestRateSwapDef]
     discMats:   torch.Tensor = torch.tensor([])
     numeraire:  bool = True
+    stateVar:   bool = False
 
 
 @dataclass
@@ -42,6 +42,7 @@ class Sample:
     irs:        list[torch.Tensor]
     disc:       list[torch.Tensor]
     numeraire:  torch.Tensor
+    x:          torch.Tensor
 
 
 Scenario = list[Sample]
@@ -73,6 +74,25 @@ class Product(ABC):
     def payoff(self, paths: Scenario) -> torch.Tensor:
         pass
 
+
+class CallableProduct(Product):
+    @abstractmethod
+    def exercise_value(self, paths: Scenario):
+        pass
+
+    @abstractmethod
+    def set_exercise_idx(self, exercise_idx: torch.Tensor):
+        pass
+
+    @property
+    @abstractmethod
+    def exercise_dates(self) -> torch.Tensor:
+        pass
+
+    @property
+    @abstractmethod
+    def exercise_idx(self) -> torch.Tensor:
+        pass
 
 class Caplet(Product):
     def __init__(self,
@@ -124,7 +144,8 @@ class Caplet(Product):
                 numeraire=True
             )
         ]
-        self._payoffLabels = [f'{delta}*max[F({t},{t + delta})-{strike} ; 0.0]' for t in self._timeline[1]]
+
+        self._payoffLabels = [f'{delta}*max[F({start},{start + delta})-{strike} ; 0.0]']
 
     @property
     def Tn(self):
@@ -249,25 +270,24 @@ class Cap(Product):
                for i in range(1, len(paths))]
         return torch.vstack(res)
 
+
 class EuropeanPayerSwaption(Product):
     def __init__(self,
                  strike:                torch.Tensor,
                  exerciseDate:          torch.Tensor,
                  delta:                 torch.Tensor,
+                 swapFirstFixingDate:   torch.Tensor,
                  swapLastFixingDate:    torch.Tensor,
-                 swapFirstFixingDate:   torch.Tensor = torch.tensor([]),
                  notional:              torch.Tensor = torch.tensor([1.0])):
         self.strike = strike
         self.exerciseDate = exerciseDate
-        self.swapLastFixingDate = swapLastFixingDate
         self.delta = delta
         self.swapFirstFixingDate = swapFirstFixingDate
+        self.swapLastFixingDate = swapLastFixingDate
         self.notional = notional
 
-        if len(swapFirstFixingDate) == 0 or swapFirstFixingDate is None:
-            self.swapFirstFixingDate = exerciseDate
+        self._timeline = torch.concat([torch.tensor([0.0]), exerciseDate.view(1)])
 
-        self._timeline = exerciseDate.view(1)
         swapFixingDates = torch.linspace(
             float(self.swapFirstFixingDate),
             float(self.swapLastFixingDate),
@@ -275,15 +295,22 @@ class EuropeanPayerSwaption(Product):
         )
 
         self._defline = [
+            SampleDef(fwdRates=[], irs=[], discMats=torch.tensor([]),
+                      numeraire=True,
+                      stateVar=False)
+        ]
+
+        self._defline += [
             SampleDef(
                 fwdRates=[],
                 irs=[InterestRateSwapDef(fixingDates=swapFixingDates, fixRate=self.strike, notional=self.notional)],
-                discMats= swapFixingDates + self.delta,
-                numeraire=True
+                discMats=torch.tensor([]),
+                numeraire=True,
+                stateVar=False
             )
         ]
 
-        self._payoffLabels = [f' max[ swap({exerciseDate}) ; 0.0]']
+        self._payoffLabels = [f'max[swap({exerciseDate}) ; 0.0]']
 
     @property
     def timeline(self):
@@ -298,28 +325,27 @@ class EuropeanPayerSwaption(Product):
         return self._payoffLabels
 
     def payoff(self, paths):
-        res = [max0(s.irs[0]) / s.numeraire * s.disc[0] for s in paths]
-        return torch.vstack(res)
+        res = max0(paths[1].irs[0]) * paths[0].numeraire / paths[1].numeraire
+        return res
+
 
 class EuropeanReceiverSwaption(Product):
     def __init__(self,
                  strike:                torch.Tensor,
                  exerciseDate:          torch.Tensor,
                  delta:                 torch.Tensor,
+                 swapFirstFixingDate: torch.Tensor,
                  swapLastFixingDate:    torch.Tensor,
-                 swapFirstFixingDate:   torch.Tensor = torch.tensor([]),
                  notional:              torch.Tensor = torch.tensor([1.0])):
         self.strike = strike
         self.exerciseDate = exerciseDate
-        self.swapLastFixingDate = swapLastFixingDate
         self.delta = delta
         self.swapFirstFixingDate = swapFirstFixingDate
+        self.swapLastFixingDate = swapLastFixingDate
         self.notional = notional
 
-        if len(swapFirstFixingDate) == 0 or swapFirstFixingDate is None:
-            self.swapFirstFixingDate = exerciseDate
+        self._timeline = torch.concat([torch.tensor([0.0]), exerciseDate.view(1)])
 
-        self._timeline = exerciseDate.view(1)
         swapFixingDates = torch.linspace(
             float(self.swapFirstFixingDate),
             float(self.swapLastFixingDate),
@@ -327,14 +353,21 @@ class EuropeanReceiverSwaption(Product):
         )
 
         self._defline = [
+            SampleDef(fwdRates=[], irs=[], discMats=torch.tensor([]),
+                      numeraire=True,
+                      stateVar=False)
+        ]
+
+        self._defline += [
             SampleDef(
                 fwdRates=[],
                 irs=[InterestRateSwapDef(fixingDates=swapFixingDates, fixRate=self.strike, notional=self.notional)],
-                discMats= swapFixingDates + self.delta,
-                numeraire=True
+                discMats=torch.tensor([]),
+                numeraire=True,
+                stateVar=False
             )
         ]
-        self._payoffLabels = [f' max[ swap({exerciseDate}) ; 0.0]']
+        self._payoffLabels = [f'max[swap({exerciseDate}) ; 0.0]']
 
     @property
     def timeline(self):
@@ -349,43 +382,73 @@ class EuropeanReceiverSwaption(Product):
         return self._payoffLabels
 
     def payoff(self, paths):
-        res = [max0(-s.irs[0]) / s.numeraire * s.disc[0] for s in paths]
-        return torch.vstack(res)
+        res = max0(-paths[1].irs[0]) * paths[0].numeraire / paths[1].numeraire
+        return res
 
-class BermudanPayerSwaption(Product):
+
+class BermudanPayerSwaption(CallableProduct):
     def __init__(self,
                  strike:                torch.Tensor,
                  exerciseDates:         torch.Tensor,
                  delta:                 torch.Tensor,
+                 swapFirstFixingDate:   torch.Tensor,
                  swapLastFixingDate:    torch.Tensor,
-                 swapFirstFixingDate:   torch.Tensor = torch.tensor([]),
                  notional:              torch.Tensor = torch.tensor([1.0])):
         self.strike = strike
-        self.exerciseDates = exerciseDates
-        self.swapLastFixingDate = swapLastFixingDate
+        self._exerciseDates = exerciseDates
         self.delta = delta
+        self.swapLastFixingDate = swapLastFixingDate
         self.swapFirstFixingDate = swapFirstFixingDate
         self.notional = notional
+        self._exercise_idx = None
 
-        if len(swapFirstFixingDate) == 0 or swapFirstFixingDate is None:
-            self.swapFirstFixingDate = exerciseDates[0]
+        self._exerciseAtTimeZero = 0.0 in exerciseDates
+        self._k = int(not self._exerciseAtTimeZero)  # Auxiliary index used in the methods `payoff` and `early_exercise`
 
-        self._timeline = exerciseDates
         swapFixingDates = [torch.linspace(
-            float(t),
+            t,
             float(self.swapLastFixingDate),
             int((self.swapLastFixingDate - t) / self.delta) + 1
         ) for t in exerciseDates]
 
-        self._defline = [
+        # Exercise at time 0
+        if self._exerciseAtTimeZero:
+            self._timeline = exerciseDates
+            self._defline = [
+                SampleDef(
+                    fwdRates=[],
+                    irs=[InterestRateSwapDef(fixingDates=swapFixingDates[0],
+                                             fixRate=self.strike,
+                                             notional=self.notional)],
+                    discMats=torch.tensor([]),
+                    numeraire=True,
+                    stateVar=True
+                )
+            ]
+        else:
+            self._timeline = torch.concat([torch.tensor([0.0]), exerciseDates])
+            self._defline = [
+                SampleDef(
+                    fwdRates=[],
+                    irs=[],
+                    discMats=torch.tensor([]),
+                    numeraire=True,
+                    stateVar=False
+                )
+            ]
+
+        self._defline += [
             SampleDef(
                 fwdRates=[],
-                irs=[InterestRateSwapDef(fixingDates=swapFixingDates[t], fixRate=self.strike, notional=self.notional)],
-                discMats= swapFixingDates[t] + self.delta,
-                numeraire=True
-            ) for t in range(len(self._timeline))
+                irs=[InterestRateSwapDef(fixingDates=swapFixingDates[j], fixRate=self.strike, notional=self.notional)],
+                discMats=torch.tensor([]),
+                numeraire=True,
+                stateVar=True
+            ) for j in range(1, len(self._timeline))
         ]
-        self._payoffLabels = [f' max[ swap({t}) ; 0.0]' for t in exerciseDates]
+
+
+        self._payoffLabels = [f'max[swap({t}) ; 0.0]' for t in exerciseDates]
 
     @property
     def timeline(self):
@@ -399,6 +462,31 @@ class BermudanPayerSwaption(Product):
     def payoffLabels(self):
         return self._payoffLabels
 
-    def payoff(self, paths):
-        res = [max0(s.irs[0]) / s.numeraire * s.disc[0] for s in paths]
+    @property
+    def exercise_dates(self):
+        return self._exerciseDates
+
+    @property
+    def exercise_idx(self) -> torch.Tensor:
+        return self._exercise_idx
+
+    def exercise_value(self, paths: Scenario):
+        res = [max0(paths[j].irs[0]) * paths[0].numeraire / paths[j].numeraire for j in range(self._k, len(paths))]
         return torch.vstack(res)
+
+    def set_exercise_idx(self, exercise_idx: torch.Tensor):
+        self._exercise_idx = exercise_idx
+
+    def payoff(self, paths: Scenario):
+        N = len(paths[0].numeraire)
+
+        irs = torch.vstack([s.irs[0] for s in paths[self._k:]])
+        df = torch.vstack([paths[0].numeraire / s.numeraire for s in paths[self._k:]])
+
+        M = len(paths[self._k:])
+        mask = torch.full(size=(M, N), fill_value=False)
+        mask[self.exercise_idx, torch.arange(N)] = True
+        res = max0(irs * mask) * df
+
+        # res = max0(irs[self.exercise_idx, torch.arange(N)]) * df[self.exercise_idx, torch.arange(N)]
+        return res

@@ -1,6 +1,8 @@
 import torch
-from application.engine.products import Product, SampleDef
+from application.engine.products import Product, CallableProduct, Scenario
+from application.engine.regressor import OLSRegressor, PolynomialRegressor
 from abc import ABC, abstractmethod
+
 
 MEASURES = ['risk_neutral', 'terminal']
 
@@ -98,12 +100,68 @@ class Model(ABC):
     def simulate(self, Z: torch.Tensor):
         pass
 
-def mcSim(
-        prd:    Product,
-        model:  Model,
-        rng:    RNG,
-        N:      int,
-        dTL:    torch.Tensor = torch.tensor([])):
+
+
+
+class LSMC:
+    def __init__(self,
+                 reg:           OLSRegressor,
+                 use_only_itm:  bool = True):
+        self.reg = reg
+        self.use_only_itm = use_only_itm
+        self.coef = None
+        self._N = None  # Number of paths
+        self._M = None  # Number of regression times
+        self._eps = 1E-12
+        self._min_itm = 1024
+
+    def backward(self,
+                 prd:   CallableProduct,
+                 paths: Scenario):
+        # Determine exercise values
+        ev = prd.exercise_value(paths)
+
+        self._M = len(prd.exercise_dates) - 1
+
+        self._eps = 1E-12
+
+        # Perform regression over backwards recursion and store coefficients
+        w = []
+        for k in range(self._M - 1, -1, -1):
+            itm = ev[k] > 0.0 + self._eps
+            itm = itm if (self.use_only_itm and torch.sum(itm) >= self._min_itm) else torch.ones_like(ev[k], dtype=torch.bool)
+            self.reg.fit(X=paths[k + 1].x[itm], y=ev[k][itm])
+            w.insert(0, self.reg.coef)
+
+        self.coef = torch.vstack(w)
+
+    def forward(self,
+                prd:    CallableProduct,
+                paths:  Scenario):
+
+        # Exercise values
+        ev = prd.exercise_value(paths)
+        self._N = ev.size()[1]
+
+        alive = torch.ones(size=(self._N, ), dtype=torch.bool)
+        stopping_idx = torch.full(size=(self._N, ), fill_value=self._M, dtype=torch.int)
+
+        for k in range(self._M):
+            self.reg.set_coef(coef=self.coef[k])
+
+            # Continuation values
+            cv = self.reg.predict(X=paths[k + 1].x)
+            exercise = ev[k] > cv + self._eps
+            alive = torch.logical_and(alive, exercise)
+            stopping_idx[exercise] = k
+
+        return stopping_idx
+
+def mcSimPaths(prd:    Product,
+               model:  Model,
+               rng:    RNG,
+               N:      int,
+               dTL:    torch.Tensor = torch.tensor([])):
 
     # Allocate and initialize results, model and rng
     model.allocate(prd, N, dTL)
@@ -118,16 +176,60 @@ def mcSim(
     # Simulate state variables and fwd
     paths = model.simulate(Z)
 
+    return paths
+
+
+def mcSim(
+        prd:    Product,
+        mdl:    Model,
+        rng:    RNG,
+        N:      int,
+        dTL:    torch.Tensor = torch.tensor([])):
+    # Simulate paths
+    paths = mcSimPaths(prd, mdl, rng, N, dTL)
+
     # Calculate payoffs
     payoff = prd.payoff(paths)
 
     return payoff
 
-    # Discount to present value
-    # payoff_pv = model.disc_curve * payoff
 
-    # Sum across times
-    # npv = torch.sum(payoff_pv, dim=1)
+def lsmcPayoff(
+        prd:            CallableProduct,
+        preSimPaths:    Scenario,
+        paths:          Scenario,
+        lsmc:           LSMC):
+    # Fit estimator of continuation value using paths form the pre-simulation
+    lsmc.backward(prd, preSimPaths)
 
-    # Monte Carlo Estimator
-    # return torch.mean(npv)
+    # Determine exercise indices of the paths used for pricing
+    exercise_idx = lsmc.forward(prd, paths)
+    prd.set_exercise_idx(exercise_idx=exercise_idx)
+
+    # Calculate payoffs
+    payoff = prd.payoff(paths)
+
+    return payoff
+
+
+def lsmcDefaultSim(
+        prd:            CallableProduct,
+        mdl:            Model,
+        rng:            RNG,
+        N:              int,
+        n:              int,
+        lsmc:           LSMC = None,
+        reg:            OLSRegressor = None,
+        use_only_itm:   bool = True,
+        dTL:            torch.Tensor = torch.Tensor([])):
+    if reg is None:
+        reg = PolynomialRegressor()
+    if lsmc is None:
+        lsmc = LSMC(reg=reg, use_only_itm=use_only_itm)
+
+    preSimPaths = mcSimPaths(prd, mdl, rng, n, dTL)
+    paths = mcSimPaths(prd, mdl, rng, N, dTL)
+
+    payoff = lsmcPayoff(prd=prd, preSimPaths=preSimPaths, paths=paths, lsmc=lsmc)
+
+    return payoff
