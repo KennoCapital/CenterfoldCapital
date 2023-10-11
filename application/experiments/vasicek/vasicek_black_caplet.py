@@ -4,7 +4,7 @@ from application.engine.black import black_cpl_iv, black_cpl
 
 if __name__ == '__main__':
     torch.set_printoptions(precision=12)
-    T = 1.0
+    T = 30.0
     delta = 0.25
     a = torch.tensor(0.86)
     b = torch.tensor(0.09)
@@ -13,13 +13,12 @@ if __name__ == '__main__':
     t = torch.linspace(start=delta, end=T, steps=int(T / delta))
 
     # Calculate ATM cap price
+    # Note the argument `start` in the cap has one element less than used in the Swap Rate
     mld = Vasicek(a, b, sigma, use_ATS=True)
     swap_rate = mld.calc_swap_rate(r0, t, delta)
-    cap = mld.calc_cap(r0, t, delta, swap_rate)
+    cap = mld.calc_cap(r0, t[:-1], delta, swap_rate)
+
     print(f'Vasicek cap price: {cap}')
-
-    cpl = mld.calc_cpl(r0=r0, t=t, delta=delta, K=swap_rate)
-
     # Calculate ATM Implied Volatility
     zcb = mld.calc_zcb(r0, t)
     fwd = (zcb[:-1] / zcb[1:] - 1) / delta

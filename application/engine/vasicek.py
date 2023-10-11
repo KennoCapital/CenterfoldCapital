@@ -10,14 +10,15 @@ class Vasicek(Model):
     """
         dr(t) = a*[b-r(t)]*dt + sigma*dW(t)
     """
+
     def __init__(self,
                  a,
                  b,
                  sigma,
                  r0=None,
-                 use_ATS:   bool = False,
+                 use_ATS: bool = False,
                  use_euler: bool = False,
-                 measure:   str = 'risk_neutral'):
+                 measure: str = 'risk_neutral'):
         """
         :param a:               Mean reversion rate
         :param b:               Long term mean rate
@@ -69,9 +70,9 @@ class Vasicek(Model):
         return self._paths
 
     def allocate(self,
-                 prd:               Product,
-                 N:                 int,
-                 dTimeline:         torch.Tensor = torch.tensor([])):
+                 prd: Product,
+                 N: int,
+                 dTimeline: torch.Tensor = torch.tensor([])):
 
         TL = [torch.tensor([0.0]), prd.timeline, dTimeline]
         self._dTimeline = dTimeline
@@ -84,11 +85,11 @@ class Vasicek(Model):
         self._x = torch.full(size=(len(self.timeline), N), fill_value=torch.nan)
         self._paths = [
             Sample(
-                fwd=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(prd.defline[j].fwdRates))],
-                irs=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(prd.defline[j].irs))],
-                disc=[torch.full(size=(N, ), fill_value=torch.nan) for _ in range(len(prd.defline[j].discMats))],
-                numeraire=torch.full(size=(N, ), fill_value=torch.nan) if prd.defline[j].numeraire else None,
-                x=torch.full(size=(N, ), fill_value=torch.nan) if prd.defline[j].stateVar else None
+                fwd=[torch.full(size=(N,), fill_value=torch.nan) for _ in range(len(prd.defline[j].fwdRates))],
+                irs=[torch.full(size=(N,), fill_value=torch.nan) for _ in range(len(prd.defline[j].irs))],
+                disc=[torch.full(size=(N,), fill_value=torch.nan) for _ in range(len(prd.defline[j].discMats))],
+                numeraire=torch.full(size=(N,), fill_value=torch.nan) if prd.defline[j].numeraire else None,
+                x=torch.full(size=(N,), fill_value=torch.nan) if prd.defline[j].stateVar else None
             ) for j in range(len(prd.timeline))
         ]
 
@@ -107,7 +108,7 @@ class Vasicek(Model):
 
         if self.measure == 'terminal':
             return torch.exp(-self.a * dt) * x + \
-                (self.b - self.sigma ** 2 * self._calc_B(self._Tn-s)) * (1 - torch.exp(-self.a * dt)) + \
+                (self.b - self.sigma ** 2 * self._calc_B(self._Tn - s)) * (1 - torch.exp(-self.a * dt)) + \
                 self.sigma * Z * torch.sqrt(1 / (2 * self.a) * (1 - torch.exp(-2 * self.a * dt)))
 
     def _euler_step(self, x, dt, Z, s):
@@ -119,7 +120,7 @@ class Vasicek(Model):
             return x + self.a * (self.b - x) * dt + self.sigma * torch.sqrt(dt) * Z
 
         if self.measure == 'terminal':
-            return x + self.a * ((self.b - self.sigma ** 2 * self._calc_B(self._Tn-s)) - x) * dt + \
+            return x + self.a * ((self.b - self.sigma ** 2 * self._calc_B(self._Tn - s)) - x) * dt + \
                 self.sigma * torch.sqrt(dt) * Z
 
     def simulate(self, Z):
@@ -198,7 +199,7 @@ class Vasicek(Model):
         # Iterate over model's timeline
         for k, s in enumerate(self.timeline[1:]):
             # State variable
-            self._x[k+1, :] = step_func(self.x[k, :], dt[k], Z[k, :], s)
+            self._x[k + 1, :] = step_func(self.x[k, :], dt[k], Z[k, :], s)
 
             if self.measure == 'risk_neutral':
                 # Trapezoidal rule: int_0^t r(s) ds ~ sum[ 0.5 * (r(t+dt)-r(t)) * dt ]
@@ -255,15 +256,22 @@ class Vasicek(Model):
            Solution to Filipovic's prop. 7.2
                 Cpl(0; t, t+delta) = P(0,t) * N(d1) - P(0,t+delta) / K_bar * N(d2)
         """
-        # TODO rewrite this function so that t only needs to be t and not [t, t+delta]
-        zcb = self.calc_zcb(r0, t)
+        if t.dim() == 0:
+            t = t.unsqueeze(0)
+        zcb = self.calc_zcb(r0, torch.concat([t, t[-1].unsqueeze(0) + delta]))
 
         K_bar = 1 / (1 + delta * K)
-        vol_integral = self.sigma ** 2 / (2 * self.a ** 3) * (
-                    1 - torch.exp(-2 * self.a * t) + torch.exp(-2 * self.a * delta) - \
-                    torch.exp(-2 * self.a * (t + delta)) - 2 * (torch.exp(-self.a * delta) - \
-                                                                torch.exp(-self.a * (2 * t + delta)))
-                    )[:-1]
+
+        # Calculate integral of vol-term using
+        # a fancy way of writing `1` such that the dimension match the size of `t`
+        # to allow for parallel computation of caplets in a cap when `t` is passed as a vector
+        vol_integral = torch.ones_like(t)
+        vol_integral -= torch.exp(-2 * self.a * t)
+        vol_integral += torch.exp(-2 * self.a * delta)
+        vol_integral -= torch.exp(-2 * self.a * (t + delta))
+        vol_integral -= 2 * (torch.exp(-self.a * delta) - torch.exp(-self.a * (2 * t + delta)))
+        vol_integral *= self.sigma ** 2 / (2 * self.a ** 3)
+
         d1 = (torch.log(zcb[:-1] * K_bar / zcb[1:]) + 0.5 * vol_integral) / torch.sqrt(vol_integral)
         d2 = d1 - torch.sqrt(vol_integral)
 
@@ -287,7 +295,7 @@ def calibrate_vasicek_cap(maturities, strikes, market_prices, a=1.00, b=0.05, si
             model_prices[i] = cap
 
         err = model_prices - market_prices
-        mse = torch.linalg.norm(err)**2
+        mse = torch.linalg.norm(err) ** 2
         return mse
 
     return scipy.optimize.minimize(
@@ -315,7 +323,7 @@ def calibrate_vasicek_zcb_price(maturities, market_prices, a=1.00, b=0.05, sigma
             model_prices[i] = zcb
 
         err = model_prices - market_prices
-        mse = torch.linalg.norm(err)**2
+        mse = torch.linalg.norm(err) ** 2
         return mse
 
     return scipy.optimize.minimize(
