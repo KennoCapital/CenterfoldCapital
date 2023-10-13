@@ -36,7 +36,7 @@ prd = Cap(
     delta=delta
 )
 
-t_event_dates = torch.concat([prd.timeline, (lastFixingDate + delta).view(1)])
+t_event_dates = torch.concat([prd.timeline, (lastFixingDate).view(1)])
 
 cashflows = mcSim(prd, model, rng, N, dTL)
 print('Cashflows: \n', cashflows, '\n')
