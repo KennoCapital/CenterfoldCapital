@@ -217,7 +217,7 @@ class Vasicek(Model):
 
     def _calc_A(self, t):
         B = self._calc_B(t)
-        return (self.b - self.sigma ** 2 / (2 * self.a ** 2)) * (t - B) - self.sigma ** 2 * B ** 2 / (4 * self.a)
+        return (self.b - self.sigma ** 2 / (2 * self.a ** 2)) * (t - B) + self.sigma ** 2 * B ** 2 / (4 * self.a)
 
     def _calc_B(self, t):
         return (1 - torch.exp(-self.a * t)) / self.a
@@ -227,11 +227,10 @@ class Vasicek(Model):
         if self.use_ATS:
             return torch.exp(-self._calc_A(t) - self._calc_B(t) * r0)
 
-        sigma_fwd = self._calc_fwd_vol(t)
         return torch.exp(
             (r0 - self.b) * (torch.exp(-self.a * t) - 1) / self.a - \
-            self.b * t + sigma_fwd ** 2 * t / (2 * self.a ** 2) + \
-            sigma_fwd ** 2 * (4 * torch.exp(-self.a * t) - torch.exp(-2 * self.a * t) - 3) / (4 * self.a ** 3)
+            self.b * t + self.sigma ** 2 * t / (2 * self.a ** 2) + \
+            self.sigma ** 2 * (4 * torch.exp(-self.a * t) - torch.exp(-2 * self.a * t) - 3) / (4 * self.a ** 3)
         )
 
     def calc_fwd(self, r0, t, delta):

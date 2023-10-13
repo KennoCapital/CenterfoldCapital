@@ -1,6 +1,7 @@
 import torch
 from application.engine.products import Product, CallableProduct, Scenario
 from application.engine.regressor import OLSRegressor, PolynomialRegressor
+from application.utils.torch_utils import max0
 from abc import ABC, abstractmethod
 
 
@@ -109,8 +110,6 @@ class Model(ABC):
         pass
 
 
-
-
 class LSMC:
     def __init__(self,
                  reg:           OLSRegressor,
@@ -121,49 +120,54 @@ class LSMC:
         self._N = None  # Number of paths
         self._M = None  # Number of regression times
         self._eps = 1E-12
-        self._min_itm = 1024
+        self._min_itm = 2048
 
     def backward(self,
                  prd:   CallableProduct,
                  paths: Scenario):
+
+        # Auxiliary variable used to match the index between paths and exercise values,
+        # depending on if time 0.0 is an exercise date
+        idx_offset = -1 if (0.0 in prd.exercise_dates) else 0
+        self._M = len(prd.exercise_dates) - 1
+        self._eps = 1E-12
+
         # Determine exercise values
         ev = prd.exercise_value(paths)
 
-        self._M = len(prd.exercise_dates) - 1
-
-        self._eps = 1E-12
-
         # Perform regression over backwards recursion and store coefficients
         w = []
-        for k in range(self._M - 1, -1, -1):
+        for k in range(self._M, 0, -1):
             itm = ev[k] > 0.0 + self._eps
             itm = itm if (self.use_only_itm and torch.sum(itm) >= self._min_itm) else torch.ones_like(ev[k], dtype=torch.bool)
-            self.reg.fit(X=paths[k + 1].x[itm], y=ev[k][itm])
+            self.reg.fit(X=paths[k + idx_offset].x[itm], y=ev[k][itm])
             w.insert(0, self.reg.coef)
-
         self.coef = torch.vstack(w)
 
     def forward(self,
                 prd:    CallableProduct,
                 paths:  Scenario):
-
         # Exercise values
         ev = prd.exercise_value(paths)
         self._N = ev.size()[1]
 
+        # Auxiliary variable used to match the index between paths and exercise values,
+        # depending on if time 0.0 is an exercise date
+        idx_offset = 0 if (0.0 in prd.exercise_dates) else 1
+
         alive = torch.ones(size=(self._N, ), dtype=torch.bool)
         stopping_idx = torch.full(size=(self._N, ), fill_value=self._M, dtype=torch.int)
-
         for k in range(self._M):
             self.reg.set_coef(coef=self.coef[k])
 
             # Continuation values
-            cv = self.reg.predict(X=paths[k + 1].x)
-            exercise = ev[k] > cv + self._eps
-            alive = torch.logical_and(alive, exercise)
+            cv = self.reg.predict(X=paths[k + idx_offset].x)
+            exercise = ev[k] > max0(cv) + self._eps
+            exercise = torch.logical_and(alive, exercise)
             stopping_idx[exercise] = k
 
         return stopping_idx
+
 
 def mcSimPaths(prd:    Product,
                model:  Model,

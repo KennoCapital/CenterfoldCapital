@@ -4,11 +4,11 @@ from application.engine.vasicek import Vasicek
 from application.engine.regressor import PolynomialRegressor
 import torch
 
-torch.set_printoptions(8)
+torch.set_printoptions(2)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
-    seed = None
+    seed = 12345
 
     deg = 5
     n = 5000
