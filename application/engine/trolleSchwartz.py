@@ -2,7 +2,7 @@ import torch
 import scipy
 from application.utils.torch_utils import N_cdf
 from application.engine.mcBase import Model, MEASURES
-from application.engine.products import SampleDef, Sample
+from application.engine.products import Product, Sample
 from application.engine.linearProducts import forward, swap, swap_rate
 
 
@@ -20,6 +20,7 @@ class trolleSchwartz(Model):
                  alpha0,
                  alpha1,
                  x0, v0, phi1_0, phi2_0, phi3_0, phi4_0, phi5_0, phi6_0,
+                 r0 = 0.0,
                  simDim: int = 1,
                  use_euler: bool = True,
                  measure:   str = 'risk_neutral'):
@@ -47,6 +48,8 @@ class trolleSchwartz(Model):
         self.phi4_0 = phi4_0
         self.phi5_0 = phi5_0
         self.phi6_0 = phi6_0
+
+        self.r0 = r0
         self.simDim = simDim
 
         self.use_euler = use_euler
@@ -64,16 +67,17 @@ class trolleSchwartz(Model):
         self._defline = None
         self._x = None
         self._paths = None
-        self._eulerTimeline = None
+        self._dTimeline = None
         self._tl_idx_mkt = None
+        self._Tn = None
 
     @property
     def timeline(self):
         return self._timeline
 
     @property
-    def eulerTimeline(self):
-        return self._eulerTimeline
+    def dTimeline(self):
+        return self._dTimeline
 
     @property
     def defline(self):
@@ -84,31 +88,31 @@ class trolleSchwartz(Model):
         return [self._x, self._v, self._phi1, self._phi2, self._phi3, self._phi4, self._phi5, self._phi6]
 
     @property
-    def W(self):
+    def W(self): # todo: consider removing this when method is working
         return [self._Wf, self._Wv]
 
     @property
     def f(self):
-        return self.calc_instant_fwd(X=self.x, t=0, T=self.timeline, f0=0.0)
+        return self.calc_instant_fwd(X=self.x, t=0, T=self.timeline)
 
     @property
     def paths(self):
         return self._paths
 
     def allocate(self,
-                 prdTimeline:       torch.Tensor,
-                 defline:           list[SampleDef],
-                 N:                 int,
-                 dTimeline:         torch.Tensor = torch.tensor([])):
+                 prd:       Product,
+                 N:         int,
+                 dTimeline: torch.tensor = torch.tensor([])):
 
-        TL = [torch.tensor([0.0]), prdTimeline, dTimeline]
-        self._eulerTimeline = dTimeline
+        TL = [torch.tensor([0.0]), prd.timeline, dTimeline]
+        self._dTimeline = dTimeline
         self._timeline = torch.unique(torch.concat(TL, dim=0), sorted=True)
+        self._defline = prd.defline
 
-        self._defline = defline
 
         # Allocate space for state and paths (market variables)
-        n = len(prdTimeline)
+        #n = len(prdTimeline)
+        self._Tn = prd.Tn
         # 8 state vars: x, v, phi1, phi2, phi3, phi4, phi5, phi6
         self._x = torch.full(size=(self.simDim, len(self.timeline), N), fill_value=torch.nan)
         self._v = torch.clone(self._x)
@@ -123,15 +127,16 @@ class trolleSchwartz(Model):
         # which contains lists of fwdRates, irs, discMats, numeraire
         self._paths = [
             Sample(
-                fwd=[torch.full(size=(N,), fill_value=torch.nan) for _ in range(len(defline[j].fwdRates))],
-                irs=[torch.full(size=(N,), fill_value=torch.nan) for _ in range(len(defline[j].irs))],
-                disc=[torch.full(size=(N,), fill_value=torch.nan) for _ in range(len(defline[j].discMats))],
-                numeraire=torch.full(size=(N,), fill_value=torch.nan) if defline[j].numeraire else None
-            ) for j in range(n)
+                fwd=[torch.full(size=(N,), fill_value=torch.nan) for _ in range(len(prd.defline[j].fwdRates))],
+                irs=[torch.full(size=(N,), fill_value=torch.nan) for _ in range(len(prd.defline[j].irs))],
+                disc=[torch.full(size=(N,), fill_value=torch.nan) for _ in range(len(prd.defline[j].discMats))],
+                numeraire=torch.full(size=(N,), fill_value=torch.nan) if prd.defline[j].numeraire else None,
+                x=torch.full(size=(N,), fill_value=torch.nan) if prd.defline[j].stateVar else None
+            ) for j in range(len(prd.timeline))
         ]
 
         # Specify indices of when to compute market variables
-        self._tl_idx_mkt = [t in prdTimeline for t in self.timeline]
+        self._tl_idx_mkt = [t in prd.timeline for t in self.timeline]
 
     def _correlatedBrownians(self, Z):
         """ Generate correlated Brownian motions """
@@ -159,8 +164,10 @@ class trolleSchwartz(Model):
         Wf = Wf.reshape((len(self.timeline)-1,-1))
         Wv = Wv.reshape((len(self.timeline)-1,-1))
 
+        # todo: consider remove this when method is working
         self._Wf = Wf
         self._Wv = Wv
+        # ----------------
 
         return Wf, Wv
 
@@ -173,10 +180,11 @@ class trolleSchwartz(Model):
         Euler discretisation of the state variables:
         x, v, phi1, phi2, phi3, phi4, phi5, phi6
         """
-        dx = -self.gamma * x * dt + torch.sqrt(v) * dWf * torch.sqrt(dt)
+        dx = -self.gamma * x * dt + torch.sqrt(torch.abs(v)) * dWf * torch.sqrt(dt)
 
         #dv = self.kappa * (self.theta - v) * dt + self._sigma(t=0, T=dt) * torch.sqrt(v) * dWv * torch.sqrt(dt)
-        dv = self.kappa * (self.theta - v) * dt + self.sigma * torch.sqrt(v) * dWv * torch.sqrt(dt)
+        # try with abs v
+        dv = self.kappa * (self.theta - v) * dt + self.sigma * torch.sqrt(torch.abs(v)) * dWv * torch.sqrt(dt)
 
         dphi1 = (x - self.gamma * phi1) * dt
         dphi2 = (v - self.gamma * phi2) * dt
@@ -240,14 +248,15 @@ class trolleSchwartz(Model):
                                                              N=self.defline[idx].irs[j].notional)
 
                 for j in range(len(self.paths[idx].disc)):
-                    self._paths[idx].disc[j] = self.calc_zcb(PT= 1.0,#todo: figure out this quantity
-                                                             Pt = 1.0,
-                                                             X=x,
+                    self._paths[idx].disc[j] = self.calc_zcb_price(X=x,
                                                              t=0,
                                                              T=self.defline[idx].discMats[j] - s)
 
                 if self.paths[idx].numeraire is not None:
                     self._paths[idx].numeraire[:] = numeraire
+
+                if self.paths[idx].x is not None:
+                    self._paths[idx].x[:] = x
 
             idx += 1
 
@@ -262,6 +271,7 @@ class trolleSchwartz(Model):
         for k, s in enumerate(self.timeline[1:]):
 
             # State variables using step function
+            #f(s,T)
             self._x[:,k+1, :], self._v[:,k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
             self._phi3[:,k+1, :], self._phi4[:,k+1, :], self._phi5[:,k+1, :], self._phi6[:,k+1, :] = \
                 step_func(self._x[:,k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :],
@@ -321,9 +331,8 @@ class trolleSchwartz(Model):
 
         return PT / Pt * torch.exp(Bx_sum + Bphi_sum)
 
-    def calc_instant_fwd(self, X, t, T, f0=0.0):
-
-        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in X]
+    def calc_instant_fwd(self, X, t, T):
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i.reshape(1, -1) for i in X]
 
         Bx = (self.alpha0 + self.alpha1 * (T - t)) * torch.exp(-self.gamma * (T - t))
         Bphi1 = self.alpha1 * torch.exp(-self.gamma * (T - t))
@@ -342,48 +351,52 @@ class trolleSchwartz(Model):
         # sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))
         Bphi_sum = torch.sum(Bphi1 * phi1 + Bphi2 * phi2 + Bphi3 * phi3 + Bphi4 * phi4 + Bphi5 * phi5 + Bphi6 * phi6, dim=0)
 
+        f0 = self.r0
+
         return f0 + Bx_sum + Bphi_sum
 
+
+    def calc_zcb_price(self, X, t, T):
+        if T.dim() == 0:
+            T = T.unsqueeze(0)
+        T = T.reshape(-1, 1)  # T = torch.linspace(0.0, Tn, int(Tn / 0.25) + 1)
+
+        f0t = self.calc_instant_fwd(X, t, t)
+        f0T = self.calc_instant_fwd(X, t, T)
+        return torch.exp(-0.5 * (f0t + f0T) * (T-t))
+
+
     def calc_short_rate(self, X, t, f0=0.0):
-        return self.calc_instant_fwd(X, t, t, f0)
+        return self.calc_instant_fwd(X, t, t)
 
     def calc_fwd(self, X, t, delta):
         # todo: not sure how to set PT and Pt
-        zcb_t = self.calc_zcb(PT=0.98, Pt=1.0, X=X, t=0, T=t)
-        zcb_tdt = self.calc_zcb(PT=0.98, Pt=1.0, X=X, t=0, T=t+delta)
+        zcb_t = self.calc_zcb_price(X, t, t)
+        zcb_tdt = self.calc_zcb_price(X, t, t+delta)
+        #zcb_t = self.calc_zcb(PT=0.98, Pt=1.0, X=X, t=0, T=t)
+        #zcb_tdt = self.calc_zcb(PT=0.98, Pt=1.0, X=X, t=0, T=t+delta)
 
         return forward(zcb_t, zcb_tdt, delta)
 
     def calc_swap(self, X, t, delta, K=None, N=torch.tensor(1.0)):
         """t = T_0, ..., T_n (future dates)"""
-        # todo: not sure how to set PT and Pt
-        zcb = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
+        zcb = self.calc_zcb_price(X=X, t=0, T=t)
         return swap(zcb, delta, K, N)
 
     def calc_swap_rate(self, X, t, delta):
         """t = T_0, ..., T_n (future dates)"""
-        # todo: not sure how to set PT and Pt
-        zcb = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
+        zcb = self.calc_zcb_price(X=X, t=0, T=t)
         return swap_rate(zcb, delta)
 
-    def calc_cpl(self, X, t, delta, K): # todo rewrite this method
+    def calc_cpl(self, X, t, delta, K):
         """
            Revise Trolle-Schwartz on this
                 Cpl(0; t, t+delta) = P(0,t) * N(d1) - P(0,t+delta) / K_bar * N(d2)
         """
-        zcb = self.calc_zcb(X, t)
+        # todo rewrite this method
 
-        K_bar = 1 / (1 + delta * K)
-        vol_integral = self.sigma ** 2 / (2 * self.a ** 3) * (
-                    1 - torch.exp(-2 * self.a * t) + torch.exp(-2 * self.a * delta) - \
-                    torch.exp(-2 * self.a * (t + delta)) - 2 * (torch.exp(-self.a * delta) - \
-                                                                torch.exp(-self.a * (2 * t + delta)))
-                    )[:-1]
-        d1 = (torch.log(zcb[:-1] * K_bar / zcb[1:]) + 0.5 * vol_integral) / torch.sqrt(vol_integral)
-        d2 = d1 - torch.sqrt(vol_integral)
-
-        return torch.tensor(1.0) # #zcb[:-1] * N_cdf(d1) - zcb[1:] / K_bar * N_cdf(d2)
+        return None
 
     def calc_cap(self, x, t, delta, K):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
-        return torch.tensor(1.0) #torch.sum(self.calc_cpl(x, t, delta, K))
+        return None #torch.sum(self.calc_cpl(x, t, delta, K))
