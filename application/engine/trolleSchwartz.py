@@ -88,6 +88,10 @@ class trolleSchwartz(Model):
         return [self._Wf, self._Wv]
 
     @property
+    def f(self):
+        return self.calc_instant_fwd(X=self.x, t=0, T=self.timeline, f0=0.0)
+
+    @property
     def paths(self):
         return self._paths
 
@@ -152,15 +156,8 @@ class trolleSchwartz(Model):
         Wf = W[:,0]#torch.cumsum(W[:,0], dim=0)
         Wv = W[:,1]#torch.cumsum(W[:,1], dim=0)
 
-        print('correlation step')
-        print('Wf', Wf.size())
-        print('Wv', Wv.size())
-
         Wf = Wf.reshape((len(self.timeline)-1,-1))
         Wv = Wv.reshape((len(self.timeline)-1,-1))
-
-        print('Wf', Wf.size())
-        print('Wv', Wv.size())
 
         self._Wf = Wf
         self._Wv = Wv
@@ -208,8 +205,6 @@ class trolleSchwartz(Model):
 
         # Compute correlated Brownian motions
         dWf, dWv = self._correlatedBrownians(Z)
-        print('dWf', dWf.size())
-        print('dWv', dWv.size())
 
         # Initialize state variables
         # set initial values to same for all paths
@@ -267,8 +262,6 @@ class trolleSchwartz(Model):
         for k, s in enumerate(self.timeline[1:]):
 
             # State variables using step function
-            print('dWf[k,:].size', dWf[k,:].size())
-
             self._x[:,k+1, :], self._v[:,k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
             self._phi3[:,k+1, :], self._phi4[:,k+1, :], self._phi5[:,k+1, :], self._phi6[:,k+1, :] = \
                 step_func(self._x[:,k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :],
@@ -278,7 +271,13 @@ class trolleSchwartz(Model):
             # Numeraire
             if self.measure == 'risk_neutral':
                 # Trapezoidal rule: B(t) = exp{ int_0^t r(s) ds } ~ exp{sum[ r(t) * dt ]}
-                numeraire *= 1.0 #torch.exp(0.5 * (self._x[k + 1, :] + self._x[k, :]) * dt[k])
+                rt1 = self.calc_short_rate(X=[self._x[:,k+1, :], self._v[:,k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
+            self._phi3[:,k+1, :], self._phi4[:,k+1, :], self._phi5[:,k+1, :], self._phi6[:,k+1, :]], t=self.timeline[k+1])
+                rt =self.calc_short_rate(X=[self._x[:,k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :], \
+            self._phi3[:,k, :], self._phi4[:,k, :], self._phi5[:,k, :], self._phi6[:,k, :]], t=self.timeline[k])
+                numeraire *= torch.exp(0.5 * (rt1 + rt) * dt[k])
+
+                #numeraire *= 1.0 torch.exp(0.5 * (self._x[k + 1, :] + self._x[k, :]) * dt[k])
 
             # Samples (market variables)
             if self._tl_idx_mkt[k + 1]:
@@ -315,10 +314,10 @@ class trolleSchwartz(Model):
         Bphi6 = - 0.5 * torch.pow(self.alpha1 / self.gamma,2) * (torch.exp(-2*self.gamma*(T-t)) - 1)
 
         # sum_i(Bx_i(T-t)x_i(t))
-        Bx_sum = torch.sum(Bx * x)
+        Bx_sum = torch.sum(Bx * x,dim=0)
 
         # sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))
-        Bphi_sum = torch.sum(Bphi1 * phi1 + Bphi2 * phi2 + Bphi3 * phi3 + Bphi4 * phi4 + Bphi5 * phi5 + Bphi6 * phi6)
+        Bphi_sum = torch.sum(Bphi1 * phi1 + Bphi2 * phi2 + Bphi3 * phi3 + Bphi4 * phi4 + Bphi5 * phi5 + Bphi6 * phi6, dim=0)
 
         return PT / Pt * torch.exp(Bx_sum + Bphi_sum)
 
@@ -338,10 +337,10 @@ class trolleSchwartz(Model):
         Bphi6 = - torch.pow(self.alpha1,2) / self.gamma * torch.exp(-2 * self.gamma * (T - t))
 
         # sum_i(Bx_i(T-t)x_i(t))
-        Bx_sum = torch.sum(Bx * x)
+        Bx_sum = torch.sum(Bx * x, dim=0)
 
         # sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))
-        Bphi_sum = torch.sum(Bphi1 * phi1 + Bphi2 * phi2 + Bphi3 * phi3 + Bphi4 * phi4 + Bphi5 * phi5 + Bphi6 * phi6)
+        Bphi_sum = torch.sum(Bphi1 * phi1 + Bphi2 * phi2 + Bphi3 * phi3 + Bphi4 * phi4 + Bphi5 * phi5 + Bphi6 * phi6, dim=0)
 
         return f0 + Bx_sum + Bphi_sum
 
@@ -350,8 +349,9 @@ class trolleSchwartz(Model):
 
     def calc_fwd(self, X, t, delta):
         # todo: not sure how to set PT and Pt
-        zcb_t = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t)
-        zcb_tdt = self.calc_zcb(PT=1.0, Pt=1.0, X=X, t=0, T=t+delta)
+        zcb_t = self.calc_zcb(PT=0.98, Pt=1.0, X=X, t=0, T=t)
+        zcb_tdt = self.calc_zcb(PT=0.98, Pt=1.0, X=X, t=0, T=t+delta)
+
         return forward(zcb_t, zcb_tdt, delta)
 
     def calc_swap(self, X, t, delta, K=None, N=torch.tensor(1.0)):
