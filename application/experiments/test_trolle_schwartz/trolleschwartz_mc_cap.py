@@ -13,27 +13,37 @@ N = 100
 measure = 'risk_neutral'
 
 kappa = torch.tensor(0.0553)
-sigma = torch.tensor(0.0054) #0.3325 // 0.0054
+sigma = torch.tensor(0.3325) #0.3325 // 0.0054
 alpha0 = torch.tensor(0.0045)
 alpha1 = torch.tensor(0.0131)
 gamma = torch.tensor(0.3341)
 rho = torch.tensor(0.4615)
 theta = torch.tensor(0.7542)
 
-x0 = torch.tensor([0.01])
-v0= torch.tensor([0.01])
-phi1_0 = torch.tensor([0.01])
-phi2_0 = torch.tensor([0.01])
-phi3_0 = torch.tensor([0.01])
-phi4_0 = torch.tensor([0.01])
-phi5_0 = torch.tensor([0.01])
-phi6_0 = torch.tensor([0.01])
+x0 = torch.tensor([5.0])
+v0= torch.clone(x0)
+phi1_0 = torch.clone(x0)
+phi2_0 = torch.clone(x0)
+phi3_0 = torch.clone(x0)
+phi4_0 = torch.clone(x0)
+phi5_0 = torch.clone(x0)
+phi6_0 = torch.clone(x0)
+
+"""
+v0= torch.tensor([0.1])
+phi1_0 = torch.tensor([0.1])
+phi2_0 = torch.tensor([0.1])
+phi3_0 = torch.tensor([0.1])
+phi4_0 = torch.tensor([0.1])
+phi5_0 = torch.tensor([0.1])
+phi6_0 = torch.tensor([0.1])
+"""
 
 firstFixingDate = torch.tensor(0.25)
 lastFixingDate = firstFixingDate #torch.tensor(0.75)
 delta = torch.tensor(0.25)
 
-strike = torch.tensor(0.0)
+strike = torch.tensor(0.084)
 
 dTL = torch.linspace(0.0, lastFixingDate + delta, int(50 * (lastFixingDate + delta) + 1))
 
@@ -57,13 +67,20 @@ print('Cashflows: \n', cashflows)
 payoff = torch.sum(cashflows, dim=0)
 print('Payoffs:\n', payoff)
 
-mc_price = torch.mean(payoff)
+mc_price = torch.nanmean(payoff)
 print('MC Price =', mc_price)
 
 #print('Model price =', model.calc_cap(r0, t_event_dates, delta, strike))
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
+
+    x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in model.x]
+    r0 = model.calc_short_rate(
+        [x[:, 0, :], v[:, 0, :], phi1[:, 0, :], phi2[:, 0, :], phi3[:, 0, :], phi4[:, 0, :], phi5[:, 0, :],
+         phi6[:, 0, :]], t=0.0)
+
+    print('r0', r0.mean())
 
     #plot forward rates
     plt.figure()
