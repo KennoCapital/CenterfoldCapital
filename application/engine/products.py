@@ -94,6 +94,7 @@ class CallableProduct(Product):
     def exercise_idx(self) -> torch.Tensor:
         pass
 
+
 class Caplet(Product):
     def __init__(self,
                  strike: torch.Tensor,
