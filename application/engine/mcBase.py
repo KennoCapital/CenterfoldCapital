@@ -13,15 +13,16 @@ class RNG:
     def __init__(self,
                  M:         int or None = None,
                  N:         int or None = None,
+                 numRV:     int = 1,
                  seed:      int or None = None,
-                 use_av:    bool = True,
-                 simDim:    int = 1):
+                 use_av:    bool = True
+                 ):
 
         self.M = M
         self.N = N
+        self.numRV = numRV
         self.seed = seed
         self.use_av = use_av
-        self.simDim = simDim
 
         if seed is None:
             self.gen = torch.Generator()
@@ -33,29 +34,31 @@ class RNG:
         if self.use_av and self.N % 2 != 0:
             raise ValueError('Number of paths (N) must be even when using antithetic variates!')
 
+    def gaussCube(self):
+        """Returns a Cube (3D-tensor) of numRV x M x N Gaussian random variables"""
+        if self.use_av:
+            self._check_av_dim()
+            Z = torch.randn(size=(self.numRV, self.M, self.N // 2), generator=self.gen)
+            return torch.concat([Z, -Z], dim=2)
+        return torch.randn(size=(self.numRV, self.M, self.N), generator=self.gen)
+
     def gaussMat(self):
+        """Returns a matrix (2D-tensor) of MxN Gaussian random variables"""
         if self.use_av:
             self._check_av_dim()
             Z = torch.randn(size=(self.M, self.N // 2), generator=self.gen)
             return torch.concat([Z, -Z], dim=1)
         return torch.randn(size=(self.M, self.N), generator=self.gen)
 
-    def gaussCube(self):
-        if self.use_av:
-            self._check_av_dim()
-            Z = torch.randn(size=(self.simDim, self.M, self.N // 2), generator=self.gen)
-            return torch.concat([Z, -Z], dim=2).squeeze()
-        return torch.randn(size=(self.simDim, self.M, self.N), generator=self.gen)
-
     def next_G(self):
-        """Returns a vector (tensor) N Gaussian distributed variables"""
+        """Returns a vector (tensor) of N Gaussian random variables"""
         if self.use_av:
             Z = torch.randn(size=(self.N // 2, ), generator=self.gen)
             return torch.concat([Z, -Z], dim=1)
         return torch.randn(size=(self.N, ), generator=self.gen)
 
     def next_U(self):
-        """Returns a vector (tensor) N Uniformly distributed variables"""
+        """Returns a vector (tensor) of N Uniformly distributed variables"""
         if self.use_av:
             U = torch.rand(size=(self.N // 2, ), generator=self.gen)
             return torch.concat([U, 1-U], dim=1)
@@ -79,6 +82,12 @@ class Model(ABC):
     @abstractmethod
     def defline(self):
         """Defline (SampleDef) of product"""
+        pass
+
+    @property
+    @abstractmethod
+    def numRV(self):
+        """Number of Wiener Processes (Gaussian Random Variables) in the model"""
         pass
 
     @property
@@ -173,8 +182,7 @@ def mcSimPaths(prd:    Product,
                model:  Model,
                rng:    RNG,
                N:      int,
-               dTL:    torch.Tensor = torch.tensor([]),
-               simDim: int = 1):
+               dTL:    torch.Tensor = torch.tensor([])):
 
     # Allocate and initialize results, model and rng
     model.allocate(prd, N, dTL)
@@ -182,7 +190,7 @@ def mcSimPaths(prd:    Product,
     # Set dimensions
     rng.N = N
     rng.M = len(model.timeline) - 1
-    rng.simDim = simDim
+    rng.numRV = model.numRV
 
     # Draw random variables
     Z = rng.gaussCube()

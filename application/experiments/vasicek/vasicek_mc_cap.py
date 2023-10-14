@@ -6,45 +6,47 @@ import torch
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
-seed = None
 
-N = 50000
+if __name__ == '__main__':
+    seed = None
 
-measure = 'risk_neutral'
+    N = 50000
 
-a = torch.tensor(0.86)
-b = torch.tensor(0.09)
-sigma = torch.tensor(0.0148)
-r0 = torch.tensor(0.08)
+    measure = 'risk_neutral'
 
-firstFixingDate = torch.tensor(0.25)
-lastFixingDate = torch.tensor(0.75)
-delta = torch.tensor(0.25)
+    a = torch.tensor(0.86)
+    b = torch.tensor(0.09)
+    sigma = torch.tensor(0.0148)
+    r0 = torch.tensor(0.08)
 
-strike = torch.tensor(0.084)
+    firstFixingDate = torch.tensor(0.25)
+    lastFixingDate = torch.tensor(0.75)
+    delta = torch.tensor(0.25)
 
-dTL = torch.linspace(0.0, lastFixingDate + delta, int(50 * (lastFixingDate + delta) + 1))
+    strike = torch.tensor(0.084)
 
-model = Vasicek(a, b, sigma, r0, True, False, measure)
+    dTL = torch.linspace(0.0, lastFixingDate + delta, int(50 * (lastFixingDate + delta) + 1))
 
-rng = RNG(seed=seed, use_av=True)
+    model = Vasicek(a, b, sigma, r0, True, False, measure)
 
-prd = Cap(
-    strike=strike,
-    firstFixingDate=firstFixingDate,
-    lastFixingDate=lastFixingDate,
-    delta=delta
-)
+    rng = RNG(seed=seed, use_av=True)
 
-t_event_dates = torch.concat([prd.timeline, (lastFixingDate).view(1)])
+    prd = Cap(
+        strike=strike,
+        firstFixingDate=firstFixingDate,
+        lastFixingDate=lastFixingDate,
+        delta=delta
+    )
 
-cashflows = mcSim(prd, model, rng, N, dTL)
-print('Cashflows: \n', cashflows, '\n')
+    t_event_dates = torch.concat([prd.timeline, (lastFixingDate).view(1)])
 
-payoff = torch.sum(cashflows, dim=0)
-print('Payoffs:\n', payoff, '\n')
+    cashflows = mcSim(prd, model, rng, N, dTL)
+    print('Cashflows: \n', cashflows, '\n')
 
-mc_price = torch.mean(payoff)
-print('MC Price =', mc_price, '\n')
+    payoff = torch.sum(cashflows, dim=0)
+    print('Payoffs:\n', payoff, '\n')
 
-print('Model price =', model.calc_cap(r0, t_event_dates, delta, strike), '\n')
+    mc_price = torch.mean(payoff)
+    print('MC Price =', mc_price, '\n')
+
+    print('Model price =', model.calc_cap(r0, t_event_dates, delta, strike), '\n')

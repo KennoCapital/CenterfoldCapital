@@ -44,6 +44,7 @@ class Vasicek(Model):
         self._timeline = None
         self._defline = None
         self._x = None
+        self._numRV = 1
         self._paths = None
         self._dTimeline = None
         self._tl_idx_mkt = None
@@ -60,6 +61,10 @@ class Vasicek(Model):
     @property
     def defline(self):
         return self._defline
+
+    @property
+    def numRV(self):
+        return self._numRV
 
     @property
     def x(self):
@@ -124,6 +129,11 @@ class Vasicek(Model):
                 self.sigma * torch.sqrt(dt) * Z
 
     def simulate(self, Z):
+        # If a gaussian cube is passed then convert it into a matrix
+        if Z.dim() == 3:
+            Z = Z[0]
+
+
         # Decide function for performing simulation of state variable
         if self.use_euler:
             step_func = self._euler_step
