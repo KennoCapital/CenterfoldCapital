@@ -194,9 +194,10 @@ def mcSim(
         mdl:    Model,
         rng:    RNG,
         N:      int,
-        dTL:    torch.Tensor = torch.tensor([])):
+        dTL:    torch.Tensor = torch.tensor([]),
+        simDim: int = 1):
     # Simulate paths
-    paths = mcSimPaths(prd, mdl, rng, N, dTL)
+    paths = mcSimPaths(prd, mdl, rng, N, dTL, simDim)
 
     # Calculate payoffs
     payoff = prd.payoff(paths)

@@ -1,21 +1,22 @@
-import scipy
-from application.engine.mcBase import mcSim, RNG
 from application.engine.products import Cap
 from application.engine.trolleSchwartz import trolleSchwartz
 import torch
+import scipy
+from application.engine.mcBase import mcSim, RNG
+
 
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
-
 seed = 1234
 
-N = 1000
+N = 100000
 
 measure = 'risk_neutral'
 
+
 kappa = torch.tensor(0.0553)
-sigma = torch.tensor(0.8595) #0.3325 // 0.0054
-alpha0 = torch.tensor(0.0045)
+sigma = torch.tensor(0.3325)
+alpha0 = torch.tensor(0.045)
 alpha1 = torch.tensor(0.0131)
 gamma = torch.tensor(0.3341)
 rho = torch.tensor(0.4615)
@@ -32,9 +33,9 @@ phi6_0 = torch.clone(x0t)
 
 r0 = torch.tensor(0.08)
 
-firstFixingDate = torch.tensor(1.0)
-lastFixingDate = firstFixingDate #torch.tensor(0.75)
-delta = torch.tensor(0.25)
+firstFixingDate = torch.tensor(20.0)
+lastFixingDate = firstFixingDate
+delta = torch.tensor(5.)
 
 strike = torch.tensor(0.084)
 
@@ -63,39 +64,7 @@ print('Payoffs:\n', payoff)
 mc_price = torch.nanmean(payoff)
 print('MC Price =', mc_price)
 
-#print('Model price =', model.calc_cap(r0, t_event_dates, delta, strike))
-
-def obj(x):
-    x = torch.tensor([x])
-    gamma, kappa, theta, rho, sigma, alpha0, alpha1= [v for v in x]
-    model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1,
-                           x0t, v0, phi1_0, phi2_0, phi3_0, phi4_0, phi5_0, phi6_0, r0=.08)
-
-    cashflows = mcSim(prd, model, rng, N, dTL, simDim=2)
-
-    payoff = torch.sum(cashflows, dim=0)
-    mc_price = torch.nanmean(payoff)
-    err = mc_price - 0.00053243 # analytical Vasicek price
-    mse = torch.linalg.norm(err) ** 2
-
-scipy.optimize.minimize(
-        fun=obj, x0=[gamma, kappa, theta, rho, sigma, alpha0, alpha1], method='Nelder-Mead', tol=1e-12,
-        bounds=[(1E-12, 5.00), (1E-12, 5.00), (1E-12, 5.00), (1E-12, 5.00), (1E-12, 5.00), (1E-12, 5.00), (1E-12, 5.00)],
-        options={
-            'xatol': 1e-12,
-            'fatol': 1e-12,
-            'maxiter': 2500,
-            'maxfev': 2500,
-            'adaptive': True,
-            'disp': True
-        })
-
-
-
 if __name__ == '__main__':
-
-
-
 
 
     import matplotlib.pyplot as plt
@@ -122,19 +91,13 @@ if __name__ == '__main__':
     plt.plot(cashflows[0], color='red', label='cashflows')
     plt.hlines(y=strike, xmin=0, xmax=len(cashflows[0]), color='green', label='strike')
     plt.legend()
-    plt.title('Forward rates')
+    plt.title('Forward rates // payoff')
     plt.show()
 
-    plots = False
+
+    plots = True
 
     if plots:
-        #plot gaussians
-        plt.figure()
-        plt.plot( model.W[0][:,0].cumsum(dim=0)*torch.sqrt(torch.tensor(0.02)), color='blue', label='Wf')
-        plt.plot( model.W[1][:,0].cumsum(dim=0)*torch.sqrt(torch.tensor(0.02)), color='red', label='Wv')
-        plt.legend()
-        plt.title('Correlated Wiener processes 2')
-        plt.show()
 
         #plot stat vars
         x,v,phi1,phi2,phi3,phi4,phi5,phi6 = [i for i in model.x]
@@ -156,3 +119,19 @@ if __name__ == '__main__':
         plt.legend()
         plt.title('state vars phi1-6')
         plt.show()
+
+        # plot f variance
+        sigma_fct = model._sigma(model.timeline, lastFixingDate + delta)
+        v_sqrt = v[0][:,0:5].sqrt()
+        colors = ['b', 'r', 'y', 'g', 'c']
+        plt.figure()
+        for i in range(5):
+            plt.plot(v_sqrt[:,i] * sigma_fct, color=colors[i], label='f vol')
+        plt.legend()
+        plt.xlabel('time steps')
+        plt.title('f volatility')
+        plt.show()
+
+
+
+

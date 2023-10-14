@@ -1,6 +1,4 @@
 import torch
-import scipy
-from application.utils.torch_utils import N_cdf
 from application.engine.mcBase import Model, MEASURES
 from application.engine.products import Product, Sample
 from application.engine.linearProducts import forward, swap, swap_rate
@@ -8,8 +6,11 @@ from application.engine.linearProducts import forward, swap, swap_rate
 
 class trolleSchwartz(Model):
     """
-        state variables:
+        Todo: add semi-analytic caplet pricing formula
+
+        MC simulation of state variables:
         x, v, phi1, ph2, phi3, phi4, phi5, phi6
+
     """
     def __init__(self,
                  gamma,
@@ -25,13 +26,21 @@ class trolleSchwartz(Model):
                  use_euler: bool = True,
                  measure:   str = 'risk_neutral'):
         """
-        :param a:               Mean reversion rate
-        :param b:               Long term mean rate
-        :param sigma:           Volatility,
+        :param gamma:           Parameter originating from HJM  volatility structure
+
+        :param kappa:           Mean reversion rate variance process
+        :param theta:           Long term mean level variance process
+        :param rho:             Correlation between stochastic processes
+        :param sigma:           Volatility parameter variance process,
+
+        :param alpha0:          Parameter originating from HJM  volatility structure
+        :param alpha1:          Parameter originating from HJM  volatility structure
+
         :param r0:              Initial value of instantaneous short rate
-        :param measure:         Specifies which measure to simulate under
-        :param use_euler:       Use Euler discretization (True) or Exact method (False) for simulation of short rate
-        :param use_ATS:         Use Affine Term Structure specification to calculate ZCB prices
+        :param simDim:          Multi-factor dimension
+
+        :param use_euler:       [Supports currently only 'True'] Use Euler discretization (True) or Exact method (False) for simulation of short rate
+        :param measure:         [Supports currently only 'risk_neutral'] Specifies which measure to simulate under
         """
         self.gamma = gamma
         self.kappa = kappa
@@ -88,10 +97,6 @@ class trolleSchwartz(Model):
         return [self._x, self._v, self._phi1, self._phi2, self._phi3, self._phi4, self._phi5, self._phi6]
 
     @property
-    def W(self): # todo: consider removing this when method is working
-        return [self._Wf, self._Wv]
-
-    @property
     def f(self):
         return self.calc_instant_fwd(X=self.x, t=0, T=self.timeline)
 
@@ -111,7 +116,6 @@ class trolleSchwartz(Model):
 
 
         # Allocate space for state and paths (market variables)
-        #n = len(prdTimeline)
         self._Tn = prd.Tn
         # 8 state vars: x, v, phi1, phi2, phi3, phi4, phi5, phi6
         self._x = torch.full(size=(self.simDim, len(self.timeline), N), fill_value=torch.nan)
@@ -158,16 +162,11 @@ class trolleSchwartz(Model):
         # Correlated BMs: W = Z x L^T
         W = Z.reshape(-1,2) @ L.t()
 
-        Wf = W[:,0]#torch.cumsum(W[:,0], dim=0)
-        Wv = W[:,1]#torch.cumsum(W[:,1], dim=0)
+        Wf = W[:,0]
+        Wv = W[:,1]
 
         Wf = Wf.reshape((len(self.timeline)-1,-1))
         Wv = Wv.reshape((len(self.timeline)-1,-1))
-
-        # todo: consider remove this when method is working
-        self._Wf = Wf
-        self._Wv = Wv
-        # ----------------
 
         return Wf, Wv
 
@@ -182,8 +181,7 @@ class trolleSchwartz(Model):
         """
         dx = -self.gamma * x * dt + torch.sqrt(torch.abs(v)) * dWf * torch.sqrt(dt)
 
-        #dv = self.kappa * (self.theta - v) * dt + self._sigma(t=0, T=dt) * torch.sqrt(v) * dWv * torch.sqrt(dt)
-        # try with abs v
+        # Note: using abs(v)
         dv = self.kappa * (self.theta - v) * dt + self.sigma * torch.sqrt(torch.abs(v)) * dWv * torch.sqrt(dt)
 
         dphi1 = (x - self.gamma * phi1) * dt
@@ -271,7 +269,6 @@ class trolleSchwartz(Model):
         for k, s in enumerate(self.timeline[1:]):
 
             # State variables using step function
-            #f(s,T)
             self._x[:,k+1, :], self._v[:,k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
             self._phi3[:,k+1, :], self._phi4[:,k+1, :], self._phi5[:,k+1, :], self._phi6[:,k+1, :] = \
                 step_func(self._x[:,k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :],
@@ -281,13 +278,15 @@ class trolleSchwartz(Model):
             # Numeraire
             if self.measure == 'risk_neutral':
                 # Trapezoidal rule: B(t) = exp{ int_0^t r(s) ds } ~ exp{sum[ r(t) * dt ]}
-                rt1 = self.calc_short_rate(X=[self._x[:,k+1, :], self._v[:,k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
-            self._phi3[:,k+1, :], self._phi4[:,k+1, :], self._phi5[:,k+1, :], self._phi6[:,k+1, :]], t=self.timeline[k+1])
-                rt =self.calc_short_rate(X=[self._x[:,k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :], \
-            self._phi3[:,k, :], self._phi4[:,k, :], self._phi5[:,k, :], self._phi6[:,k, :]], t=self.timeline[k])
-                numeraire *= torch.exp(0.5 * (rt1 + rt) * dt[k])
+                xk1 = [self._x[:,k+1, :], self._v[:,k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
+                        self._phi3[:,k+1, :], self._phi4[:,k+1, :], self._phi5[:,k+1, :], self._phi6[:,k+1, :]]
+                xk = [self._x[:,k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :], \
+                        self._phi3[:,k, :], self._phi4[:,k, :], self._phi5[:,k, :], self._phi6[:,k, :]]
 
-                #numeraire *= 1.0 torch.exp(0.5 * (self._x[k + 1, :] + self._x[k, :]) * dt[k])
+                rt1 = self.calc_short_rate(X=xk1, t=self.timeline[k+1])
+                rt = self.calc_short_rate(X=xk, t=self.timeline[k])
+
+                numeraire *= torch.exp(0.5 * (rt1 + rt) * dt[k])
 
             # Samples (market variables)
             if self._tl_idx_mkt[k + 1]:
@@ -298,9 +297,8 @@ class trolleSchwartz(Model):
                             )
         return self.paths
 
-    def calc_zcb(self, PT, Pt, X, t, T):
+    def calc_zcb(self,X, t, T,  PT=1.0, Pt=1.0):
         """
-        # todo: not sure how to set PT (and Pt, unless we have Pt=P(0,0)= 1.0)
         P(t, T)=P(0,T)/P(0,t) * exp{sum_i(Bx_i(T-t)x_i(t)) + sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))}
 
         Note:
@@ -308,23 +306,37 @@ class trolleSchwartz(Model):
         """
         x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in X]
 
-        Bx = self.alpha1 / self.gamma * ( (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1) + \
-                                          (T-t) * torch.exp(-self.gamma*(T-t)) )
+
+        Bx = (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1.0)
+        Bx += (T-t) * torch.exp(-self.gamma*(T-t))
+        Bx *= self.alpha1 / self.gamma
+
         Bphi1 = self.alpha1 / self.gamma * ( torch.exp(-self.gamma*(T-t)) - 1 )
-        Bphi2 = torch.pow(self.alpha1 / self.gamma, 2) * (1/self.gamma + self.alpha0/self.alpha1) *\
-                ( (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1) + \
-                  (T-t) * torch.exp(-self.gamma*(T-t)) )
-        Bphi3 = - self.alpha1 / torch.pow(self.gamma, 2) * ( (self.alpha1 / (2*torch.pow(self.gamma,2)) + self.alpha0 / self.gamma +\
-                                                              torch.pow(self.alpha0,2) / (2*self.alpha1) ) * (torch.exp(-2*self.gamma*(T-t)) - 1) +\
-                                                             (self.alpha1 / self.gamma + self.alpha0) * (T-t) * torch.exp(-2*self.gamma*(T-t)) +\
-                                                             self.alpha1 / 2 * (T-t)**2 * torch.exp(-2*self.gamma*(T-t)) )
-        Bphi4 = torch.pow(self.alpha1 / self.gamma,2) * (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1)
-        Bphi5 = - self.alpha1 / torch.pow(self.gamma,2) * ( (self.alpha1 / self.gamma + self.alpha0) * \
-                                                            (torch.exp(-2*self.gamma*(T-t)) -1) + self.alpha1 * (T-t) * torch.exp(-2*self.gamma*(T-t)) )
-        Bphi6 = - 0.5 * torch.pow(self.alpha1 / self.gamma,2) * (torch.exp(-2*self.gamma*(T-t)) - 1)
+
+        Bphi2 = (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1)
+        Bphi2 += (T-t) * torch.exp(-self.gamma*(T-t))
+        Bphi2 *= torch.pow(self.alpha1 / self.gamma, 2) * (1 / self.gamma + self.alpha0 / self.alpha1)
+
+        Bphi3 = self.alpha1 / (2*torch.pow(self.gamma,2))
+        Bphi3 += self.alpha1 / 2 * (T-t)**2 * torch.exp(-2*self.gamma*(T-t))
+        Bphi3 *= (torch.exp(-2*self.gamma*(T-t)) - 1)
+        Bphi3 += (self.alpha1 / self.gamma + self.alpha0) * (T-t) * torch.exp(-2*self.gamma*(T-t))
+        Bphi3 += self.alpha1 / 2 * (T-t)**2 * torch.exp(-2*self.gamma*(T-t))
+        Bphi3 *= - self.alpha1 / torch.pow(self.gamma, 2)
+
+        Bphi4 = torch.pow(self.alpha1 / self.gamma,2)
+        Bphi4 *= (1/self.gamma + self.alpha0/self.alpha1)
+        Bphi4 *= (torch.exp(-self.gamma*(T-t)) - 1)
+
+        Bphi5 = (self.alpha1 / self.gamma + self.alpha0) * (torch.exp(-2*self.gamma*(T-t)) -1)
+        Bphi5 += self.alpha1 * (T-t) * torch.exp(-2*self.gamma*(T-t))
+        Bphi5 *= - self.alpha1 / torch.pow(self.gamma,2)
+
+        Bphi6 = - 0.5 * torch.pow(self.alpha1 / self.gamma,2)
+        Bphi6 *= (torch.exp(-2*self.gamma*(T-t)) - 1)
 
         # sum_i(Bx_i(T-t)x_i(t))
-        Bx_sum = torch.sum(Bx * x,dim=0)
+        Bx_sum = torch.sum(Bx * x, dim=0)
 
         # sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))
         Bphi_sum = torch.sum(Bphi1 * phi1 + Bphi2 * phi2 + Bphi3 * phi3 + Bphi4 * phi4 + Bphi5 * phi5 + Bphi6 * phi6, dim=0)
@@ -333,6 +345,7 @@ class trolleSchwartz(Model):
 
     def calc_instant_fwd(self, X, t, T):
         x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i.reshape(1, -1) for i in X]
+
 
         Bx = (self.alpha0 + self.alpha1 * (T - t)) * torch.exp(-self.gamma * (T - t))
         Bphi1 = self.alpha1 * torch.exp(-self.gamma * (T - t))
@@ -355,7 +368,6 @@ class trolleSchwartz(Model):
 
         return f0 + Bx_sum + Bphi_sum
 
-
     def calc_zcb_price(self, X, t, T):
         if T.dim() == 0:
             T = T.unsqueeze(0)
@@ -365,17 +377,12 @@ class trolleSchwartz(Model):
         f0T = self.calc_instant_fwd(X, t, T)
         return torch.exp(-0.5 * (f0t + f0T) * (T-t))
 
-
-    def calc_short_rate(self, X, t, f0=0.0):
+    def calc_short_rate(self, X, t):
         return self.calc_instant_fwd(X, t, t)
 
     def calc_fwd(self, X, t, delta):
-        # todo: not sure how to set PT and Pt
         zcb_t = self.calc_zcb_price(X, t, t)
         zcb_tdt = self.calc_zcb_price(X, t, t+delta)
-        #zcb_t = self.calc_zcb(PT=0.98, Pt=1.0, X=X, t=0, T=t)
-        #zcb_tdt = self.calc_zcb(PT=0.98, Pt=1.0, X=X, t=0, T=t+delta)
-
         return forward(zcb_t, zcb_tdt, delta)
 
     def calc_swap(self, X, t, delta, K=None, N=torch.tensor(1.0)):
@@ -393,7 +400,7 @@ class trolleSchwartz(Model):
            Revise Trolle-Schwartz on this
                 Cpl(0; t, t+delta) = P(0,t) * N(d1) - P(0,t+delta) / K_bar * N(d2)
         """
-        # todo rewrite this method
+        # todo: add this method
 
         return None
 
