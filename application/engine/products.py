@@ -94,11 +94,12 @@ class CallableProduct(Product):
     def exercise_idx(self) -> torch.Tensor:
         pass
 
+
 class Caplet(Product):
     def __init__(self,
                  strike: torch.Tensor,
                  start: torch.Tensor,
-                 delta: torch.Tensor):
+                 delta: torch.Tensor):  # TODO add notional
         """
             A caplet pays
                 delta * max{ F(t, t+delta) - K; 0.0 }   @   t + delta
