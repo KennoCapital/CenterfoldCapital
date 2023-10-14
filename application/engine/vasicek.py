@@ -133,7 +133,6 @@ class Vasicek(Model):
         if Z.dim() == 3:
             Z = Z[0]
 
-
         # Decide function for performing simulation of state variable
         if self.use_euler:
             step_func = self._euler_step

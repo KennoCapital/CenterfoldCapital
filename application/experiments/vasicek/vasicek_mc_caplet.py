@@ -44,10 +44,3 @@ if __name__ == '__main__':
     print(
         'Analytical price =', model.calc_cpl(r0, start, delta, swap_rate)
     )
-
-
-    #import timeit
-    #execution_time = timeit.repeat(lambda: torch.mean(mcSim(prd, model, rng, N, dTL)), number=1, repeat=100)
-    #print(
-    #    torch.mean(torch.tensor(execution_time))
-    #)
