@@ -78,7 +78,7 @@ if __name__ == '__main__':
 
     print(f'EuropeanPayerSwpt (lower bound) = {price_european_payer_swpt}')
 
-    # Sum of European Payer Swaption (uppwer bound)
+    # Sum of European Payer Swaption (upper bound)
     upper_bound = 0.0
     for T in exerciseDates:
         european_payer_swpt = EuropeanPayerSwaption(
@@ -94,4 +94,3 @@ if __name__ == '__main__':
         upper_bound += torch.mean(payoff)
 
     print(f'EuropeanPayerSwpt (upper bound) = {upper_bound}')
-
