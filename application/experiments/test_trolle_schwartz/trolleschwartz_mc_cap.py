@@ -1,18 +1,18 @@
+from application.engine.mcBase import mcSim, RNG
 from application.engine.products import Cap
 from application.engine.trolleSchwartz import trolleSchwartz
 import torch
-import scipy
 from application.engine.mcBase import mcSim, RNG
 
 
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
+
 seed = 1234
 
 N = 100000
 
 measure = 'risk_neutral'
-
 
 kappa = torch.tensor(0.0553)
 sigma = torch.tensor(0.3325)
@@ -22,14 +22,14 @@ gamma = torch.tensor(0.3341)
 rho = torch.tensor(0.4615)
 theta = torch.tensor(0.7542)
 
-x0t = torch.tensor([.0])
-v0= torch.clone(x0t)
-phi1_0 = torch.clone(x0t)
-phi2_0 = torch.clone(x0t)
-phi3_0 = torch.clone(x0t)
-phi4_0 = torch.clone(x0t)
-phi5_0 = torch.clone(x0t)
-phi6_0 = torch.clone(x0t)
+x0 = torch.tensor([.0])
+v0= torch.clone(x0)
+phi1_0 = torch.clone(x0)
+phi2_0 = torch.clone(x0)
+phi3_0 = torch.clone(x0)
+phi4_0 = torch.clone(x0)
+phi5_0 = torch.clone(x0)
+phi6_0 = torch.clone(x0)
 
 r0 = torch.tensor(0.08)
 
@@ -42,9 +42,9 @@ strike = torch.tensor(0.084)
 dTL = torch.linspace(0.0, lastFixingDate + delta, int(50 * (lastFixingDate + delta) + 1))
 
 model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1,
-                       x0t, v0, phi1_0, phi2_0, phi3_0, phi4_0, phi5_0, phi6_0, r0)
+                       x0, v0, phi1_0, phi2_0, phi3_0, phi4_0, phi5_0, phi6_0)
 
-rng = RNG(seed=seed, simDim=2, use_av=True)
+rng = RNG(seed=seed, numVar=2, use_av=False)
 
 prd = Cap(
     strike=strike,
@@ -55,7 +55,7 @@ prd = Cap(
 
 t_event_dates = torch.concat([prd.timeline, (lastFixingDate).view(1)])
 
-cashflows = mcSim(prd, model, rng, N, dTL, simDim=2)
+cashflows = mcSim(prd, model, rng, N, dTL, simDim =2)
 print('Cashflows: \n', cashflows)
 
 payoff = torch.sum(cashflows, dim=0)
@@ -65,8 +65,6 @@ mc_price = torch.nanmean(payoff)
 print('MC Price =', mc_price)
 
 if __name__ == '__main__':
-
-
     import matplotlib.pyplot as plt
 
     x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in model.x]

@@ -94,11 +94,12 @@ class CallableProduct(Product):
     def exercise_idx(self) -> torch.Tensor:
         pass
 
+
 class Caplet(Product):
     def __init__(self,
                  strike: torch.Tensor,
                  start: torch.Tensor,
-                 delta: torch.Tensor):
+                 delta: torch.Tensor):  # TODO add notional
         """
             A caplet pays
                 delta * max{ F(t, t+delta) - K; 0.0 }   @   t + delta
@@ -411,21 +412,22 @@ class BermudanPayerSwaption(CallableProduct):
             int((self.swapLastFixingDate - t) / self.delta) + 1
         ) for t in exerciseDates]
 
-        # Exercise at time 0
+
         if self._exerciseAtTimeZero:
+            # First exercise is at time 0.0
             self._timeline = exerciseDates
             self._defline = [
                 SampleDef(
                     fwdRates=[],
-                    irs=[InterestRateSwapDef(fixingDates=swapFixingDates[0],
-                                             fixRate=self.strike,
+                    irs=[InterestRateSwapDef(fixingDates=swapFixingDates[j], fixRate=self.strike,
                                              notional=self.notional)],
                     discMats=torch.tensor([]),
                     numeraire=True,
                     stateVar=True
-                )
+                ) for j in range(len(self._timeline))
             ]
         else:
+            # First exercise is after time 0.0
             self._timeline = torch.concat([torch.tensor([0.0]), exerciseDates])
             self._defline = [
                 SampleDef(
@@ -436,17 +438,15 @@ class BermudanPayerSwaption(CallableProduct):
                     stateVar=False
                 )
             ]
-
-        self._defline += [
+            self._defline += [
             SampleDef(
                 fwdRates=[],
                 irs=[InterestRateSwapDef(fixingDates=swapFixingDates[j], fixRate=self.strike, notional=self.notional)],
                 discMats=torch.tensor([]),
                 numeraire=True,
                 stateVar=True
-            ) for j in range(1, len(self._timeline))
+            ) for j in range(len(self._timeline) - 1)
         ]
-
 
         self._payoffLabels = [f'max[swap({t}) ; 0.0]' for t in exerciseDates]
 

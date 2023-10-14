@@ -4,11 +4,11 @@ from application.engine.vasicek import Vasicek
 from application.engine.regressor import PolynomialRegressor
 import torch
 
-torch.set_printoptions(8)
+torch.set_printoptions(2)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
-    seed = None
+    seed = 1234
 
     deg = 5
     n = 5000
@@ -21,7 +21,7 @@ if __name__ == '__main__':
     sigma = torch.tensor(0.0148)
     r0 = torch.tensor(0.08)
 
-    exerciseDates = torch.tensor([0.0, 5.0, 10.0, 15.0])
+    exerciseDates = torch.tensor([5.0, 10.0, 15.0])
     delta = torch.tensor(0.25)
     swapFirstFixingDate = torch.tensor(15.0)
     swapLastFixingDate = torch.tensor(30.0)
@@ -63,7 +63,7 @@ if __name__ == '__main__':
 
     print(f'BermudanPayerSwpt = {price_bermudan_payer_swpt}')
 
-    # European Payer Swaption
+    # European Payer Swaption (lower bound)
     european_payer_swpt = EuropeanPayerSwaption(
         strike=strike,
         exerciseDate=exerciseDates[-1],
@@ -76,4 +76,22 @@ if __name__ == '__main__':
     payoff = mcSim(prd=european_payer_swpt, mdl=model, rng=rng, N=N, dTL=dTL)
     price_european_payer_swpt = torch.mean(payoff)
 
-    print(f'EuropeanPayerSwpt = {price_european_payer_swpt}')
+    print(f'EuropeanPayerSwpt (lower bound) = {price_european_payer_swpt}')
+
+    # Sum of European Payer Swaption (uppwer bound)
+    upper_bound = 0.0
+    for T in exerciseDates:
+        european_payer_swpt = EuropeanPayerSwaption(
+            strike=strike,
+            exerciseDate=T,
+            delta=delta,
+            swapFirstFixingDate=T,
+            swapLastFixingDate=swapLastFixingDate,
+            notional=notional
+        )
+
+        payoff = mcSim(prd=european_payer_swpt, mdl=model, rng=rng, N=N, dTL=dTL)
+        upper_bound += torch.mean(payoff)
+
+    print(f'EuropeanPayerSwpt (upper bound) = {upper_bound}')
+
