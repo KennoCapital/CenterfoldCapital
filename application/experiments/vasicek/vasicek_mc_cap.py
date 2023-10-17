@@ -2,72 +2,49 @@ from application.engine.mcBase import mcSim, RNG
 from application.engine.products import Cap
 from application.engine.vasicek import Vasicek
 import torch
-from torch.autograd.functional import jacobian
 
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
-seed = 1234
 
-N = 4
+if __name__ == '__main__':
+    seed = None
 
-a = torch.tensor(0.86)
-b = torch.tensor(0.09)
-sigma = torch.tensor(0.0148)
-r0 = torch.tensor(0.08, requires_grad=True)
+    N = 50000
 
-start = torch.tensor(0.25)
-delta = torch.tensor(0.25)
-expiry = torch.tensor(1.0)
+    measure = 'risk_neutral'
 
-eTL = torch.linspace(0.0, 1.0, 1001)    # Euler time steps
+    a = torch.tensor(0.86)
+    b = torch.tensor(0.09)
+    sigma = torch.tensor(0.0148)
+    r0 = torch.tensor(0.08)
 
-t = torch.linspace(float(delta), float(expiry), int(expiry/delta))
+    firstFixingDate = torch.tensor(0.25)
+    lastFixingDate = torch.tensor(0.75)
+    delta = torch.tensor(0.25)
 
-model = Vasicek(a, b, sigma, r0, False)
-swap_rate = model.calc_swap_rate(r0, t, delta)
+    strike = torch.tensor(0.084)
 
+    dTL = torch.linspace(0.0, lastFixingDate + delta, int(50 * (lastFixingDate + delta) + 1))
 
-rng = RNG(seed=seed, use_av=True)
+    model = Vasicek(a, b, sigma, r0, True, False, measure)
 
-prd = Cap(
-    strike=swap_rate,
-    start=start,
-    expiry=expiry,
-    delta=delta
-)
+    rng = RNG(seed=seed, use_av=True)
 
-price, paths = mcSim(prd, model, rng, N)
-print(f"Monte-Carlo cap price: {price.detach()}")
-#print(model.calc_cap(r0, t, delta, swap_rate))
+    prd = Cap(
+        strike=strike,
+        firstFixingDate=firstFixingDate,
+        lastFixingDate=lastFixingDate,
+        delta=delta
+    )
 
+    cashflows = mcSim(prd, model, rng, N, dTL)
+    print('Cashflows: \n', cashflows, '\n')
 
-# compute differentials using jacobian
-def computeJacobian_dCdr(prd, model, rng, N, r0):
-    def wrapper_dCdr(r0):
-        model.r0 = r0
-        paths = mcSim(prd, model, rng, N)[1]
-        return prd.payoff(paths)
-    return jacobian(wrapper_dCdr, r0, create_graph=False, strategy="reverse-mode")
+    payoff = torch.sum(cashflows, dim=0)
+    print('Payoffs:\n', payoff, '\n')
 
-def computeJacobian_dFdr(model, r0):
-    def wrapper_dFdr(r0):
-        model.r0 = r0
-        return model.calc_fwd(r0, t[1:], delta)
-    return jacobian(wrapper_dFdr, r0, create_graph=False, strategy="reverse-mode")
+    mc_price = torch.mean(payoff)
+    print('MC Price =', mc_price, '\n')
 
-dCdr = computeJacobian_dCdr(prd, model, rng, N, r0)
-dFdr_inv = 1.0/computeJacobian_dFdr(model, r0)
-
-# follows from chain rule
-dCdF = dCdr * dFdr_inv #torch.dot(torch.pinverse(dCdr), dFdr)
-
-
-"""
-for i in range(N):
-    print(f"pathwise differential of path {i} is: \n {J[i]}")
-"""
-
-
-
-
+    print('Model price =', model.calc_cap(r0, prd.timeline, delta, strike), '\n')
