@@ -1,8 +1,8 @@
-from application.engine.AAD import computeJacobian_dCdr, computeJacobian_dFdr
-from application.engine.mcBase import mcSim, RNG
-from application.engine.products import Caplet
+from torch.autograd.functional import jacobian
+from application.engine.mcBase import mcSim, RNG, Model
+from application.engine.products import Caplet, Product
 from application.engine.vasicek import Vasicek
-from application.engine.differential_regression import DifferentialRegression, diffreg_fit
+from application.engine.differential_regression import DifferentialRegression
 from application.utils.torch_utils import max0
 from scipy.optimize import root_scalar
 import matplotlib.pyplot as plt
@@ -11,10 +11,64 @@ import numpy as np
 
 def find_r_for_target_fwd(target_fwd_rate, model, start, delta):
     def objective(r):
-        return model.calc_fwd(r, start, delta) - target_fwd_rate
+        return model.calc_fwd(torch.tensor(r), start, delta) - target_fwd_rate
 
     result = root_scalar(objective, bracket=[-1, 1], method='brentq', xtol=1e-15)
     return result.root
+
+def diffreg_fit(prd: Caplet,
+              mdl: Vasicek,
+              rng:RNG,
+              s: torch.Tensor,
+              rs : torch.Tensor,
+              measure : str = 'terminal',
+              dtl : torch.Tensor = torch.tensor([])
+              ):
+
+    cprd = Caplet(
+        start=prd.start - s,
+        delta=prd.delta,
+        strike=prd.strike
+    )
+
+    cmdl = Vasicek(mdl.a, mdl.b, mdl.sigma, rs, mdl.use_ATS, mdl.use_euler, measure)
+
+    x_train = cmdl.calc_fwd(rs, cprd.start, cprd.delta)
+    y_train = mcSim(cprd, cmdl, rng, rng.N, dtl)
+
+    rs.requires_grad_()
+    dCdr = torch.sum(computeJacobian_dCdr(cprd, cmdl, rng, rng.N, rs, dtl), dim=1)
+    dFdr = torch.sum(computeJacobian_dFdr(cmdl, rs, cprd.start, cprd.delta), dim=1)
+
+    # follows from chain rule
+    z_train = dCdr * 1 / dFdr
+
+    x_train = x_train.detach().numpy().reshape(-1, 1)
+    y_train = y_train.detach().numpy().reshape(-1, 1)
+    z_train = z_train.detach().numpy().reshape(-1, 1)
+
+    diffreg = DifferentialRegression(degree=5, alpha=1.0)
+    diffreg.fit(x_train, y_train, z_train)
+
+    return diffreg, x_train, y_train, z_train
+
+
+def computeJacobian_dCdr(prd : Product, model : Model, rng : RNG, N : int, r0 : torch.Tensor, dTL : torch.Tensor):
+    def wrapper_dCdr(r0 : torch.Tensor):
+        model.r0 = r0
+        payoffs = mcSim(prd, model, rng, N, dTL)
+        return payoffs
+
+    jacobian_result = jacobian(wrapper_dCdr, r0, create_graph=False, strategy="reverse-mode")  # , price
+    return jacobian_result
+
+
+def computeJacobian_dFdr(model : Model, r0 : torch.Tensor, start : torch.Tensor, delta : torch.Tensor):
+    def wrapper_dFdr(r0 : torch.Tensor):
+        # model.r0 = r0
+        return model.calc_fwd(r0, start, delta)
+
+    return jacobian(wrapper_dFdr, r0, create_graph=False, strategy="reverse-mode")
 
 
 if __name__ == '__main__':
@@ -30,10 +84,10 @@ if __name__ == '__main__':
 
     measure = 'risk_neutral'
 
-    show_r = False # running a single prediction of price and delta for the short rate sensititivity
-    show_base = False # running a single prediction of price and delta of the underlying forward rate
-    delta_hedge_bump = False # conduct delta hedge using bump and revalue delta
-    delta_hedge_dML = False # conduct delta hedge using differential regression
+    show_r = True # running a single prediction of price and delta for the short rate sensititivity
+    show_base = True # running a single prediction of price and delta of the underlying forward rate
+    delta_hedge_bump = True # conduct delta hedge using bump and revalue delta
+    delta_hedge_dML = True # conduct delta hedge using differential regression
     delta_convergence = True # conduct delta hedge using differential regression
                               # for multiple hedge points to illustrate hedge error
 
@@ -45,7 +99,7 @@ if __name__ == '__main__':
     bump = 0.0001 # for delta computing
     Notional = 40
 
-    start = torch.tensor(2.25)  # 0.25)
+    start = torch.tensor(4.75)  # 0.25)
     delta = torch.tensor(0.25)
     expiry = start + delta  # 0.50)
 
@@ -76,7 +130,7 @@ if __name__ == '__main__':
 
             price = mcSim(prd, model, rng, N, dTL)
             r = model.x
-            V = model.calc_cpl_with_t(r0, start, prd.delta, swap_rate).detach().numpy() * Notional
+            V = model.calc_cpl(r0, start, prd.delta, swap_rate).detach().numpy() * Notional
             fwd = model.calc_fwd(r[0, :], prd.start, prd.delta).detach().numpy().reshape(-1, 1)
 
             spot_grid = torch.linspace(r0.detach().numpy() - 0.03, r0.detach().numpy() + 0.03, N)
@@ -192,7 +246,7 @@ if __name__ == '__main__':
 
         price = mcSim(prd, model, rng, N, dTL)
         r = model.x
-        V = model.calc_cpl_with_t(r0, start, prd.delta, swap_rate).detach().numpy() * Notional
+        V = model.calc_cpl(r0, start, prd.delta, swap_rate).detach().numpy() * Notional
         fwd = model.calc_fwd(r[0, :], prd.start, prd.delta).detach().numpy().reshape(-1, 1)
 
         spot_grid = torch.linspace(r0.detach().numpy() - 0.03, r0.detach().numpy() + 0.03, N)
@@ -234,7 +288,7 @@ if __name__ == '__main__':
 
             fwd = fwd.reshape(-1)
 
-            cpl_val = model.calc_cpl_with_t(r[i, :], start - dTL[i], prd.delta, swap_rate).detach().numpy()
+            cpl_val = model.calc_cpl(r[i, :], start - dTL[i], prd.delta, swap_rate).detach().numpy()
 
             b = V - delta_F * fwd * Notional
 
@@ -272,14 +326,14 @@ if __name__ == '__main__':
 
         price = mcSim(prd, model, rng, N, dTL)
         r = model.x
-        V = model.calc_cpl_with_t(r0, start, prd.delta, swap_rate).detach().numpy()
+        V = model.calc_cpl(r0, start, prd.delta, swap_rate).detach().numpy()
         fwd = model.calc_fwd(r[0, :], prd.start, prd.delta).detach().numpy().reshape(-1, 1)
 
         fwd = fwd.reshape(-1)
         target_fwd_rates = (fwd + bump).reshape(-1)
         required_rs = torch.tensor([find_r_for_target_fwd(rate, model, start, delta) for rate in target_fwd_rates])
         fwd_bump = model.calc_fwd(required_rs, start, delta).detach().numpy().reshape(-1)
-        delta_F = (model.calc_cpl_with_t(required_rs, start, prd.delta, swap_rate).detach().numpy() - V) / (fwd_bump - fwd)
+        delta_F = (model.calc_cpl(required_rs, start, prd.delta, swap_rate).detach().numpy() - V) / (fwd_bump - fwd)
 
         b = (V - delta_F * fwd)
         dt = start.detach().numpy() / (dTL.numel() - 1)
@@ -293,12 +347,12 @@ if __name__ == '__main__':
 
             fwd = fwd.reshape(-1)
 
-            cpl_val = model.calc_cpl_with_t(r[i, :], start - dTL[i], prd.delta, swap_rate).detach().numpy()
+            cpl_val = model.calc_cpl(r[i, :], start - dTL[i], prd.delta, swap_rate).detach().numpy()
 
             target_fwd_rates = (fwd + bump).reshape(-1)
             required_rs = torch.tensor([find_r_for_target_fwd(rate, model, start - dTL[i], delta) for rate in target_fwd_rates])
             fwd_bump = model.calc_fwd(required_rs, start - dTL[i], delta).detach().numpy().reshape(-1)
-            cpl_val_bump = model.calc_cpl_with_t(required_rs, start - dTL[i], prd.delta, swap_rate).detach().numpy()
+            cpl_val_bump = model.calc_cpl(required_rs, start - dTL[i], prd.delta, swap_rate).detach().numpy()
             delta_F = (cpl_val_bump - cpl_val) / (fwd_bump - fwd)
 
             b = V - delta_F * fwd
@@ -378,23 +432,24 @@ if __name__ == '__main__':
         z_train = z_train.detach().numpy().reshape(-1, 1)
 
 
-        y_train_mdl_cpl = model.calc_cpl_with_t(spot_grid, start, delta, swap_rate)
+        y_train_mdl_cpl = model.calc_cpl(spot_grid, start, delta, swap_rate)
 
         target_fwd_rates = (x_train + bump).reshape(-1)
         required_rs = torch.tensor([find_r_for_target_fwd(rate, model, start, delta) for rate in target_fwd_rates])
         fwd_bump = model.calc_fwd(required_rs, start, delta).detach().numpy().reshape(-1)
         bump_fwd = fwd_bump - x_train.reshape(-1)
 
-        y_train_mdl_cpl_bump = model.calc_cpl_with_t(required_rs, start, delta, swap_rate)
+        y_train_mdl_cpl_bump = model.calc_cpl(required_rs, start, delta, swap_rate)
 
-        y_train_mdl_cpl = y_train_mdl_cpl.detach().numpy()
+        y_train_mdl_cpl = y_train_mdl_cpl.detach().numpy().reshape(-1)
         y_train_mdl_cpl_bump = y_train_mdl_cpl_bump.detach().numpy()
 
         z_train_mdl_cpl = (y_train_mdl_cpl_bump - y_train_mdl_cpl) / bump_fwd #bump
+        z_train_mdl_cpl = z_train_mdl_cpl.reshape(-1)
 
         x_test = model.calc_fwd(r_test, start, delta).detach().numpy().reshape(-1, 1)
 
-        y_test_mdl_cpl = model.calc_cpl_with_t(r_test, start, delta, swap_rate)
+        y_test_mdl_cpl = model.calc_cpl(r_test, start, delta, swap_rate)
 
 
         target_fwd_rates = (x_test + bump).reshape(-1)
@@ -402,13 +457,14 @@ if __name__ == '__main__':
         fwd_bump = model.calc_fwd(required_rs, start, delta).detach().numpy().reshape(-1)
         bump_fwd = fwd_bump - x_test.reshape(-1)
 
-        y_test_mdl_cpl_bump = model.calc_cpl_with_t(required_rs, start, delta, swap_rate)
+        y_test_mdl_cpl_bump = model.calc_cpl(required_rs, start, delta, swap_rate)
 
-        y_test_mdl_cpl = y_test_mdl_cpl.detach().numpy()
+        y_test_mdl_cpl = y_test_mdl_cpl.detach().numpy().reshape(-1)
 
         y_test_mdl_cpl_bump = y_test_mdl_cpl_bump.detach().numpy()
 
         z_test_mdl_cpl = (y_test_mdl_cpl_bump - y_test_mdl_cpl) / bump_fwd #bump
+        z_test_mdl_cpl = z_test_mdl_cpl.reshape(-1)
 
         diffreg = DifferentialRegression(degree=degree, alpha=alpha)
         diffreg.fit(x_train, y_train, z_train)
@@ -524,10 +580,10 @@ if __name__ == '__main__':
 
         dFdr = dFdr.detach().numpy()
 
-        y_train_mdl_cpl = model.calc_cpl_with_t(spot_grid, start, delta, swap_rate)
+        y_train_mdl_cpl = model.calc_cpl(spot_grid, start, delta, swap_rate)
         y_train_mdl_cpl = y_train_mdl_cpl.detach().numpy()
 
-        y_train_mdl_cpl_bump = model.calc_cpl_with_t(spot_grid + bump, start, delta, swap_rate)
+        y_train_mdl_cpl_bump = model.calc_cpl(spot_grid + bump, start, delta, swap_rate)
         y_train_mdl_cpl_bump = y_train_mdl_cpl_bump.detach().numpy()
 
         z_train_mdl_cpl = (y_train_mdl_cpl_bump - y_train_mdl_cpl) / bump
@@ -535,10 +591,10 @@ if __name__ == '__main__':
         # x_test = model.calc_fwd(r_test, start, delta).detach().numpy().reshape(-1, 1)
         x_test = r_test.detach().numpy().reshape(-1, 1)
 
-        y_test_mdl_cpl = model.calc_cpl_with_t(r_test, start, delta, swap_rate)
+        y_test_mdl_cpl = model.calc_cpl(r_test, start, delta, swap_rate)
         y_test_mdl_cpl = y_test_mdl_cpl.detach().numpy()
 
-        y_test_mdl_cpl_bump = model.calc_cpl_with_t(r_test + bump, start, delta, swap_rate)
+        y_test_mdl_cpl_bump = model.calc_cpl(r_test + bump, start, delta, swap_rate)
         y_test_mdl_cpl_bump = y_test_mdl_cpl_bump.detach().numpy()
 
         z_test_mdl_cpl = (y_test_mdl_cpl_bump - y_test_mdl_cpl) / bump
@@ -553,25 +609,25 @@ if __name__ == '__main__':
         plt.subplot(2, 2, 1)
         plt.title(f"price training plot for caplet with expiry {start}")
         plt.plot(x_train, y_train, 'o', label='train')
-        plt.plot(x_train, y_train_mdl_cpl, 'o', label='black')
+        plt.plot(x_train, y_train_mdl_cpl.reshape(-1), 'o', label='black')
         plt.legend()
 
         plt.subplot(2, 2, 2)
         plt.title(f"price testing plot for caplet with expiry {start}")
         plt.plot(x_test, y_pred, 'o', label='predictions')
-        plt.plot(x_test, y_test_mdl_cpl, 'o', label='black')
+        plt.plot(x_test, y_test_mdl_cpl.reshape(-1), 'o', label='black')
         plt.legend()
 
         plt.subplot(2, 2, 3)
         plt.title(f"delta training plot for caplet with expiry {start}")
         plt.plot(x_train, z_train, 'o', label='train')
-        plt.plot(x_train, z_train_mdl_cpl, 'o', label='bump and reval')
+        plt.plot(x_train, z_train_mdl_cpl.reshape(-1), 'o', label='bump and reval')
         plt.legend()
 
         plt.subplot(2, 2, 4)
         plt.title(f"delta testing plot for caplet with expiry {start}")
         plt.plot(x_test, z_pred, 'o', label='predictions')
-        plt.plot(x_test, z_test_mdl_cpl, 'o', label='bump and reval')
+        plt.plot(x_test, z_test_mdl_cpl.reshape(-1), 'o', label='bump and reval')
         plt.legend()
 
         plt.tight_layout()

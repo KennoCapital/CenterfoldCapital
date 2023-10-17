@@ -1,9 +1,4 @@
-from application.engine.AAD import computeJacobian_dCdr, computeJacobian_dFdr
-from application.engine.mcBase import RNG, mcSim
-from application.engine.products import Caplet
-from application.engine.vasicek import Vasicek
 from sklearn.preprocessing import PolynomialFeatures
-import torch
 import numpy as np
 
 
@@ -38,39 +33,3 @@ class DifferentialRegression: # from Savine and Huge Differential ML
             return y_pred
 
 
-def diffreg_fit(prd: Caplet,
-              mdl: Vasicek,
-              rng:RNG,
-              s: torch.Tensor,
-              rs : torch.Tensor,
-              measure : str = 'terminal',
-              dtl : torch.Tensor = torch.tensor([])
-              ):
-
-    cprd = Caplet(
-        start=prd.start - s,
-        delta=prd.delta,
-        strike=prd.strike
-    )
-
-    cmdl = Vasicek(mdl.a, mdl.b, mdl.sigma, rs, mdl.use_ATS, mdl.use_euler, measure)
-
-    x_train = cmdl.calc_fwd(rs, cprd.start, cprd.delta)
-    y_train = mcSim(cprd, cmdl, rng, rng.N, dtl)
-
-    rs.requires_grad_()
-    dCdr = torch.sum(computeJacobian_dCdr(cprd, cmdl, rng, rng.N, rs, dtl), dim=1)
-    # TODO: Figure out whether dFdr should be using cmdl or model (with unchanged timeline) as input
-    dFdr = torch.sum(computeJacobian_dFdr(cmdl, rs, prd.start, prd.delta), dim=1)
-
-    # follows from chain rule
-    z_train = dCdr * 1 / dFdr
-
-    x_train = x_train.detach().numpy().reshape(-1, 1)
-    y_train = y_train.detach().numpy().reshape(-1, 1)
-    z_train = z_train.detach().numpy().reshape(-1, 1)
-
-    diffreg = DifferentialRegression(degree=5, alpha=1.0)
-    diffreg.fit(x_train, y_train, z_train)
-
-    return diffreg, x_train, y_train, z_train
