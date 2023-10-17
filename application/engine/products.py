@@ -485,7 +485,7 @@ class BermudanPayerSwaption(CallableProduct):
 
         M = len(paths[self._k:])
         mask = torch.full(size=(M, N), fill_value=False)
-        mask[self.exercise_idx, torch.arange(N)] = True
+        mask[self.exercise_idx.to(torch.int32), torch.arange(N, dtype=torch.int)] = True
         res = max0(irs * mask) * df
 
         # res = max0(irs[self.exercise_idx, torch.arange(N)]) * df[self.exercise_idx, torch.arange(N)]

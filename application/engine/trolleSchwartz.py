@@ -23,6 +23,7 @@ class trolleSchwartz(Model):
                  x0, v0, phi1_0, phi2_0, phi3_0, phi4_0, phi5_0, phi6_0,
                  r0 = 0.0,
                  simDim: int = 1,
+                 numRV: int = 2,
                  use_euler: bool = True,
                  measure:   str = 'risk_neutral'):
         """
@@ -60,6 +61,7 @@ class trolleSchwartz(Model):
 
         self.r0 = r0
         self.simDim = simDim
+        self._numRV = numRV
 
         self.use_euler = use_euler
         self.measure = measure
@@ -91,6 +93,9 @@ class trolleSchwartz(Model):
     @property
     def defline(self):
         return self._defline
+    @property
+    def numRV(self):
+        return self._numRV
 
     @property
     def x(self):
@@ -307,7 +312,7 @@ class trolleSchwartz(Model):
         x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in X]
 
 
-        Bx = (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1.0)
+        Bx = (1/self.gamma+self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t))-1.0)
         Bx += (T-t) * torch.exp(-self.gamma*(T-t))
         Bx *= self.alpha1 / self.gamma
 

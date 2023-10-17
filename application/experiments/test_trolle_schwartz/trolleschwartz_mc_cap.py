@@ -10,7 +10,7 @@ torch.set_default_dtype(torch.float64)
 
 seed = 1234
 
-N = 100000
+N = 1000
 
 measure = 'risk_neutral'
 
@@ -44,7 +44,7 @@ dTL = torch.linspace(0.0, lastFixingDate + delta, int(50 * (lastFixingDate + del
 model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1,
                        x0, v0, phi1_0, phi2_0, phi3_0, phi4_0, phi5_0, phi6_0)
 
-rng = RNG(seed=seed, numVar=2, use_av=False)
+rng = RNG(seed=seed, use_av=False)
 
 prd = Cap(
     strike=strike,
@@ -55,7 +55,7 @@ prd = Cap(
 
 t_event_dates = torch.concat([prd.timeline, (lastFixingDate).view(1)])
 
-cashflows = mcSim(prd, model, rng, N, dTL, simDim =2)
+cashflows = mcSim(prd, model, rng, N, dTL)
 print('Cashflows: \n', cashflows)
 
 payoff = torch.sum(cashflows, dim=0)
