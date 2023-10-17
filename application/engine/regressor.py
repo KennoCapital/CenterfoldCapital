@@ -1,23 +1,6 @@
 from abc import ABC, abstractmethod
 import torch
-
-
-class StandardScaler:
-    def __init__(self):
-        self.mean = None
-        self.std = None
-        self._eps = 1e-12
-
-    def fit(self, X: torch.Tensor, dim: int = 0):
-        self.mean = torch.mean(X, dim=dim)
-        self.std = torch.maximum(torch.std(X, dim=dim), torch.tensor(self._eps))
-
-    def transform(self, X: torch.Tensor):
-        return (X - self.mean) / self.std
-
-    def fit_transform(self, X: torch.Tensor, dim: int = 0):
-        self.fit(X, dim)
-        return self.transform(X)
+from application.engine.standard_scalar import StandardScaler
 
 
 def normal_equation(X: torch.Tensor, y: torch.Tensor, use_SVD: bool = True):
