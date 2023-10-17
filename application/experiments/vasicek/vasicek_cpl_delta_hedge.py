@@ -84,10 +84,10 @@ if __name__ == '__main__':
 
     measure = 'risk_neutral'
 
-    show_r = True # running a single prediction of price and delta for the short rate sensititivity
-    show_base = True # running a single prediction of price and delta of the underlying forward rate
-    delta_hedge_bump = True # conduct delta hedge using bump and revalue delta
-    delta_hedge_dML = True # conduct delta hedge using differential regression
+    show_r = False # running a single prediction of price and delta for the short rate sensititivity
+    show_base = False # running a single prediction of price and delta of the underlying forward rate
+    delta_hedge_bump = False # conduct delta hedge using bump and revalue delta
+    delta_hedge_dML = False # conduct delta hedge using differential regression
     delta_convergence = True # conduct delta hedge using differential regression
                               # for multiple hedge points to illustrate hedge error
 
