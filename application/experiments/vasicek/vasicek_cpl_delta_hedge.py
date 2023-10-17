@@ -39,15 +39,15 @@ if __name__ == '__main__':
 
 
     a = torch.tensor(0.86)
-    b = torch.tensor(0.02)
+    b = torch.tensor(0.08)
     sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.02)  # 0.08)  # , requires_grad=True)
+    r0 = torch.tensor(0.08)
     bump = 0.0001 # for delta computing
     Notional = 40
 
-    start = torch.tensor(2.25)  # 0.25)
+    start = torch.tensor(4.75)
     delta = torch.tensor(0.25)
-    expiry = start + delta  # 0.50)
+    expiry = start + delta
 
     dTL = torch.linspace(0.0, float(start), 20)  # discretization TL
 
@@ -65,7 +65,8 @@ if __name__ == '__main__':
         print("running delta convergence")
         hedge_errors = []
         hedge_errors_avg = []
-        hedge_points = [5, 10, 15, 20]
+        hedge_points = [10, 20, 30, 40, 50]
+        bank_book = []
 
         for h in hedge_points:
             print("hedge point: ", h)
@@ -76,7 +77,7 @@ if __name__ == '__main__':
 
             price = mcSim(prd, model, rng, N, dTL)
             r = model.x
-            V = model.calc_cpl_with_t(r0, start, prd.delta, swap_rate).detach().numpy() * Notional
+            V = model.calc_cpl(r0, start, prd.delta, swap_rate).detach().numpy().reshape(-1) * Notional
             fwd = model.calc_fwd(r[0, :], prd.start, prd.delta).detach().numpy().reshape(-1, 1)
 
             spot_grid = torch.linspace(r0.detach().numpy() - 0.03, r0.detach().numpy() + 0.03, N)
@@ -95,7 +96,7 @@ if __name__ == '__main__':
             #target_fwd_rates = (fwd + bump).reshape(-1)
             #required_rs = torch.tensor([find_r_for_target_fwd(rate, model, start, delta) for rate in target_fwd_rates])
             #fwd_bump = model.calc_fwd(required_rs, start, delta).detach().numpy().reshape(-1)
-            #delta_F = (model.calc_cpl_with_t(required_rs, start, prd.delta, swap_rate).detach().numpy() - V) / (fwd_bump - fwd)
+            #delta_F = (model.calc_cpl(required_rs, start, prd.delta, swap_rate).detach().numpy() - V) / (fwd_bump - fwd)
 
             b = (V - delta_F * fwd * Notional)
             dt = start.detach().numpy() / (dTL.numel() - 1)
@@ -104,7 +105,7 @@ if __name__ == '__main__':
                 print(f"iterating over hedgepoint {i}:")
                 print(f"We are at timepoint {dTL[i]}")
                 fwd = model.calc_fwd(r[i, :], start - dTL[i], delta).detach().numpy().reshape(-1, 1)
-                DF = torch.exp((r[i, :] - r[i-1,:]) /2 * dt).detach().numpy().reshape(-1)
+                DF = torch.exp((r[i, :] - r[i-1,:]) / 2 * dt).detach().numpy().reshape(-1)
                 V = Notional * delta_F * fwd.reshape(-1) + b * DF
 
                 spot_grid = torch.linspace(float(r[i, :].min() - r[i, :].std()), float(r[i, :].max() + r[i, :].std()), N)
@@ -119,11 +120,11 @@ if __name__ == '__main__':
                 fwd = fwd.reshape(-1)
 
                 # TODO: Delete if do not want to consider hedging with bump and revalue delta
-                #cpl_val = model.calc_cpl_with_t(r[i, :], start - dTL[i - 1], prd.delta, swap_rate).detach().numpy()
+                #cpl_val = model.calc_cpl(r[i, :], start - dTL[i - 1], prd.delta, swap_rate).detach().numpy()
                 #target_fwd_rates = (fwd + bump).reshape(-1)
                 #required_rs = torch.tensor([find_r_for_target_fwd(rate, model, start - dTL[i - 1], delta) for rate in target_fwd_rates])
                 #fwd_bump = model.calc_fwd(required_rs, start - dTL[i - 1], delta).detach().numpy().reshape(-1)
-                #cpl_val_bump = model.calc_cpl_with_t(required_rs, start - dTL[i - 1], prd.delta, swap_rate).detach().numpy()
+                #cpl_val_bump = model.calc_cpl(required_rs, start - dTL[i - 1], prd.delta, swap_rate).detach().numpy()
                 #delta_F = (cpl_val_bump - cpl_val) / (fwd_bump - fwd)
 
                 b = V - delta_F * fwd * Notional
@@ -138,17 +139,18 @@ if __name__ == '__main__':
             sorted_fwd = fwd[sorted_indices]
             sorted_payoff = option_payoff[sorted_indices]
 
-            plt.figure(figsize=(10, 6))
-            plt.plot(sorted_fwd, sorted_payoff, linewidth=5, color='gray', label='Payoff')
-            plt.scatter(fwd, V, marker='o', c='red', label='Value of Portfolio', s=50, alpha=0.2, zorder=5)
-            plt.grid(True, linestyle='--', linewidth=0.5, color='gray')
-            plt.title(f'Option Payoff vs Portfolio Value - Differential Regression h={h}', fontsize=16, fontweight='bold')
-            plt.xlabel('Forward Rate', fontsize=14)
-            plt.ylabel('Value', fontsize=14)
-            plt.legend(loc='upper left', fontsize=12)
-            plt.xticks(fontsize=12)
-            plt.yticks(fontsize=12)
-            plt.show()
+            if h == hedge_points[-1]:
+                plt.figure(figsize=(10, 6))
+                plt.plot(sorted_fwd, sorted_payoff, linewidth=5, color='gray', label='Payoff')
+                plt.scatter(fwd, V, marker='o', c='red', label='Value of Portfolio', s=50, alpha=0.2, zorder=5)
+                plt.grid(True, linestyle='--', linewidth=0.5, color='gray')
+                plt.title(f'Option Payoff vs Portfolio Value - Differential Regression h={h}', fontsize=16, fontweight='bold')
+                plt.xlabel('Forward Rate', fontsize=14)
+                plt.ylabel('Value', fontsize=14)
+                plt.legend(loc='upper left', fontsize=12)
+                plt.xticks(fontsize=12)
+                plt.yticks(fontsize=12)
+                plt.show()
 
             std_hedge_error = torch.std(hedge_error).item()
             hedge_errors.append(std_hedge_error)
@@ -156,12 +158,23 @@ if __name__ == '__main__':
             avg_hedge_error = torch.mean(hedge_error).item()
             hedge_errors_avg.append(avg_hedge_error)
 
+            bank_book.append(b.mean())
+
         plt.figure()
         plt.title('Average Hedge Errors')
         plt.plot(hedge_points, hedge_errors_avg, 'o', label='Hedge Errors')
         plt.xlabel('Hedge Points')
         plt.ylabel('Avg. of hedge errors')
-        plt.xticks(fontsize=12)
+        plt.gca().set_xticks(np.array(hedge_points))
+        plt.yticks(fontsize=12)
+        plt.show()
+
+        plt.figure()
+        plt.title('Average amount kept in the bank account')
+        plt.plot(hedge_points, bank_book, 'o', label='Hedge Errors')
+        plt.xlabel('Hedge Points')
+        plt.ylabel('Avg. of bank account kept')
+        plt.gca().set_xticks(np.array(hedge_points))
         plt.yticks(fontsize=12)
         plt.show()
 
@@ -175,6 +188,7 @@ if __name__ == '__main__':
         plt.loglog(hedge_points, hedge_errors, '-o', label='Hedge Errors')
         plt.xlabel('Hedge Points')
         plt.ylabel('Std. of Hedge Errors')
+        plt.gca().set_xticks([], minor=True)
         plt.gca().set_xticks(x_vals)
         plt.gca().set_xticklabels(x_vals.astype(str))
         plt.gca().set_yticks([], minor=True)
@@ -192,7 +206,7 @@ if __name__ == '__main__':
 
         price = mcSim(prd, model, rng, N, dTL)
         r = model.x
-        V = model.calc_cpl_with_t(r0, start, prd.delta, swap_rate).detach().numpy() * Notional
+        V = model.calc_cpl(r0, start, prd.delta, swap_rate).detach().numpy().reshape(-1) * Notional
         fwd = model.calc_fwd(r[0, :], prd.start, prd.delta).detach().numpy().reshape(-1, 1)
 
         spot_grid = torch.linspace(r0.detach().numpy() - 0.03, r0.detach().numpy() + 0.03, N)
@@ -234,8 +248,6 @@ if __name__ == '__main__':
 
             fwd = fwd.reshape(-1)
 
-            cpl_val = model.calc_cpl_with_t(r[i, :], start - dTL[i], prd.delta, swap_rate).detach().numpy()
-
             b = V - delta_F * fwd * Notional
 
         fwd = model.calc_fwd(r[-1, :], start - dTL[-1], delta).detach().numpy().reshape(-1)
@@ -272,14 +284,15 @@ if __name__ == '__main__':
 
         price = mcSim(prd, model, rng, N, dTL)
         r = model.x
-        V = model.calc_cpl_with_t(r0, start, prd.delta, swap_rate).detach().numpy()
+        V = model.calc_cpl(r0, start, prd.delta, swap_rate).detach().numpy().reshape(-1)
         fwd = model.calc_fwd(r[0, :], prd.start, prd.delta).detach().numpy().reshape(-1, 1)
 
         fwd = fwd.reshape(-1)
         target_fwd_rates = (fwd + bump).reshape(-1)
         required_rs = torch.tensor([find_r_for_target_fwd(rate, model, start, delta) for rate in target_fwd_rates])
         fwd_bump = model.calc_fwd(required_rs, start, delta).detach().numpy().reshape(-1)
-        delta_F = (model.calc_cpl_with_t(required_rs, start, prd.delta, swap_rate).detach().numpy() - V) / (fwd_bump - fwd)
+        delta_F = (model.calc_cpl(required_rs, start, delta, swap_rate).detach().numpy().reshape(-1) - V) / (fwd_bump - fwd)
+
 
         b = (V - delta_F * fwd)
         dt = start.detach().numpy() / (dTL.numel() - 1)
@@ -293,12 +306,12 @@ if __name__ == '__main__':
 
             fwd = fwd.reshape(-1)
 
-            cpl_val = model.calc_cpl_with_t(r[i, :], start - dTL[i], prd.delta, swap_rate).detach().numpy()
+            cpl_val = model.calc_cpl(r[i, :], start - dTL[i], delta, swap_rate).detach().numpy().reshape(-1)
 
             target_fwd_rates = (fwd + bump).reshape(-1)
             required_rs = torch.tensor([find_r_for_target_fwd(rate, model, start - dTL[i], delta) for rate in target_fwd_rates])
             fwd_bump = model.calc_fwd(required_rs, start - dTL[i], delta).detach().numpy().reshape(-1)
-            cpl_val_bump = model.calc_cpl_with_t(required_rs, start - dTL[i], prd.delta, swap_rate).detach().numpy()
+            cpl_val_bump = model.calc_cpl(required_rs, start - dTL[i], prd.delta, swap_rate).detach().numpy().reshape(-1)
             delta_F = (cpl_val_bump - cpl_val) / (fwd_bump - fwd)
 
             b = V - delta_F * fwd
@@ -378,14 +391,14 @@ if __name__ == '__main__':
         z_train = z_train.detach().numpy().reshape(-1, 1)
 
 
-        y_train_mdl_cpl = model.calc_cpl_with_t(spot_grid, start, delta, swap_rate)
+        y_train_mdl_cpl = model.calc_cpl(spot_grid, start, delta, swap_rate).reshape(-1)
 
         target_fwd_rates = (x_train + bump).reshape(-1)
         required_rs = torch.tensor([find_r_for_target_fwd(rate, model, start, delta) for rate in target_fwd_rates])
         fwd_bump = model.calc_fwd(required_rs, start, delta).detach().numpy().reshape(-1)
         bump_fwd = fwd_bump - x_train.reshape(-1)
 
-        y_train_mdl_cpl_bump = model.calc_cpl_with_t(required_rs, start, delta, swap_rate)
+        y_train_mdl_cpl_bump = model.calc_cpl(required_rs, start, delta, swap_rate).reshape(-1)
 
         y_train_mdl_cpl = y_train_mdl_cpl.detach().numpy()
         y_train_mdl_cpl_bump = y_train_mdl_cpl_bump.detach().numpy()
@@ -394,7 +407,7 @@ if __name__ == '__main__':
 
         x_test = model.calc_fwd(r_test, start, delta).detach().numpy().reshape(-1, 1)
 
-        y_test_mdl_cpl = model.calc_cpl_with_t(r_test, start, delta, swap_rate)
+        y_test_mdl_cpl = model.calc_cpl(r_test, start, delta, swap_rate).reshape(-1)
 
 
         target_fwd_rates = (x_test + bump).reshape(-1)
@@ -402,7 +415,7 @@ if __name__ == '__main__':
         fwd_bump = model.calc_fwd(required_rs, start, delta).detach().numpy().reshape(-1)
         bump_fwd = fwd_bump - x_test.reshape(-1)
 
-        y_test_mdl_cpl_bump = model.calc_cpl_with_t(required_rs, start, delta, swap_rate)
+        y_test_mdl_cpl_bump = model.calc_cpl(required_rs, start, delta, swap_rate).reshape(-1)
 
         y_test_mdl_cpl = y_test_mdl_cpl.detach().numpy()
 
@@ -524,10 +537,10 @@ if __name__ == '__main__':
 
         dFdr = dFdr.detach().numpy()
 
-        y_train_mdl_cpl = model.calc_cpl_with_t(spot_grid, start, delta, swap_rate)
+        y_train_mdl_cpl = model.calc_cpl(spot_grid, start, delta, swap_rate).reshape(-1)
         y_train_mdl_cpl = y_train_mdl_cpl.detach().numpy()
 
-        y_train_mdl_cpl_bump = model.calc_cpl_with_t(spot_grid + bump, start, delta, swap_rate)
+        y_train_mdl_cpl_bump = model.calc_cpl(spot_grid + bump, start, delta, swap_rate).reshape(-1)
         y_train_mdl_cpl_bump = y_train_mdl_cpl_bump.detach().numpy()
 
         z_train_mdl_cpl = (y_train_mdl_cpl_bump - y_train_mdl_cpl) / bump
@@ -535,10 +548,10 @@ if __name__ == '__main__':
         # x_test = model.calc_fwd(r_test, start, delta).detach().numpy().reshape(-1, 1)
         x_test = r_test.detach().numpy().reshape(-1, 1)
 
-        y_test_mdl_cpl = model.calc_cpl_with_t(r_test, start, delta, swap_rate)
+        y_test_mdl_cpl = model.calc_cpl(r_test, start, delta, swap_rate).reshape(-1)
         y_test_mdl_cpl = y_test_mdl_cpl.detach().numpy()
 
-        y_test_mdl_cpl_bump = model.calc_cpl_with_t(r_test + bump, start, delta, swap_rate)
+        y_test_mdl_cpl_bump = model.calc_cpl(r_test + bump, start, delta, swap_rate).reshape(-1)
         y_test_mdl_cpl_bump = y_test_mdl_cpl_bump.detach().numpy()
 
         z_test_mdl_cpl = (y_test_mdl_cpl_bump - y_test_mdl_cpl) / bump

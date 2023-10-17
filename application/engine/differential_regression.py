@@ -22,7 +22,7 @@ class DifferentialRegression: # from Savine and Huge Differential ML
         self.dphiw_ = self.dphi_ * self.lamj_
         phiTphi = np.tensordot(self.dphiw_, self.dphi_, axes=([0, 2], [0, 2]))
         phiTz = np.tensordot(self.dphiw_, z, axes=([0, 2], [0, 1])).reshape(-1, 1)
-        inv = np.linalg.inv(self.phi_.T @ self.phi_ + self.alpha * phiTphi)
+        inv = np.linalg.pinv(self.phi_.T @ self.phi_ + self.alpha * phiTphi)
         self.beta_ = (inv @ (self.phi_.T @ y + self.alpha * phiTz)).reshape(-1, 1)
 
     def predict(self, x, predict_derivs=False):
@@ -60,8 +60,7 @@ def diffreg_fit(prd: Caplet,
 
     rs.requires_grad_()
     dCdr = torch.sum(computeJacobian_dCdr(cprd, cmdl, rng, rng.N, rs, dtl), dim=1)
-    # TODO: Figure out whether dFdr should be using cmdl or model (with unchanged timeline) as input
-    dFdr = torch.sum(computeJacobian_dFdr(cmdl, rs, prd.start, prd.delta), dim=1)
+    dFdr = torch.sum(computeJacobian_dFdr(cmdl, rs, cprd.start, cprd.delta), dim=1)
 
     # follows from chain rule
     z_train = dCdr * 1 / dFdr
