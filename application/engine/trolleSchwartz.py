@@ -311,34 +311,25 @@ class trolleSchwartz(Model):
         """
         x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in X]
 
+        Bx = self.alpha1 / self.gamma * (
+                    (1 / self.gamma + self.alpha0 / self.alpha1) * (torch.exp(-self.gamma * (T - t)) - 1) + \
+                    (T - t) * torch.exp(-self.gamma * (T - t)))
 
-        Bx = (1/self.gamma+self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t))-1.0)
-        Bx += (T-t) * torch.exp(-self.gamma*(T-t))
-        Bx *= self.alpha1 / self.gamma
-
-        Bphi1 = self.alpha1 / self.gamma * ( torch.exp(-self.gamma*(T-t)) - 1 )
-
-        Bphi2 = (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1)
-        Bphi2 += (T-t) * torch.exp(-self.gamma*(T-t))
-        Bphi2 *= torch.pow(self.alpha1 / self.gamma, 2) * (1 / self.gamma + self.alpha0 / self.alpha1)
-
-        Bphi3 = self.alpha1 / (2*torch.pow(self.gamma,2))
-        Bphi3 += self.alpha1 / 2 * (T-t)**2 * torch.exp(-2*self.gamma*(T-t))
-        Bphi3 *= (torch.exp(-2*self.gamma*(T-t)) - 1)
-        Bphi3 += (self.alpha1 / self.gamma + self.alpha0) * (T-t) * torch.exp(-2*self.gamma*(T-t))
-        Bphi3 += self.alpha1 / 2 * (T-t)**2 * torch.exp(-2*self.gamma*(T-t))
-        Bphi3 *= - self.alpha1 / torch.pow(self.gamma, 2)
-
-        Bphi4 = torch.pow(self.alpha1 / self.gamma,2)
-        Bphi4 *= (1/self.gamma + self.alpha0/self.alpha1)
-        Bphi4 *= (torch.exp(-self.gamma*(T-t)) - 1)
-
-        Bphi5 = (self.alpha1 / self.gamma + self.alpha0) * (torch.exp(-2*self.gamma*(T-t)) -1)
-        Bphi5 += self.alpha1 * (T-t) * torch.exp(-2*self.gamma*(T-t))
-        Bphi5 *= - self.alpha1 / torch.pow(self.gamma,2)
-
-        Bphi6 = - 0.5 * torch.pow(self.alpha1 / self.gamma,2)
-        Bphi6 *= (torch.exp(-2*self.gamma*(T-t)) - 1)
+        Bphi1 = self.alpha1 / self.gamma * (torch.exp(-self.gamma * (T - t)) - 1)
+        Bphi2 = torch.pow(self.alpha1 / self.gamma, 2) * (1 / self.gamma + self.alpha0 / self.alpha1) * \
+                ((1 / self.gamma + self.alpha0 / self.alpha1) * (torch.exp(-self.gamma * (T - t)) - 1) + \
+                 (T - t) * torch.exp(-self.gamma * (T - t)))
+        Bphi3 = - self.alpha1 / torch.pow(self.gamma, 2) * (
+                    (self.alpha1 / (2 * torch.pow(self.gamma, 2)) + self.alpha0 / self.gamma + \
+                     torch.pow(self.alpha0, 2) / (2 * self.alpha1)) * (torch.exp(-2 * self.gamma * (T - t)) - 1) + \
+                    (self.alpha1 / self.gamma + self.alpha0) * (T - t) * torch.exp(-2 * self.gamma * (T - t)) + \
+                    self.alpha1 / 2 * (T - t) ** 2 * torch.exp(-2 * self.gamma * (T - t)))
+        Bphi4 = torch.pow(self.alpha1 / self.gamma, 2) * (1 / self.gamma + self.alpha0 / self.alpha1) * (
+                    torch.exp(-self.gamma * (T - t)) - 1)
+        Bphi5 = - self.alpha1 / torch.pow(self.gamma, 2) * ((self.alpha1 / self.gamma + self.alpha0) * \
+                                                            (torch.exp(-2 * self.gamma * (T - t)) - 1) + self.alpha1 * (
+                                                                        T - t) * torch.exp(-2 * self.gamma * (T - t)))
+        Bphi6 = - 0.5 * torch.pow(self.alpha1 / self.gamma, 2) * (torch.exp(-2 * self.gamma * (T - t)) - 1)
 
         # sum_i(Bx_i(T-t)x_i(t))
         Bx_sum = torch.sum(Bx * x, dim=0)
@@ -399,6 +390,24 @@ class trolleSchwartz(Model):
         """t = T_0, ..., T_n (future dates)"""
         zcb = self.calc_zcb_price(X=X, t=0, T=t)
         return swap_rate(zcb, delta)
+
+    def calc_characteristic_func(self, u, t, T, T0, T1):
+
+        def Bx(self, t, T):
+            Bx = self.alpha1 / self.gamma * ( (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1) + \
+                                          (T-t) * torch.exp(-self.gamma*(T-t)) )
+        return Bx
+
+        """
+        dN = N * (-self.kappa + self.sigma * self.rho * (u * Bx(t, T1 - T0 + T) + (1-u) * Bx(t,T)))\
+        #+ \
+        + 0.5 * N**2 * self.sigma**2 + 0.5 * (u**2-u) * Bx(t, T1 - T0 + T)**2 + 0.5 * ((1-u)**2 - (1-u))* Bx(t,T)**2 +\
+            + u*(1-u) * Bx(t, T1 - T0 + T) * Bx(t,T)
+        
+        N += dN
+        """
+
+        return None
 
     def calc_cpl(self, X, t, delta, K):
         """
