@@ -52,7 +52,7 @@ if __name__ == '__main__':
         notional=notional
     )
 
-    poly_reg = PolynomialRegressor(deg=deg, standardize=True)
+    poly_reg = PolynomialRegressor(deg=deg, standardize=True, use_SVD=True)
     lsmc = LSMC(reg=poly_reg)
 
     payoff = lsmcDefaultSim(
