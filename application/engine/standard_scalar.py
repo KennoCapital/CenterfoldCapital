@@ -38,16 +38,18 @@ class DifferentialStandardScaler:
         self.y_mean = torch.mean(y, dim=dim[1])
         self.y_std = torch.maximum(torch.std(y, dim=dim[1]), torch.tensor(self._eps))
 
-    def transform(self, X: torch.Tensor, y: torch.Tensor, z: torch.Tensor or None = None):
-        x_pred = (X - self.x_mean) / self.x_mean
-        y_pred = (y - self.y_mean) / self.y_mean
-
-        if z is None:
-            return x_pred, y_pred
-
-        z_pred = self.x_std / self.y_std * z
-        return x_pred, y_pred, z_pred
+    def transform(self, X: torch.Tensor or None = None, y: torch.Tensor or None = None, z: torch.Tensor or None = None):
+        x_ = (X - self.x_mean) / self.x_std if X is not None else None
+        y_ = (y - self.y_mean) / self.y_std if y is not None else None
+        z_ = self.x_std / self.y_std * z if z is not None else None
+        return x_, y_, z_
 
     def fit_transform(self, X: torch.Tensor, y: torch.Tensor, z: torch.Tensor or None = None, dim: int or tuple[int] = 0):
         self.fit(X, y, dim)
         return self.transform(X, y, z)
+
+    def predict(self, X: torch.Tensor, y: torch.Tensor, z: torch.Tensor or None = None):
+        x_pred = (X + self.x_mean) * self.x_std if X is not None else None
+        y_pred = (y + self.x_mean) * self.y_std if y is not None else None
+        z_pred = (z * self.y_std) / self.x_std if z is not None else None
+        return x_pred, y_pred, z_pred
