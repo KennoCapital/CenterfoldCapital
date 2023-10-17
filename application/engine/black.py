@@ -31,7 +31,7 @@ def black_cpl_iv(market_price, zcb, fwd, K, t, delta):
     def obj(x):
         notional = torch.tensor(1E6)  # Using a notional helps finding a solution
         black_price = torch.sum(black_cpl(torch.tensor(x, dtype=torch.float64), zcb, fwd, K, t, delta, notional))
-        return  black_price - market_price * notional
+        return black_price - market_price * notional
 
     black_iv = scipy.optimize.bisect(f=obj, a=-1.0, b=5.0, maxiter=2500)
     if black_iv < torch.tensor(0.0):

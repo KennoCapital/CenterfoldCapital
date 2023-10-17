@@ -21,15 +21,17 @@ if __name__ == '__main__':
     a, b, sigma, r0 = torch.tensor(calib.x)
 
     vas = Vasicek(a=a, b=b, sigma=sigma, r0=r0)
-    zcb_mdl = vas.calc_zcb(r0, t)
+    zcb_mdl = vas.calc_zcb(r0, t).flatten()
     y_mdl = zcb_price_to_yield(t, zcb_mdl)
 
+    plt.figure()
     plt.plot(t, zcb_market, color='blue', label='Market')
     plt.scatter(t, zcb_mdl,  color='black', label='Vasicek')
     plt.legend()
     plt.title('ZCB prices')
     plt.show()
 
+    plt.figure()
     plt.plot(t, y_market, color='blue', label='Market')
     plt.scatter(t, y_mdl, color='black', label='Vasicek')
     plt.legend()
