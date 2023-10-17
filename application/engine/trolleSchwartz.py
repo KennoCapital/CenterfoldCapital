@@ -391,32 +391,62 @@ class trolleSchwartz(Model):
         zcb = self.calc_zcb_price(X=X, t=0, T=t)
         return swap_rate(zcb, delta)
 
-    def calc_characteristic_func(self, u, t, T, T0, T1):
-
-        def Bx(self, t, T):
-            Bx = self.alpha1 / self.gamma * ( (1/self.gamma + self.alpha0/self.alpha1) * (torch.exp(-self.gamma*(T-t)) - 1) + \
-                                          (T-t) * torch.exp(-self.gamma*(T-t)) )
+    def Bx(self, t, T):
+        Bx = self.alpha1 / self.gamma * (
+                    (1 / self.gamma + self.alpha0 / self.alpha1) * (torch.exp(-self.gamma * (T - t)) - 1) + \
+                    (T - t) * torch.exp(-self.gamma * (T - t)))
         return Bx
 
+    def calc_characteristic_func(self, u, t, T0, T1, discSteps=100):
         """
-        dN = N * (-self.kappa + self.sigma * self.rho * (u * Bx(t, T1 - T0 + T) + (1-u) * Bx(t,T)))\
-        #+ \
-        + 0.5 * N**2 * self.sigma**2 + 0.5 * (u**2-u) * Bx(t, T1 - T0 + T)**2 + 0.5 * ((1-u)**2 - (1-u))* Bx(t,T)**2 +\
-            + u*(1-u) * Bx(t, T1 - T0 + T) * Bx(t,T)
-        
-        N += dN
+            Computes the transform as given by eq. (30) Trolle-Schwartz.
+            Solves the system a system of ODEs by the stoch. vars. M, N using Euler's method.
         """
 
-        return None
+        M = torch.zeros(1)
+        N = torch.zeros((self.simDim, 1))
 
-    def calc_cpl(self, X, t, delta, K):
+        dTau = torch.linspace(0, T0-t, discSteps)
+
+        for i in range(discSteps):
+            dN = N * (-self.kappa + self.sigma * self.rho * (u * self.Bx(t, T1 - T0) + (1-u) * self.Bx(t,T0))) + \
+            + 0.5 * N**2 * self.sigma**2 + 0.5 * (u**2-u) * self.Bx(t, T1 - T0)**2 + 0.5 * ((1-u)**2 - (1-u))* self.Bx(t,T0)**2 +\
+                + u*(1-u) * self.Bx(t, T1 - T0) * self.Bx(t,T0)
+            dN *= dTau
+            dM = torch.sum(N * self.kappa * self.theta) * dTau
+
+            N += dN
+            M += dM
+
+        zcb0 = self.calc_zcb_price(self.x, t, T0)
+        zcb1 = self.calc_zcb_price(self.x, t, T1)
+        term1 = M
+        term2 = torch.sum(N * self.x[1], dim=0)
+        term3 = u * torch.log(zcb1) + (1-u)*torch.log(zcb0)
+
+        return torch.exp(term1 + term2 + term3)
+
+    def Gfunc(self, a, b, t, T0, T1, y):
+        """
+            Computes the Fourier inversion of the transform.
+        """
+        int = torch.tensor(1.0) # todo: figure this integral out
+
+        term1 = 0.5 * self.calc_characteristic_func(a,t, T0, T1)
+        term2 = 1/torch.pi * int
+
+        return term1 - term2
+
+    def calc_cpl(self, t, T0, T1, K):
         """
            Revise Trolle-Schwartz on this
-                Cpl(0; t, t+delta) = P(0,t) * N(d1) - P(0,t+delta) / K_bar * N(d2)
+                Cpl(0; t, T0, T1, K) = K * G_{0,1} * log(K) - G_{1,1} * log(K)
         """
-        # todo: add this method
 
-        return None
+        term1 = K * self.Gfunc(0.0, 1.0, t, T0, T1, torch.log(K))
+        term2 = self.Gfunc(1.0, 1.0, t, T0, T1, torch.log(K))
+
+        return term1 - term2
 
     def calc_cap(self, x, t, delta, K):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
