@@ -130,7 +130,7 @@ class DifferentialPolynomialRegressor(OLSRegressor):
         self.bias = bias
         self._coef = None
         self._eps = 1e-12
-        self._powers = torch.arange(start=int(not self.bias), end=self.deg + 1)
+        self._powers = torch.arange(start=int(not self.bias), end=self.deg + 1).reshape(-1, 1)
 
     @property
     def coef(self):
@@ -160,7 +160,7 @@ class DifferentialPolynomialRegressor(OLSRegressor):
 
         if predict_derivs:
             dphi = phi[:, :, None] * self._powers[None, :, :] / (X[:, None, :] + self._eps)
-            z_pred = torch.tensordot(dphi, self._coef, dims=(1, 0)).reshape(dphi.shape[0], -1)
+            z_pred = torch.tensordot(dphi, self._coef, dims=([1], [0])).reshape(dphi.shape[0], -1)
             return y_pred, z_pred
         else:
             return y_pred
