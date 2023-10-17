@@ -24,9 +24,13 @@ def swap(zcb:       torch.Tensor,
     """S(0) = N * [ P(0,T0) - P(0,Tn) - K * delta * sum_{i=1}^n P(0,Ti) ]"""
     if K is None:
         K = swap_rate(zcb, delta)
+    if zcb.dim() == 2:
+        return N * (zcb[0, :] - zcb[-1, :] - K * delta * torch.sum(zcb[1:, :], dim=0))
     return N * (zcb[0] - zcb[-1] - K * delta * torch.sum(zcb[1:], dim=0))
 
 
 def swap_rate(zcb: torch.Tensor, delta: torch.Tensor):
     """R(0) = [ P(0,T0) - P(0,Tn) ] / [delta * sum_{i=1}^n P(0,Ti) ]"""
+    if zcb.dim() == 2:
+        return (zcb[0, :] - zcb[-1, :]) / (delta * torch.sum(zcb[1:], dim=0))
     return (zcb[0] - zcb[-1]) / (delta * torch.sum(zcb[1:]))

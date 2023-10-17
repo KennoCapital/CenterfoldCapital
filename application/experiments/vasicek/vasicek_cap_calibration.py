@@ -9,7 +9,7 @@ if __name__ == '__main__':
     strikes = torch.empty_like(torch.tensor(maturities), dtype=torch.float64)
     market_prices = torch.empty_like(strikes, dtype=torch.float64)
     model_prices = torch.empty_like(market_prices, dtype=torch.float64)
-    delta = 0.25
+    delta = torch.tensor(0.25)
 
     # Market prices
     a_ = torch.tensor(0.86)
@@ -18,7 +18,7 @@ if __name__ == '__main__':
     r0_ = torch.tensor(0.08)
 
     for i, T in enumerate(maturities):
-        t = torch.linspace(start=delta, end=T, steps=int(T/delta))
+        t = torch.linspace(start=float(delta), end=float(T), steps=int(T/delta))
         market_model = Vasicek(a_, b_, sigma_)
         swap_rate = market_model.calc_swap_rate(r0_, t, delta)
         cap = market_model.calc_cap(r0_, t, delta, swap_rate)
