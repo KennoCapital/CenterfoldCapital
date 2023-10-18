@@ -18,7 +18,7 @@ if __name__ == '__main__':
     N = 1024
     steps_per_fixing = 10
 
-    # Setup Differential Regressor, and Scaler
+    # Setup Differential Regressor, and Scalar
     deg = 5
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
