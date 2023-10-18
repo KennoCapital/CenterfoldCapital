@@ -15,7 +15,7 @@ if __name__ == '__main__':
     seed = 1234
     N_train = 4096
 
-    # Setup Differential Regressor, and Scaler
+    # Setup Differential Regressor, and Scalar
     deg = 5
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
@@ -150,15 +150,16 @@ if __name__ == '__main__':
 
     plt.figure()
     plt.plot(swap, y, 'o', color='gray', alpha=0.25, label='Sample Payoffs')
-    plt.plot(swap, y_pred, label='Predictions', color='orange')
+    plt.plot(swap, y_pred, label='DiffReg', color='orange')
+    plt.plot(swap_grid, swpt_grid, color='black', label='bump and reval')
     plt.title('Learning Payoffs')
-    plt.xlabel(r0)
+    plt.xlabel('r0')
     plt.legend()
     plt.show()
 
     plt.figure()
     plt.plot(swap, dydr / dSdr, 'o', color='gray', alpha=0.25, label='Sample Differentials')
-    plt.plot(swap, z_pred, label='Predictions', color='orange')
+    plt.plot(swap, z_pred, label='DiffReg', color='orange')
     plt.plot(swap_grid[1:], dswpt_dswap, color='black', label='bump and reval')
     plt.xlabel('Swap(0)')
     plt.title('Learning Sensitivities')
