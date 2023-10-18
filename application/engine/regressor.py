@@ -110,7 +110,6 @@ class DifferentialPolynomialRegressor(OLSRegressor):
     def __init__(self,
                  deg: int = 5,
                  alpha: float = 1.0,
-                 standardize: bool = False,
                  use_SVD: bool = True,
                  bias: bool = True):
         """
@@ -119,13 +118,11 @@ class DifferentialPolynomialRegressor(OLSRegressor):
 
         param:  deg:            Degree of the polynomial
         param:  alpha:          Coefficient of Differential Regularization
-        param:  standardize:    Standardize covariates (X) to have mean zero and variance one
         param:  use_SVD:        Use Singular Value Decomposition in the normal equation to solve for the coefficients
         param:  bias:           Add an intercept, i.e. a feature (column) where all observations (rows) are one (1)
         """
         self.deg = deg
         self.alpha = alpha
-        self.standardize = standardize
         self.use_SVD = use_SVD
         self.bias = bias
         self._coef = None
@@ -142,7 +139,7 @@ class DifferentialPolynomialRegressor(OLSRegressor):
         self._coef = coef
 
     def fit(self, X: torch.Tensor, y: torch.Tensor, z: torch.Tensor):
-        phi = create_polynomial_features(X, deg=self.deg, standardize=self.standardize, bias=self.bias)
+        phi = create_polynomial_features(X, deg=self.deg, standardize=False, bias=self.bias)
         dphi = phi[:, :, None] * self._powers[None, :, :] / (X[:, None, :] + self._eps)
 
         lamj = (torch.pow(y, 2.0).mean(dim=0) / torch.pow(z, 2).mean(dim=0)).reshape(1, 1, -1)
@@ -155,7 +152,7 @@ class DifferentialPolynomialRegressor(OLSRegressor):
         self._coef = (inv @ (phi.T @ y + self.alpha * phiTz)).reshape(-1, 1)
 
     def predict(self, X, predict_derivs: bool = True):
-        phi = create_polynomial_features(X, deg=self.deg, standardize=self.standardize, bias=self.bias)
+        phi = create_polynomial_features(X, deg=self.deg, standardize=False, bias=self.bias)
         y_pred = (phi @ self._coef).squeeze()
 
         if predict_derivs:
