@@ -31,7 +31,7 @@ class DifferentialStandardScaler:
         if isinstance(dim, int):
             dim = (dim, dim)
         if len(dim) != 2:
-            raise ValueError('Lenght of `dim` must be 2')
+            raise ValueError('Length of `dim` must be 2')
 
         self.x_mean = torch.mean(X, dim=dim[0])
         self.x_std = torch.maximum(torch.std(X, dim=dim[0]), torch.tensor(self._eps))
@@ -49,7 +49,7 @@ class DifferentialStandardScaler:
         return self.transform(X, y, z)
 
     def predict(self, X: torch.Tensor, y: torch.Tensor, z: torch.Tensor or None = None):
-        x_pred = (X + self.x_mean) * self.x_std if X is not None else None
-        y_pred = (y + self.x_mean) * self.y_std if y is not None else None
+        x_pred = X * self.x_std + self.x_mean if X is not None else None
+        y_pred = y * self.y_std + self.y_mean if y is not None else None
         z_pred = (z * self.y_std) / self.x_std if z is not None else None
         return x_pred, y_pred, z_pred
