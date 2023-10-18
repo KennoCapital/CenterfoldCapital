@@ -94,7 +94,7 @@ if __name__ == '__main__':
             tuple with: (Pathwise payoffs, Pathwise differentials wrt. r0 evaluated at x)
         """
         def _payoffs(x):
-            cMdl = Vasicek(a, b, sigma, x, use_ATS=True, use_euler=False, measure=measure)
+            cMdl = Vasicek(a, b, sigma, x, use_ATS=True, use_euler=False, measure='terminal')
             cPrd = EuropeanPayerSwaption(
                     strike=strike,
                     exerciseDate=exerciseDate - s,
@@ -150,7 +150,7 @@ if __name__ == '__main__':
     h_b = V - h_a * swap
 
     # Loop over time
-    for k in range(1, last_idx):
+    for k in range(1, last_idx + 1):
         dt = dTL[k] - dTL[k-1]
         s = dTL[k]
 
