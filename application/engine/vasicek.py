@@ -6,6 +6,26 @@ from application.engine.products import Product, Sample
 from application.engine.linearProducts import forward, swap, swap_rate
 
 
+def _format_dim_r0(r0):
+    """Helper function ensuring that r0 is formatted as a row-vector"""
+    if r0.dim() > 1:
+        raise ValueError(f'Expected r0 to be a scalar or 1D tensor (row-vector) got {r0.shape}')
+    if r0.dim() == 0:
+        r0 = r0.unsqueeze(0)
+    return r0
+
+
+def _format_dim_t(t):
+    """Helper function ensuring that t is formatted as column-vector"""
+    if t.dim() > 2:
+        raise ValueError(f'Expected t to be a scalar or 2D tensor (column-vector) got {t.shape}')
+    if t.dim() == 0:
+        t = t.unsqueeze(0)
+    if t.dim() == 1:
+        t = t.reshape(-1, 1)
+    return t
+
+
 class Vasicek(Model):
     """
         dr(t) = a*[b-r(t)]*dt + sigma*dW(t)
@@ -133,7 +153,6 @@ class Vasicek(Model):
         if Z.dim() == 3:
             Z = Z[0]
 
-
         # Decide function for performing simulation of state variable
         if self.use_euler:
             step_func = self._euler_step
@@ -234,6 +253,9 @@ class Vasicek(Model):
 
     def calc_zcb(self, r0, t):
         """P(0, t)=exp{ -A(0,t) - B(0,t) * r(t)}"""
+        r0 = _format_dim_r0(r0)
+        t = _format_dim_t(t)
+
         if self.use_ATS:
             return torch.exp(-self._calc_A(t) - self._calc_B(t) * r0)
 
@@ -244,54 +266,98 @@ class Vasicek(Model):
         )
 
     def calc_fwd(self, r0, t, delta):
+        """
+            param: r0       is a row-vector
+            param: t        is a column vector
+            param: delta    is a constant (same delta for all t) or a column vector (one delta for each t)
+
+            returns: A matrix of forwards
+        """
+        r0 = _format_dim_r0(r0)
+        t = _format_dim_t(t)
+        if delta.dim() == 0:
+            delta = delta * torch.ones_like(t)
+        else:
+            delta = _format_dim_t(delta)
+        tdt = t + delta
+
         zcb_t = self.calc_zcb(r0, t)
-        zcb_tdt = self.calc_zcb(r0, t + delta)
+        zcb_tdt = self.calc_zcb(r0, tdt)
         return forward(zcb_t, zcb_tdt, delta)
 
     def calc_swap(self, r0, t, delta, K=None, N=torch.tensor(1.0)):
         """t = T_0, ..., T_{n-1} (fixing dates)"""
+        if not (delta.dim() == 0 or (delta.dim() == 1 and max(delta.size()) == 1)):
+            raise NotImplementedError(f'delta must be a scalar when calculating the swaps. Got {delta.shape}')
+        if delta.dim() == 0:
+            delta = delta.unsqueeze(0)
+
+        r0 = _format_dim_r0(r0)
+        t = _format_dim_t(t)
         zcb = self.calc_zcb(r0, t)
-        zcb_tdt = self.calc_zcb(r0, t[-1] + delta).unsqueeze(0)
+        zcb_tdt = self.calc_zcb(r0, t[-1] + delta)
+
         return swap(torch.concat([zcb, zcb_tdt], dim=0), delta, K, N)
 
     def calc_swap_rate(self, r0, t, delta):
         """t = T_0, ..., T_{n-1} (fixing dates)"""
+        if not (delta.dim() == 0 or (delta.dim() == 1 and max(delta.size()) == 1)):
+            raise NotImplementedError(f'delta must be a scalar when calculating the swap rate. Got {delta.shape}')
+        if delta.dim() == 0:
+            delta = delta.unsqueeze(0)
+
+        r0 = _format_dim_r0(r0)
+        t = _format_dim_t(t)
+        tn = _format_dim_t(t[-1] + delta)
+        t = torch.vstack([t, tn])
+
         zcb = self.calc_zcb(r0, t)
-        zcb_tdt = self.calc_zcb(r0, t[-1] + delta).unsqueeze(0)
-        return swap_rate(torch.concat([zcb, zcb_tdt]), delta)
+        return swap_rate(zcb, delta)
 
     def calc_cpl(self, r0, t, delta, K):
         """
            Solution to Filipovic's prop. 7.2
                 Cpl(0; t, t+delta) = P(0,t) * N(d1) - P(0,t+delta) / K_bar * N(d2)
         """
-        if t.dim() == 0:
-            t = t.unsqueeze(0)
-        zcb = self.calc_zcb(r0, torch.concat([t, t[-1].unsqueeze(0) + delta]))
+        if K.dim() != 0 and max(K.size()) > 1:
+            raise NotImplementedError('The implementation does not support calculations for several strikes at ones...')
+
+        r0 = _format_dim_r0(r0)
+        t = _format_dim_t(t)
+        if delta.dim() == 0:
+            delta = delta * torch.ones_like(t)
+        else:
+            delta = _format_dim_t(delta)
+        tdt = t + delta
+
+        zcb_t = self.calc_zcb(r0, t)
+        zcb_tdt = self.calc_zcb(r0, tdt)
 
         K_bar = 1 / (1 + delta * K)
 
         # Calculate integral of vol-term using
         # a fancy way of writing `1` such that the dimension match the size of `t`
         # to allow for parallel computation of caplets in a cap when `t` is passed as a vector
-        vol_integral = torch.ones_like(t)
+        vol_integral = torch.ones(size=(len(t), len(r0)))
         vol_integral -= torch.exp(-2 * self.a * t)
         vol_integral += torch.exp(-2 * self.a * delta)
         vol_integral -= torch.exp(-2 * self.a * (t + delta))
         vol_integral -= 2 * (torch.exp(-self.a * delta) - torch.exp(-self.a * (2 * t + delta)))
         vol_integral *= self.sigma ** 2 / (2 * self.a ** 3)
 
-        d1 = (torch.log(zcb[:-1] * K_bar / zcb[1:]) + 0.5 * vol_integral) / torch.sqrt(vol_integral)
+        d1 = (torch.log(zcb_t * K_bar / zcb_tdt) + 0.5 * vol_integral) / torch.sqrt(vol_integral)
         d2 = d1 - torch.sqrt(vol_integral)
 
-        return zcb[:-1] * N_cdf(d1) - zcb[1:] / K_bar * N_cdf(d2)
+        return zcb_t * N_cdf(d1) - zcb_tdt / K_bar * N_cdf(d2)
 
     def calc_cap(self, r0, t, delta, K):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
-        return torch.sum(self.calc_cpl(r0, t, delta, K))
+        cpl = self.calc_cpl(r0, t, delta, K)
+        return torch.sum(cpl, dim=0)
 
 
-def calibrate_vasicek_cap(maturities, strikes, market_prices, a=1.00, b=0.05, sigma=0.2, r0=0.05, delta=0.25):
+def calibrate_vasicek_cap(maturities, strikes, market_prices,
+                          a=1.00, b=0.05, sigma=0.2, r0=0.05, delta=torch.tensor(0.25)):
     def obj(x):
         x = torch.tensor(x)
         a, b, sigma, r0 = x[0], x[1], x[2], x[3]

@@ -71,9 +71,9 @@ if __name__ == '__main__':
     mcSimPaths(prd, model, rng, N, hedgeTL)
     r = model.x
 
-    cpl0 = model.calc_cpl(r0, start, delta, strike)
-    zcb = model.calc_zcb(r0, start + delta)
-    fwd = model.calc_fwd(r0, start, delta)
+    cpl0 = model.calc_cpl(r0, start, delta, strike)[0]
+    zcb = model.calc_zcb(r0, start + delta)[0]
+    fwd = model.calc_fwd(r0, start, delta)[0]
 
     # Initialize experiments
     V = cpl0 * torch.ones(size=(N, ))
@@ -92,8 +92,8 @@ if __name__ == '__main__':
             rs = r[k, p]
 
             # Update market variables
-            zcb = model.calc_zcb(rs, tau)
-            fwd = model.calc_fwd(rs, tau, delta)
+            zcb = model.calc_zcb(rs, tau)[0]
+            fwd = model.calc_fwd(rs, tau, delta)[0]
 
             # Update portfolio
             V[p] = a[p] * fwd + b[p] * torch.exp(0.5 * (r[k, p] + r[k-1, p]) * dt)

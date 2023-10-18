@@ -38,8 +38,6 @@ if __name__ == '__main__':
         delta=delta
     )
 
-    t_event_dates = torch.concat([prd.timeline, (lastFixingDate).view(1)])
-
     cashflows = mcSim(prd, model, rng, N, dTL)
     print('Cashflows: \n', cashflows, '\n')
 
@@ -49,4 +47,4 @@ if __name__ == '__main__':
     mc_price = torch.mean(payoff)
     print('MC Price =', mc_price, '\n')
 
-    print('Model price =', model.calc_cap(r0, t_event_dates, delta, strike), '\n')
+    print('Model price =', model.calc_cap(r0, prd.timeline, delta, strike), '\n')
