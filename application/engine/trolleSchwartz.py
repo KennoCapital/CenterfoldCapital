@@ -405,23 +405,26 @@ class trolleSchwartz(Model):
 
         M = torch.zeros(1)
         N = torch.zeros((self.simDim, 1))
+        if u.is_complex():
+            M = torch.zeros(1, dtype=torch.complex64)
+            N = torch.zeros((self.simDim, 1), dtype=torch.complex64)
 
-        dTau = torch.linspace(0, T0-t, discSteps)
+        dTau = torch.linspace(t, T0, discSteps)
 
         for i in range(discSteps):
             dN = N * (-self.kappa + self.sigma * self.rho * (u * self.Bx(t, T1 - T0) + (1-u) * self.Bx(t,T0))) + \
             + 0.5 * N**2 * self.sigma**2 + 0.5 * (u**2-u) * self.Bx(t, T1 - T0)**2 + 0.5 * ((1-u)**2 - (1-u))* self.Bx(t,T0)**2 +\
                 + u*(1-u) * self.Bx(t, T1 - T0) * self.Bx(t,T0)
-            dN *= dTau
-            dM = torch.sum(N * self.kappa * self.theta) * dTau
+            dN *= dTau[i]
+            dM = torch.sum(N * self.kappa * self.theta) * dTau[i]
 
             N += dN
             M += dM
 
-        zcb0 = self.calc_zcb_price(self.x, t, T0)
-        zcb1 = self.calc_zcb_price(self.x, t, T1)
+        zcb0 = self.calc_zcb_price([i[:,0,:] for i in self.x], t, T0) #todo edit time index
+        zcb1 = self.calc_zcb_price([i[:,0,:] for i in self.x], t, T1)
         term1 = M
-        term2 = torch.sum(N * self.x[1], dim=0)
+        term2 = torch.sum(N * self.x[1], dim=1)
         term3 = u * torch.log(zcb1) + (1-u)*torch.log(zcb0)
 
         return torch.exp(term1 + term2 + term3)
@@ -430,10 +433,26 @@ class trolleSchwartz(Model):
         """
             Computes the Fourier inversion of the transform.
         """
-        int = torch.tensor(1.0) # todo: figure this integral out
+        a = torch.tensor(a)
+        b = torch.tensor(b)
+        def integral(MyInf=1.0):
+            def integrand(u):
+                c = torch.complex(real=a, imag=u * b)
+
+                term1 = self.calc_characteristic_func(c,t,T0,T1)
+                term2 = torch.exp(-torch.complex(real=torch.tensor(0.0), imag=u*y))
+
+                integrand = torch.imag( term1 * term2 )
+                return integrand / u
+
+            du = torch.linspace(0.1, MyInf, steps=100)
+            lst = [integrand(u) for u in du]
+            integrands = torch.tensor(lst)
+
+            return torch.trapz(integrands)
 
         term1 = 0.5 * self.calc_characteristic_func(a,t, T0, T1)
-        term2 = 1/torch.pi * int
+        term2 = 1/torch.pi * integral()
 
         return term1 - term2
 
@@ -450,4 +469,4 @@ class trolleSchwartz(Model):
 
     def calc_cap(self, x, t, delta, K):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
-        return None #torch.sum(self.calc_cpl(x, t, delta, K))
+        return torch.sum(self.calc_cpl(x, t, delta, K))

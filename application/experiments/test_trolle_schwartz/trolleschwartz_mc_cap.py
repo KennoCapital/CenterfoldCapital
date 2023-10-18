@@ -64,6 +64,8 @@ print('Payoffs:\n', payoff)
 mc_price = torch.nanmean(payoff)
 print('MC Price =', mc_price)
 
+model.calc_cpl(0, prd.firstFixingDate, prd.lastFixingDate+ prd.delta, prd.strike)
+
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
 
