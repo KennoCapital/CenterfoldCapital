@@ -4,7 +4,7 @@ from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek
 from application.engine.products import EuropeanPayerSwaption
 from application.engine.standard_scalar import DifferentialStandardScaler
-from application.engine.regressor import DifferentialPolynomialRegressor
+from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSim, RNG
 
 torch.set_printoptions(4)

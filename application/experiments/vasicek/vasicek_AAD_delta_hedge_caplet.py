@@ -4,7 +4,7 @@ from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek
 from application.engine.products import Caplet
 from application.engine.standard_scalar import DifferentialStandardScaler
-from application.engine.regressor import DifferentialPolynomialRegressor
+from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.torch_utils import max0
 
@@ -47,7 +47,7 @@ if __name__ == '__main__':
     )
 
     # Simulate paths
-    dTL = torch.linspace(0.0, float(exerciseDate + delta), M + 1)
+    dTL = torch.linspace(0.0, float(exerciseDate), M + 1)
     rng = RNG(seed=seed, use_av=True)
     mcSimPaths(prd, mdl, rng, N, dTL)
     r = mdl.x
@@ -100,6 +100,14 @@ if __name__ == '__main__':
     def calc_delta(fwd, s):
         # Generate training data
         r0_grid = torch.linspace(0.03, 0.15, N_train)
+        '''
+        r_std = torch.sqrt(sigma ** 2 / 2 * a * (1 - torch.exp(-2 * a * exerciseDate)))
+        r_mean = r0 * torch.exp(-a * exerciseDate) + b * (1 - torch.exp(-a * exerciseDate))
+        one = torch.ones(N_train)
+        r0_grid = torch.normal(mean=r_mean * one, std=1.5 * r_std * one)
+        r0_grid = torch.sort(r0_grid).values
+        '''
+
         F, dFdr = calc_dfwd_dr(r0_grid, s)
         y, dydr = calc_dcpl_dr(r0_grid, s)
 
@@ -132,10 +140,6 @@ if __name__ == '__main__':
     V = cpl * torch.ones_like(r[0, :])
     h_a = calc_delta(fwd, 0.0)
     h_b = V - h_a * fwd
-
-    r_grid = torch.linspace(0.03, 0.15, 101)
-    fwd_grid = mdl.calc_fwd(r_grid, exerciseDate, delta)[0]
-    delta_grid = calc_delta(fwd_grid, 0.0)
 
     # Loop over time
     for k in range(1, last_idx + 1):

@@ -4,7 +4,7 @@ from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek
 from application.engine.products import Caplet
 from application.engine.standard_scalar import DifferentialStandardScaler
-from application.engine.regressor import DifferentialPolynomialRegressor
+from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSim, RNG
 
 torch.set_printoptions(4)
@@ -90,6 +90,7 @@ if __name__ == '__main__':
         return res
 
     """ Plot Analytical Caplet price against r0 and Fwd(0, T, T+delta) """
+
     r_grid = torch.linspace(0.03, 0.15, 1001)
     cpl_grid = mdl.calc_cpl(r_grid, exerciseDate, delta, strike)[0]
 
@@ -116,9 +117,14 @@ if __name__ == '__main__':
     plt.show()
 
     """ Plot Differential Regression (in sample) """
-
     r0_grid = torch.linspace(0.03, 0.15, N_train)
-
+    '''
+    r_std = torch.sqrt(sigma ** 2 / 2 * a * (1 - torch.exp(-2 * a * exerciseDate)))
+    r_mean = r0 * torch.exp(-a * exerciseDate) + b * (1 - torch.exp(-a * exerciseDate))
+    one = torch.ones(N_train)
+    r0_grid = torch.normal(mean=r_mean * one, std=1.5 * r_std * one)
+    r0_grid = torch.sort(r0_grid).values
+    '''
     fwd, dFdr = calc_dfwd_dr(r0_grid, 0.0)
     y, dydr = calc_dcpl_dr(r0_grid, 0.0)
 
