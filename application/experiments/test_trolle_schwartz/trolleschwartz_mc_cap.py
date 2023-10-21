@@ -10,7 +10,7 @@ torch.set_default_dtype(torch.float64)
 
 seed = 1234
 
-N = 1000
+N = 100
 
 measure = 'risk_neutral'
 
@@ -64,8 +64,8 @@ print('Payoffs:\n', payoff)
 mc_price = torch.nanmean(payoff)
 print('MC Price =', mc_price)
 
-model.calc_cpl(0, prd.firstFixingDate, prd.lastFixingDate+ prd.delta, prd.strike)
-
+cpl = model.calc_cpl(0, prd.firstFixingDate, prd.delta, prd.strike)
+print('Semi-analytic Price =', cpl)
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
 
@@ -85,19 +85,17 @@ if __name__ == '__main__':
     print('zcb0', zcb0.mean())
 
 
-    #plot forward rates
-    plt.figure()
-    plt.plot(model.paths[1].fwd[0][0], color='blue', label='F')
-    plt.plot(cashflows[0], color='red', label='cashflows')
-    plt.hlines(y=strike, xmin=0, xmax=len(cashflows[0]), color='green', label='strike')
-    plt.legend()
-    plt.title('Forward rates // payoff')
-    plt.show()
-
-
-    plots = True
+    plots = False
 
     if plots:
+        # plot forward rates
+        plt.figure()
+        plt.plot(model.paths[1].fwd[0][0], color='blue', label='F')
+        plt.plot(cashflows[0], color='red', label='cashflows')
+        plt.hlines(y=strike, xmin=0, xmax=len(cashflows[0]), color='green', label='strike')
+        plt.legend()
+        plt.title('Forward rates // payoff')
+        plt.show()
 
         #plot stat vars
         x,v,phi1,phi2,phi3,phi4,phi5,phi6 = [i for i in model.x]

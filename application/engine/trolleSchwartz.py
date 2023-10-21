@@ -397,74 +397,108 @@ class trolleSchwartz(Model):
                     (T - t) * torch.exp(-self.gamma * (T - t)))
         return Bx
 
-    def calc_characteristic_func(self, u, t, T0, T1, discSteps=100):
+    def calc_characteristic_func(self, u, t, T0, T1, discSteps=50):
         """
             Computes the transform as given by eq. (30) Trolle-Schwartz.
-            Solves the system a system of ODEs by the stoch. vars. M, N using Euler's method.
+            Solves the system a system of ODEs by the stoch. vars. M, N using Runge-Kutta.
         """
-
         M = torch.zeros(1)
         N = torch.zeros((self.simDim, 1))
         if u.is_complex():
             M = torch.zeros(1, dtype=torch.complex64)
             N = torch.zeros((self.simDim, 1), dtype=torch.complex64)
 
-        dTau = torch.linspace(t, T0, discSteps)
+        dTau = torch.linspace(T0, t, discSteps)
+        #dTau = torch.linspace(t, T0, discSteps)
+
+        def compute_dN(N, u, t, T0, T1):
+            """
+            dynamics of N
+            """
+            """
+            value =  N * (-self.kappa + self.sigma * self.rho * (u * self.Bx(t, T1) + (1-u) * self.Bx(t,T0))) + \
+                0.5 * N**2 * self.sigma**2 + 0.5 * (u**2-u) * self.Bx(t, T1)**2 + 0.5 * ((1-u)**2 - (1-u))* self.Bx(t,T0)**2 +\
+                u*(1-u) * self.Bx(t, T1) * self.Bx(t,T0)
+            """
+
+            value = N * (-self.kappa + self.sigma * self.rho * (u * self.Bx(t, T1-T0) + (1 - u) * self.Bx(t, T0))) + \
+                    0.5 * N ** 2 * self.sigma ** 2 + 0.5 * (u ** 2 - u) * self.Bx(t, T1-T0) ** 2 + 0.5 * (
+                                (1 - u) ** 2 - (1 - u)) * self.Bx(t, T0) ** 2 + \
+                    u * (1 - u) * self.Bx(t, T1-T0) * self.Bx(t, T0)
+            return value
+
+        def compute_dM( N, t):
+            """
+            dynamics of M
+            """
+            inner = N * self.kappa * self.theta
+            return torch.sum(inner)
+
+        # Runge kutta
+        dt = dTau[1] - dTau[0]
 
         for i in range(discSteps):
-            dN = N * (-self.kappa + self.sigma * self.rho * (u * self.Bx(t, T1 - T0) + (1-u) * self.Bx(t,T0))) + \
-            + 0.5 * N**2 * self.sigma**2 + 0.5 * (u**2-u) * self.Bx(t, T1 - T0)**2 + 0.5 * ((1-u)**2 - (1-u))* self.Bx(t,T0)**2 +\
-                + u*(1-u) * self.Bx(t, T1 - T0) * self.Bx(t,T0)
-            dN *= dTau[i]
-            dM = torch.sum(N * self.kappa * self.theta) * dTau[i]
+            k1N = compute_dN(N, u, t, T0, T1)
+            k2N = compute_dN(N + 0.5 * dt * k1N, u, t + 0.5 * dt, T0, T1)
+            k3N = compute_dN(N + 0.5 * dt * k2N, u, t + 0.5 * dt, T0, T1)
+            k4N = compute_dN(N + dt * k3N, u, t + dt, T0, T1)
 
-            N += dN
-            M += dM
+            k1M = compute_dM(N, t)
+            k2M = compute_dM(N + 0.5 * dt * k1N, t + 0.5 * dt)
+            k3M = compute_dM(N + 0.5 * dt * k2N, t + 0.5 * dt)
+            k4M = compute_dM(N + dt * k3N, t + dt)
 
-        zcb0 = self.calc_zcb_price([i[:,0,:] for i in self.x], t, T0) #todo edit time index
-        zcb1 = self.calc_zcb_price([i[:,0,:] for i in self.x], t, T1)
+            N += (dt / 6) * (k1N + 2 * k2N + 2 * k3N + k4N)
+            M += (dt / 6) * (k1M + 2 * k2M + 2 * k3M + k4M)
+            t += dt
+
+        # todo: currently taking mean over paths. Is this correct?
+        # todo 2: only supporting time-0 pricing
+        zcb0 = self.calc_zcb_price([i[:,0,:].mean(dim=1) for i in self.x], t, T0)
+        zcb1 = self.calc_zcb_price([i[:,0,:].mean(dim=1) for i in self.x], t, T1)
         term1 = M
-        term2 = torch.sum(N * self.x[1], dim=1)
+        term2 = torch.sum(N * self.x[1][:,0,:].mean(dim=1), dim=1)
         term3 = u * torch.log(zcb1) + (1-u)*torch.log(zcb0)
 
         return torch.exp(term1 + term2 + term3)
 
     def Gfunc(self, a, b, t, T0, T1, y):
         """
-            Computes the Fourier inversion of the transform.
+            Computes the Gil-Pelaez formula:
+            G_{a,b}(y) = phi(a,t,T0,T1) / 2 - 1 / pi int{ Im(phi(a+iub,t,T0,T1) e{-iuy} / u du}
         """
         a = torch.tensor(a)
         b = torch.tensor(b)
-        def integral(MyInf=1.0):
+
+        def integral(MyInf=100.0):
             def integrand(u):
                 c = torch.complex(real=a, imag=u * b)
-
                 term1 = self.calc_characteristic_func(c,t,T0,T1)
                 term2 = torch.exp(-torch.complex(real=torch.tensor(0.0), imag=u*y))
+                integrand = torch.imag( term1 * term2 ) / u
+                return integrand
 
-                integrand = torch.imag( term1 * term2 )
-                return integrand / u
+            du = torch.linspace(0.00001, MyInf, steps=100)
 
-            du = torch.linspace(0.1, MyInf, steps=100)
-            lst = [integrand(u) for u in du]
-            integrands = torch.tensor(lst)
+            lst = torch.stack([integrand(u).reshape(-1) for u in du])
+            integral = torch.trapz(lst, du, dim=0)
 
-            return torch.trapz(integrands)
+            return integral
 
-        term1 = 0.5 * self.calc_characteristic_func(a,t, T0, T1)
+        term1 = 0.5 * self.calc_characteristic_func(a, t, T0, T1)
         term2 = 1/torch.pi * integral()
 
         return term1 - term2
 
-    def calc_cpl(self, t, T0, T1, K):
+    def calc_cpl(self, t, T0, delta, K):
         """
            Revise Trolle-Schwartz on this
                 Cpl(0; t, T0, T1, K) = K * G_{0,1} * log(K) - G_{1,1} * log(K)
         """
-
-        term1 = K * self.Gfunc(0.0, 1.0, t, T0, T1, torch.log(K))
-        term2 = self.Gfunc(1.0, 1.0, t, T0, T1, torch.log(K))
-
+        putStrike = 1.0 / (1.0 + delta * K)
+        T1 = T0 + delta
+        term1 = putStrike * self.Gfunc(0.0, 1.0, t, T0, T1, torch.log(putStrike))
+        term2 = self.Gfunc(1.0, 1.0, t, T0, T1, torch.log(putStrike))
         return term1 - term2
 
     def calc_cap(self, x, t, delta, K):
