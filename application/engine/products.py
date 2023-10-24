@@ -2,6 +2,7 @@ import torch
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from application.utils.torch_utils import max0
+from application.utils.prd_name_conventions import float_to_time_str, float_to_notional_str
 
 
 @dataclass
@@ -61,6 +62,10 @@ class Product(ABC):
         return self.timeline[-1]
 
     @property
+    def name(self):
+        pass
+
+    @property
     @abstractmethod
     def defline(self) -> list[SampleDef]:
         pass
@@ -107,7 +112,10 @@ class Caplet(Product):
         self.strike = strike
         self.start = start
         self.delta = delta
-        self._Tn = start + delta
+        self._Tn = start #+ delta  # TODO
+        self._name = (f'{float_to_time_str(start)}'
+                      f'{float_to_time_str(delta)} '
+                      f'Caplet @ {float(strike) * 100:.4g}%')
 
         '''
         # The straight forward definition
@@ -153,6 +161,10 @@ class Caplet(Product):
         return self._Tn
 
     @property
+    def name(self):
+        return self._name
+
+    @property
     def timeline(self):
         return self._timeline
 
@@ -180,7 +192,11 @@ class Cap(Product):
         self.lastFixingDate = lastFixingDate
         self.delta = delta
 
-        self._Tn = lastFixingDate + delta
+        self._Tn = lastFixingDate + delta # TODO
+        self._name = (f'{float_to_time_str(firstFixingDate)}'
+                      f'{float_to_time_str(lastFixingDate)}'
+                      f'{float_to_time_str(delta)} '
+                      f'Cap @ {float(strike) * 100:.4g}%')
 
         '''
        # The straight forward definition
@@ -251,6 +267,10 @@ class Cap(Product):
         return self._timeline
 
     @property
+    def name(self):
+        return self._name
+
+    @property
     def Tn(self):
         return self._Tn
 
@@ -272,6 +292,76 @@ class Cap(Product):
         return torch.vstack(res)
 
 
+class Fraption(Product):
+    def __init__(self,
+                 exerciseDate: torch.Tensor,
+                 strike: torch.Tensor,
+                 start: torch.Tensor,
+                 delta: torch.Tensor,
+                 notional: torch.Tensor = torch.tensor(1.0)):
+        """
+            A caplet pays
+                delta * max{ F(t, t+delta) - K; 0.0 }   @   t + delta
+        """
+        self.exerciseDate = exerciseDate
+        self.strike = strike
+        self.start = start
+        self.delta = delta
+        self.notional = notional
+        self._Tn = start
+        self._name = (f'{float_to_time_str(start)}'
+                      f'{float_to_time_str(delta)} '
+                      f'Fraption @ {float(strike) * 100:.4g}%')
+
+        self._timeline = torch.concat([torch.tensor([0.0]), exerciseDate.view(1)])
+        self._defline = [
+            SampleDef(
+                fwdRates=[],
+                irs=[],
+                discMats=torch.tensor([]),
+                numeraire=True
+            ),
+            SampleDef(
+                fwdRates=[ForwardRateDef(start, start + delta)],
+                irs=[],
+                discMats=torch.tensor([start]),
+                numeraire=True
+            )
+        ]
+
+        self._payoffLabels = [f'max[FRA({start},{start + delta}, {strike}) ; 0.0]']
+
+    @property
+    def Tn(self):
+        return self._Tn
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def payoffLabels(self):
+        return self._payoffLabels
+
+    def payoff(self, paths: Scenario):
+        from application.engine.linearProducts import forward_rate_agreement
+        fra = forward_rate_agreement(zcb=paths[1].disc[0],
+                                     fwd=paths[1].fwd[0],
+                                     delta=self.delta,
+                                     K=self.strike,
+                                     N=self.notional)
+        return max0(fra) * paths[0].numeraire / paths[1].numeraire
+
+
+
 class EuropeanPayerSwaption(Product):
     def __init__(self,
                  strike:                torch.Tensor,
@@ -286,6 +376,13 @@ class EuropeanPayerSwaption(Product):
         self.swapFirstFixingDate = swapFirstFixingDate
         self.swapLastFixingDate = swapLastFixingDate
         self.notional = notional
+
+        self._name = (f'{float_to_time_str(swapFirstFixingDate)}'
+                      f'{float_to_time_str(swapLastFixingDate)}'
+                      f'{float_to_time_str(delta)} '
+                      f'EuPayerSwpt @ {float(strike) * 100:.4g}% '
+                      f'w {float_to_notional_str(notional)} '
+                      f'x on {float_to_time_str(exerciseDate)}')
 
         self._timeline = torch.concat([torch.tensor([0.0]), exerciseDate.view(1)])
 
@@ -316,6 +413,10 @@ class EuropeanPayerSwaption(Product):
     @property
     def timeline(self):
         return self._timeline
+
+    @property
+    def name(self):
+        return self._name
 
     @property
     def defline(self):
@@ -347,6 +448,13 @@ class EuropeanReceiverSwaption(Product):
 
         self._timeline = torch.concat([torch.tensor([0.0]), exerciseDate.view(1)])
 
+        self._name = (f'{float_to_time_str(swapFirstFixingDate)}'
+                      f'{float_to_time_str(swapLastFixingDate)}'
+                      f'{float_to_time_str(delta)} '
+                      f'EuReceiverSwpt @ {float(strike) * 100:.4g}% '
+                      f'w {float_to_notional_str(notional)} '
+                      f'x on {float_to_time_str(exerciseDate)}')
+
         swapFixingDates = torch.linspace(
             float(self.swapFirstFixingDate),
             float(self.swapLastFixingDate),
@@ -373,6 +481,10 @@ class EuropeanReceiverSwaption(Product):
     @property
     def timeline(self):
         return self._timeline
+
+    @property
+    def name(self):
+        return self._name
 
     @property
     def defline(self):
@@ -402,6 +514,13 @@ class BermudanPayerSwaption(CallableProduct):
         self.swapFirstFixingDate = swapFirstFixingDate
         self.notional = notional
         self._exercise_idx = None
+
+        self._name = (f'{float_to_time_str(swapFirstFixingDate)}'
+                      f'{float_to_time_str(swapLastFixingDate)}'
+                      f'{float_to_time_str(delta)} '
+                      f'BermPayerSwpt @ {strike * 100}% '
+                      f'\w {float_to_notional_str(notional)} '
+                      f'x on {[float_to_time_str(d) + ", " for d in exerciseDates]}')
 
         self._exerciseAtTimeZero = 0.0 in exerciseDates
         self._k = int(not self._exerciseAtTimeZero)  # Auxiliary index used in the methods `payoff` and `early_exercise`
@@ -453,6 +572,10 @@ class BermudanPayerSwaption(CallableProduct):
     @property
     def timeline(self):
         return self._timeline
+
+    @property
+    def name(self):
+        return self._name
 
     @property
     def defline(self):

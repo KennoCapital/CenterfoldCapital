@@ -6,6 +6,7 @@ from application.engine.products import EuropeanPayerSwaption
 from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSim, RNG
+from application.utils.path_config import get_plot_path
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
@@ -13,10 +14,17 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 4096
+    N_train = 1024
+    N_test = 256
+    use_av = True
+
+    r0_min = -0.02
+    r0_max = 0.15
+
+    r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Setup Differential Regressor, and Scalar
-    deg = 5
+    deg = 15
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
     scalar = DifferentialStandardScaler()
@@ -26,11 +34,11 @@ if __name__ == '__main__':
     b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     r0 = torch.tensor(0.08)
-    measure = 'risk_neutral'
+    measure = 'terminal'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
 
-    rng = RNG(seed=seed, use_av=True)
+    rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
     exerciseDate = torch.tensor(1.0)
@@ -56,112 +64,131 @@ if __name__ == '__main__':
         notional=notional
     )
 
-    """ Estimate Delta using Differential Regression """
-
-    # Make helper functions
-    def calc_dswap_dr(x, s):
+    """ Helper functions for generating training data of pathwise payoffs and deltas """
+    def calc_dswap_dr(r0_vec: torch.Tensor, t0: float):
         """
-        :param  x:    Short rate r0
-        :param  s:    Current time
+        :param  r0_vec: Current Short rate r0
+        :param  t0:     Current time
 
         returns:
-            tuple with: (Swap Prices, Swap Prices differentiated wrt. r0 evaluated at x)
+            tuple with: (Swap Prices, Swap Prices differentiated wrt. r0 evaluated at entries in r0_vec)
         """
-        def _swap_price(x):
-            tau = t_swap_fixings - s
-            S = mdl.calc_swap(x, tau, delta, strike, notional)
-            return S
-        ones = torch.ones_like(x)
-        res = jvp(_swap_price, x, ones, create_graph=False)
+        def _swap_price(r0_vec):
+            tau = t_swap_fixings - t0
+            return mdl.calc_swap(r0_vec, tau, delta, strike, notional)
+
+        ones = torch.ones_like(r0_vec)
+        res = jvp(_swap_price, r0_vec, ones, create_graph=False)
         return res
 
-    def calc_dswpt_dr(x, s):
+    def calc_dswpt_dr(r0_vec: torch.Tensor, t0: float):
         """
-        :param  x:    Short rate r0
-        :param  s:    Current time
+        :param  r0_vec: Current Short rate r0
+        :param  t0:     Current time
 
         returns:
-            tuple with: (Pathwise payoffs, Pathwise differentials wrt. r0 evaluated at x)
+            tuple with: (Pathwise payoffs, Pathwise differentials wrt. r0 evaluated at entries in r0_vec)
         """
-        def _payoffs(x):
-            cMdl = Vasicek(a, b, sigma, x, use_ATS=True, use_euler=False, measure=measure)
+        def _payoffs(r0_vec):
+            cMdl = Vasicek(a, b, sigma, r0_vec, use_ATS=True, use_euler=False, measure=measure)
             cPrd = EuropeanPayerSwaption(
                     strike=strike,
-                    exerciseDate=exerciseDate - s,
+                    exerciseDate=exerciseDate - t0,
                     delta=delta,
-                    swapFirstFixingDate=swapFirstFixingDate - s,
-                    swapLastFixingDate=swapLastFixingDate - s,
+                    swapFirstFixingDate=swapFirstFixingDate - t0,
+                    swapLastFixingDate=swapLastFixingDate - t0,
                     notional=notional
             )
-            payoffs = mcSim(cPrd, cMdl, rng, N_train)
+
+            payoffs = mcSim(cPrd, cMdl, rng, len(r0_vec))
             return payoffs
 
-        ones = torch.ones_like(x)
-        res = jvp(_payoffs, x, ones, create_graph=False)
+        ones = torch.ones_like(r0_vec)
+        res = jvp(_payoffs, r0_vec, ones, create_graph=False)
         return res
 
-    """ Plot MC swaption price against r0 and swap(0) """
-    r_grid = torch.linspace(0.03, 0.15, 101)
-    swpt_grid = torch.full_like(r_grid, torch.nan)
-    for j in range(len(r_grid)):
-        tmp_mdl = Vasicek(a, b, sigma, r_grid[j], use_ATS=True, use_euler=False, measure='terminal')
+    def training_data(r0_vec: torch.Tensor, t0: float = 0.0, use_av: bool = True):
+        if use_av:
+            # X_train[i] = X_train[i + N_train],  for all i, when using AV
+            r0_vec = torch.concat([r0_vec, r0_vec])
+
+        swap, dSdr = calc_dswap_dr(r0_vec, t0)
+        y, dydr = calc_dswpt_dr(r0_vec, t0)
+
+        X_train = swap.reshape(-1, 1)
+        y_train = y.reshape(-1, 1)
+        z_train = (dydr / dSdr).reshape(-1, 1)
+
+        if use_av:
+            idx_half = N_train
+            X_train = X_train[:idx_half]
+            y_train = 0.5 * (y_train[:idx_half] + y_train[idx_half:])
+            z_train = 0.5 * (z_train[:idx_half] + z_train[idx_half:])
+
+        return X_train, y_train, z_train
+
+    """ Calculate `true` swaption price using Monte Carlo for comparison """
+    r0_test_vec = torch.linspace(r0_min, r0_max, N_test)
+    y_mdl = torch.full_like(r0_test_vec, torch.nan)
+    for j in range(len(r0_test_vec)):
+        tmp_mdl = Vasicek(a, b, sigma, r0_test_vec[j], use_ATS=True, use_euler=False, measure='terminal')
         tmp_rng = RNG(seed=seed, use_av=True)
-        swpt_grid[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 50000)))
+        y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 50000)))
+    y_mdl = y_mdl.reshape(-1, 1)
 
-    swap_grid = tmp_mdl.calc_swap(r_grid, t_swap_fixings, delta, strike, notional)
-    dswpt_dswap = swpt_grid.diff() / swap_grid.diff()
+    X_test = tmp_mdl.calc_swap(r0_test_vec, t_swap_fixings, delta, strike, notional).reshape(-1, 1)
+    z_mdl = y_mdl.diff(dim=0) / X_test.diff(dim=0)
 
-    plt.figure()
-    plt.plot(r_grid, swpt_grid)
-    plt.ylabel('Swpt Price')
-    plt.xlabel('r0')
-    plt.show()
+    """ Estimate Price and Delta using Differential Regression """
 
-    plt.figure()
-    plt.plot(swap_grid, swpt_grid)
-    plt.ylabel('Swpt Price')
-    plt.xlabel('Swap(0)')
-    plt.show()
+    X_train, y_train, z_train = training_data(r0_vec=r0_vec, t0=0.0, use_av=use_av)
 
-    plt.figure()
-    plt.plot(swap_grid[1:], dswpt_dswap)
-    plt.title('Swpt Delta (Bump and Reval)')
-    plt.ylabel('Delta')
-    plt.xlabel('Swap(0)')
-    plt.show()
+    X_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(X_train, y_train, z_train)
 
-    """ Plot Differential Regression (in sample) """
+    diff_reg.fit(X_train_scaled, y_train_scaled, z_train_scaled)
 
-    r0_grid = torch.linspace(0.03, 0.15, N_train)
+    X_test_scaled, _, _ = scalar.transform(X_test, None, None)
+    y_pred_scaled, z_pred_scaled = diff_reg.predict(X_test_scaled, predict_derivs=True)
 
-    swap, dSdr = calc_dswap_dr(r0_grid, 0.0)
-    y, dydr = calc_dswpt_dr(r0_grid, 0.0)
+    _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
 
-    X_train = swap.reshape(-1, 1)
-    y_train = y.reshape(-1, 1)
-    z_train = (dydr / dSdr).reshape(-1, 1)
+    RMSE_price = torch.sqrt(torch.mean((y_pred - y_mdl) ** 2))
+    MAE_delta = torch.mean(torch.abs(z_pred[1:] - z_mdl))
 
-    X_train, y_train, z_train = scalar.fit_transform(X_train, y_train, z_train)
+    """ Plot results """
 
-    diff_reg.fit(X_train, y_train, z_train)
-    y_pred, z_pred = diff_reg.predict(X_train, predict_derivs=True)  # Here X_train is what makes the plot 'in-sample'
+    fig, ax = plt.subplots(2, sharex='col')
+    # Plot price function
+    ax[0].plot(X_train.flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25, label='Pathwise samples')
+    ax[0].plot(X_test.flatten(), y_pred, label='DiffReg', color='orange')
+    ax[0].plot(X_test, y_mdl, color='black', label='MC (Bump and reval)')
+    ax[0].set_ylabel('Price')
+    ax[0].text(0.05, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0].transAxes)
 
-    _, y_pred, z_pred = scalar.predict(None, y_pred, z_pred)
+    # Plot delta function
+    ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
+    ax[1].plot(X_test, z_pred, label='DiffReg', color='orange')
+    ax[1].plot(X_test[1:], z_mdl, color='black', label='MC (Bump and reval)')
+    ax[1].set_xlabel('Swap(0)')
+    ax[1].set_ylabel('Delta')
+    ax[1].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1].transAxes)
 
-    plt.figure()
-    plt.plot(swap, y, 'o', color='gray', alpha=0.25, label='Sample Payoffs')
-    plt.plot(swap, y_pred, label='DiffReg', color='orange')
-    plt.plot(swap_grid, swpt_grid, color='black', label='bump and reval')
-    plt.title('Learning Payoffs')
-    plt.xlabel('r0')
-    plt.legend()
-    plt.show()
+    # Adjust size of subplots
+    box0 = ax[0].get_position()
+    ax[0].set_position([box0.x0, box0.y0 - box0.height * 0.1, box0.width, box0.height * 0.9])
 
-    plt.figure()
-    plt.plot(swap, dydr / dSdr, 'o', color='gray', alpha=0.25, label='Sample Differentials')
-    plt.plot(swap, z_pred, label='DiffReg', color='orange')
-    plt.plot(swap_grid[1:], dswpt_dswap, color='black', label='bump and reval')
-    plt.xlabel('Swap(0)')
-    plt.title('Learning Sensitivities')
-    plt.legend()
+    box1 = ax[1].get_position()
+    ax[1].set_position([box1.x0, box1.y0, box1.width, box1.height * 0.9])
+
+    # Legend
+    handles, labels = fig.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=3, fancybox=True, shadow=True,
+               bbox_to_anchor=(0.5, 0.90))
+
+    # Title
+    av_str = 'with AV' if use_av else 'without AV'
+    fig.suptitle(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
+
+    # plt.savefig(get_plot_path('vasicek_AAD_DiffReg_EuSwpt.png'), dpi=400)
     plt.show()
