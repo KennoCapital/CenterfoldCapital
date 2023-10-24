@@ -37,7 +37,7 @@ if __name__ == '__main__':
     b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     r0 = torch.tensor(0.08)
-    measure = 'terminal'
+    measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
 

@@ -176,7 +176,7 @@ class Vasicek(Model):
                 for j in range(len(self.paths[idx].fwd)):
                     self._paths[idx].fwd[j][:] = self.calc_fwd(r0=x,
                                                                t=self.defline[idx].fwdRates[j].startDate - s,
-                                                               delta=self.defline[idx].fwdRates[j].delta)
+                                                               delta=self.defline[idx].fwdRates[j].delta)[0]
 
                 for j in range(len(self.paths[idx].irs)):
                     self._paths[idx].irs[j][:] = self.calc_swap(r0=x,
@@ -199,7 +199,7 @@ class Vasicek(Model):
                 for j in range(len(self.paths[idx].fwd)):
                     self._paths[idx].fwd[j][:] = self.calc_fwd(r0=x,
                                                                t=self.defline[idx].fwdRates[j].startDate - s,
-                                                               delta=self.defline[idx].fwdRates[j].delta)
+                                                               delta=self.defline[idx].fwdRates[j].delta)[0]
 
                 for j in range(len(self.paths[idx].irs)):
                     self._paths[idx].irs[j][:] = self.calc_swap(r0=x,
