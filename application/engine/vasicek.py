@@ -3,7 +3,7 @@ import scipy
 from application.utils.torch_utils import N_cdf
 from application.engine.mcBase import Model, MEASURES
 from application.engine.products import Product, Sample
-from application.engine.linearProducts import forward, swap, swap_rate
+from application.engine.linearProducts import forward, swap, swap_rate, forward_rate_agreement
 
 
 def _format_dim_r0(r0):
@@ -176,7 +176,7 @@ class Vasicek(Model):
                 for j in range(len(self.paths[idx].fwd)):
                     self._paths[idx].fwd[j][:] = self.calc_fwd(r0=x,
                                                                t=self.defline[idx].fwdRates[j].startDate - s,
-                                                               delta=self.defline[idx].fwdRates[j].delta)
+                                                               delta=self.defline[idx].fwdRates[j].delta)[0]
 
                 for j in range(len(self.paths[idx].irs)):
                     self._paths[idx].irs[j][:] = self.calc_swap(r0=x,
@@ -199,7 +199,7 @@ class Vasicek(Model):
                 for j in range(len(self.paths[idx].fwd)):
                     self._paths[idx].fwd[j][:] = self.calc_fwd(r0=x,
                                                                t=self.defline[idx].fwdRates[j].startDate - s,
-                                                               delta=self.defline[idx].fwdRates[j].delta)
+                                                               delta=self.defline[idx].fwdRates[j].delta)[0]
 
                 for j in range(len(self.paths[idx].irs)):
                     self._paths[idx].irs[j][:] = self.calc_swap(r0=x,
@@ -313,6 +313,11 @@ class Vasicek(Model):
 
         zcb = self.calc_zcb(r0, t)
         return swap_rate(zcb, delta)
+
+    def calc_fra(self, r0, t, delta, K, N: torch.Tensor = torch.tensor(1.0)):
+        zcb = self.calc_zcb(r0, t)
+        fwd = self.calc_fwd(r0, t, delta)
+        return forward_rate_agreement(zcb, fwd, delta, K, N)
 
     def calc_cpl(self, r0, t, delta, K):
         """

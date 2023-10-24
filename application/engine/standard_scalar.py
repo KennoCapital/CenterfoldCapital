@@ -48,7 +48,7 @@ class DifferentialStandardScaler:
         self.fit(X, y, dim)
         return self.transform(X, y, z)
 
-    def predict(self, X: torch.Tensor, y: torch.Tensor, z: torch.Tensor or None = None):
+    def predict(self, X: torch.Tensor or None = None, y: torch.Tensor or None = None, z: torch.Tensor or None = None):
         x_pred = X * self.x_std + self.x_mean if X is not None else None
         y_pred = y * self.y_std + self.y_mean if y is not None else None
         z_pred = (z * self.y_std) / self.x_std if z is not None else None
