@@ -40,7 +40,7 @@ if __name__ == '__main__':
     rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
-    exerciseDate = torch.tensor(0.25)
+    exerciseDate = torch.tensor(1.0)
     delta = torch.tensor(0.25)
     notional = torch.tensor(1e6)
 

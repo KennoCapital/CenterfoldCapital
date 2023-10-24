@@ -174,14 +174,6 @@ if __name__ == '__main__':
     h_a = calc_delta(swap_vec=swap, r0_vec=r0_vec, t0=0.0, use_av=use_av)
     h_b = V - h_a * swap
 
-'''
-    u_swap = torch.full((last_idx + 1, N_test), torch.nan)
-    u_fwd = torch.full((last_idx + 1, N_test), torch.nan)
-    u_s = torch.full((last_idx + 1, N_test), torch.nan)
-    u_swap[0] = swap
-    u_fwd[0] = mdl.calc_fwd(r0, exerciseDate + 10.0, delta)[0]
-    u_s[0] = mdl.calc_swap_rate(r0, t_swap_fixings, delta)
-'''
     # Loop over time
     for k in range(1, last_idx + 1):
         dt = dTL[k] - dTL[k-1]
@@ -190,27 +182,12 @@ if __name__ == '__main__':
         # Update market variables
         swap = mdl.calc_swap(r[k, :], t_swap_fixings - t, delta, strike, notional)
 
-'''
-        u_swap[k] = swap
-        u_fwd[k] = mdl.calc_fwd(r[k, :], exerciseDate + 10.0 - t, delta)[0]
-        u_s[k] = mdl.calc_swap_rate(r[k, :], t_swap_fixings - t, delta)
-'''
         # Update portfolio
         V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
         if k < last_idx:
             h_a = calc_delta(swap_vec=swap, r0_vec=r0_vec, t0=t, use_av=use_av)
             h_b = V - h_a * swap
-'''
-    p = 1
-    fig, ax = plt.subplots(2, sharex='all')
-    ax[0].plot(dTL[:last_idx + 1], r[:last_idx + 1, p], label='r', color='black')
-    ax[0].plot(dTL[:last_idx + 1], u_fwd[:, p], label='fwd', color='red')
-    ax[0].plot(dTL[:last_idx + 1], u_s[:, p], label='swap_rate', color='blue')
-    ax[1].plot(dTL[:last_idx + 1], u_swap[:, p], label='swap', color='blue')
-    ax[1].set_xlabel('Time')
-    fig.legend()
-    plt.show()
-'''
+
     swapT = torch.linspace(float(swap.min()), float(swap.max()), 1001)
     payoff_func = max0(swapT)
 
@@ -238,6 +215,6 @@ if __name__ == '__main__':
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
 
-    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_EuPaySwpt_delta_hedge.png'), dpi=400)
+    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Fraption_delta_hedge.png'), dpi=400)
     plt.show()
 

@@ -21,13 +21,13 @@ if __name__ == '__main__':
 
     hedge_points = 100
 
-    r0_min = -0.02
-    r0_max = 0.15
+    r0_min = 0.05
+    r0_max = 0.11
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Setup Differential Regressor, and Scalar
-    deg = 21
+    deg = 15
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
     scalar = DifferentialStandardScaler()
@@ -46,7 +46,7 @@ if __name__ == '__main__':
     # Product specification
     exerciseDate = torch.tensor(0.25)
     start = torch.tensor(1.0)
-    delta = torch.tensor(0.25)
+    delta = torch.tensor(5.0)
     notional = torch.tensor(1e6)
 
     strike = mdl.calc_fwd(r0, start, delta)
@@ -153,18 +153,6 @@ if __name__ == '__main__':
 
         _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
 
-        '''
-        plt.figure()
-        plt.plot(X_train, y_train, 'o', color='gray', alpha=0.25)
-        plt.plot(X_test, y_pred, 'o', color='blue')
-        plt.show()
-
-        plt.figure()
-        plt.plot(X_train, z_train, 'o', color='gray', alpha=0.25)
-        plt.plot(X_test, z_pred, 'o', color='blue')
-        plt.show()
-        '''
-
         return z_pred.flatten()
 
     """ Delta Hedge Experiment """
@@ -176,18 +164,9 @@ if __name__ == '__main__':
     # Initialize experiment
     fra = mdl.calc_fra(r[0, :], start, delta, strike, notional)[0]
 
-    V = fra * torch.ones_like(r[0, :])
+    V = fraption * torch.ones_like(r[0, :])
     h_a = calc_delta(fra_vec=fra, r0_vec=r0_vec, t0=0.95, use_av=use_av)
     h_b = V - h_a * fra
-
-    '''
-    fra = mdl.calc_fra(r0_vec, start, delta, strike, notional)[0]
-    fwd = mdl.calc_fwd(r0_vec, start, delta)[0]
-    plt.plot(fwd, fra)
-    plt.vlines(strike, fra.min(), fra.max())
-    plt.hlines(0.0, fwd.min(), fwd.max())
-    plt.show()
-    '''
 
     # Loop over time
     for k in range(1, last_idx + 1):
