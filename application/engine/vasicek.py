@@ -3,7 +3,7 @@ import scipy
 from application.utils.torch_utils import N_cdf
 from application.engine.mcBase import Model, MEASURES
 from application.engine.products import Product, Sample
-from application.engine.linearProducts import forward, swap, swap_rate
+from application.engine.linearProducts import forward, swap, swap_rate, forward_rate_agreement
 
 
 def _format_dim_r0(r0):
@@ -176,7 +176,7 @@ class Vasicek(Model):
                 for j in range(len(self.paths[idx].fwd)):
                     self._paths[idx].fwd[j][:] = self.calc_fwd(r0=x,
                                                                t=self.defline[idx].fwdRates[j].startDate - s,
-                                                               delta=self.defline[idx].fwdRates[j].delta)
+                                                               delta=self.defline[idx].fwdRates[j].delta)[0]
 
                 for j in range(len(self.paths[idx].irs)):
                     self._paths[idx].irs[j][:] = self.calc_swap(r0=x,
@@ -199,7 +199,7 @@ class Vasicek(Model):
                 for j in range(len(self.paths[idx].fwd)):
                     self._paths[idx].fwd[j][:] = self.calc_fwd(r0=x,
                                                                t=self.defline[idx].fwdRates[j].startDate - s,
-                                                               delta=self.defline[idx].fwdRates[j].delta)
+                                                               delta=self.defline[idx].fwdRates[j].delta)[0]
 
                 for j in range(len(self.paths[idx].irs)):
                     self._paths[idx].irs[j][:] = self.calc_swap(r0=x,
@@ -314,7 +314,12 @@ class Vasicek(Model):
         zcb = self.calc_zcb(r0, t)
         return swap_rate(zcb, delta)
 
-    def calc_cpl(self, r0, t, delta, K):
+    def calc_fra(self, r0, t, delta, K, N: torch.Tensor = torch.tensor(1.0)):
+        zcb = self.calc_zcb(r0, t)
+        fwd = self.calc_fwd(r0, t, delta)
+        return forward_rate_agreement(zcb, fwd, delta, K, N)
+
+    def calc_cpl(self, r0, t, delta, K, N: torch.Tensor = torch.tensor(1.0)):
         """
            Solution to Filipovic's prop. 7.2
                 Cpl(0; t, t+delta) = P(0,t) * N(d1) - P(0,t+delta) / K_bar * N(d2)
@@ -348,11 +353,11 @@ class Vasicek(Model):
         d1 = (torch.log(zcb_t * K_bar / zcb_tdt) + 0.5 * vol_integral) / torch.sqrt(vol_integral)
         d2 = d1 - torch.sqrt(vol_integral)
 
-        return zcb_t * N_cdf(d1) - zcb_tdt / K_bar * N_cdf(d2)
+        return N * (zcb_t * N_cdf(d1) - zcb_tdt / K_bar * N_cdf(d2))
 
-    def calc_cap(self, r0, t, delta, K):
+    def calc_cap(self, r0, t, delta, K, N: torch.Tensor = torch.tensor(1.0)):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
-        cpl = self.calc_cpl(r0, t, delta, K)
+        cpl = self.calc_cpl(r0, t, delta, K, N)
         return torch.sum(cpl, dim=0)
 
 

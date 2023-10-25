@@ -1,25 +1,29 @@
 import torch
 import matplotlib.pyplot as plt
+
+from application.engine.differential_NN import Neural_Approximator
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek
 from application.engine.products import EuropeanPayerSwaption
-from application.engine.standard_scalar import DifferentialStandardScaler
-from application.engine.regressor import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSim, RNG
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
+
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 4096
+    N_train = 4096 * 2
 
-    # Setup Differential Regressor, and Scalar
-    deg = 5
-    alpha = 1.0
-    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
-    scalar = DifferentialStandardScaler()
+    # Differential Neural Network Settings
+    seed_weights = 1234
+    epochs = 100
+    batches_per_epoch = 16
+    min_batch_size = 256 * 4
+    lam = 1.0
+    hidden_units = 20
+    hidden_layers = 4
 
     # Model specification
     a = torch.tensor(0.86)
@@ -100,7 +104,7 @@ if __name__ == '__main__':
         res = jvp(_payoffs, x, ones, create_graph=False)
         return res
 
-    """ Plot MC swaption price against r0 and swap(0) """
+    """ Calculate MC swaption price against r0 and swap(0) """
     r_grid = torch.linspace(0.03, 0.15, 101)
     swpt_grid = torch.full_like(r_grid, torch.nan)
     for j in range(len(r_grid)):
@@ -111,28 +115,10 @@ if __name__ == '__main__':
     swap_grid = tmp_mdl.calc_swap(r_grid, t_swap_fixings, delta, strike, notional)
     dswpt_dswap = swpt_grid.diff() / swap_grid.diff()
 
-    plt.figure()
-    plt.plot(r_grid, swpt_grid)
-    plt.ylabel('Swpt Price')
-    plt.xlabel('r0')
-    plt.show()
+    """ Plot Differential Neutral Network (in sample) """
 
-    plt.figure()
-    plt.plot(swap_grid, swpt_grid)
-    plt.ylabel('Swpt Price')
-    plt.xlabel('Swap(0)')
-    plt.show()
-
-    plt.figure()
-    plt.plot(swap_grid[1:], dswpt_dswap)
-    plt.title('Swpt Delta (Bump and Reval)')
-    plt.ylabel('Delta')
-    plt.xlabel('Swap(0)')
-    plt.show()
-
-    """ Plot Differential Regression (in sample) """
-
-    r0_grid = torch.linspace(0.03, 0.15, N_train)
+    r0_grid = torch.linspace(0.03, 0.15, N_train // 2)
+    r0_grid = torch.concat([r0_grid, r0_grid])
 
     swap, dSdr = calc_dswap_dr(r0_grid, 0.0)
     y, dydr = calc_dswpt_dr(r0_grid, 0.0)
@@ -141,25 +127,32 @@ if __name__ == '__main__':
     y_train = y.reshape(-1, 1)
     z_train = (dydr / dSdr).reshape(-1, 1)
 
-    X_train, y_train, z_train = scalar.fit_transform(X_train, y_train, z_train)
+    # AV-reduction the right way
+    idx_half = N_train // 2
+    X_train = X_train[:idx_half]
+    y_train = 0.5 * (y_train[:idx_half] + y_train[idx_half:])
+    z_train = 0.5 * (z_train[:idx_half] + z_train[idx_half:])
 
-    diff_reg.fit(X_train, y_train, z_train)
-    y_pred, z_pred = diff_reg.predict(X_train, predict_derivs=True)  # Here X_train is what makes the plot 'in-sample'
+    X_test = X_train  # Here X_train is what makes the plot 'in-sample'
 
-    _, y_pred, z_pred = scalar.predict(None, y_pred, z_pred)
+    # Setup Differential Neutral Network
+    diff_nn = Neural_Approximator(X_train, y_train, z_train)
+    diff_nn.prepare(N_train, True, weight_seed=seed_weights, lam=lam, hidden_units=hidden_units, hidden_layers=hidden_layers)
+    diff_nn.train(epochs=epochs, batches_per_epoch=batches_per_epoch, min_batch_size=min_batch_size)
+    y_pred, z_pred = diff_nn.predict_values_and_derivs(X_test)
 
     plt.figure()
-    plt.plot(swap, y, 'o', color='gray', alpha=0.25, label='Sample Payoffs')
-    plt.plot(swap, y_pred, label='DiffReg', color='orange')
+    plt.plot(X_train, y_train, 'o', color='gray', alpha=0.25, label='Sample Payoffs')
+    plt.plot(X_test, y_pred, label='DiffNN', color='orange')
     plt.plot(swap_grid, swpt_grid, color='black', label='bump and reval')
     plt.title('Learning Payoffs')
-    plt.xlabel('r0')
+    plt.xlabel('Swap(0)')
     plt.legend()
     plt.show()
 
     plt.figure()
-    plt.plot(swap, dydr / dSdr, 'o', color='gray', alpha=0.25, label='Sample Differentials')
-    plt.plot(swap, z_pred, label='DiffReg', color='orange')
+    plt.plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Sample Differentials')
+    plt.plot(X_test, z_pred, label='DiffNN', color='orange')
     plt.plot(swap_grid[1:], dswpt_dswap, color='black', label='bump and reval')
     plt.xlabel('Swap(0)')
     plt.title('Learning Sensitivities')

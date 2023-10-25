@@ -2,7 +2,7 @@ from torch.autograd.functional import jacobian
 from application.engine.mcBase import mcSim, RNG, Model
 from application.engine.products import Caplet, Product
 from application.engine.vasicek import Vasicek
-from application.engine.differential_regression import DifferentialRegression
+from application.engine._differential_regression import DifferentialRegression
 from application.utils.torch_utils import max0
 from scipy.optimize import root_scalar
 import matplotlib.pyplot as plt

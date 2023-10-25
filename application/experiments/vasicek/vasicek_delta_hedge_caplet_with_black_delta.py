@@ -5,6 +5,7 @@ from application.engine.mcBase import mcSimPaths, RNG
 from application.engine.products import Caplet
 from application.utils.torch_utils import max0
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 """
     NOTE: This is script is very slow as no optimization has been made.
@@ -37,7 +38,7 @@ if __name__ == '__main__':
 
     seed = None
 
-    N = 1024
+    N = 256
 
     measure = 'risk_neutral'
 
@@ -46,7 +47,7 @@ if __name__ == '__main__':
     sigma = torch.tensor(0.0148)
     r0 = torch.tensor(0.08)
 
-    start = torch.tensor(0.25)
+    start = torch.tensor(1.0)
     delta = torch.tensor(0.25)
 
     model = Vasicek(a, b, sigma, r0, False, False, measure)
@@ -83,7 +84,7 @@ if __name__ == '__main__':
     payoff = torch.full_like(V, torch.nan)
     fwdT = torch.full_like(V, torch.nan)
 
-    for k in range(1, len(hedgeTL)):            # Loop over time
+    for k in tqdm(range(1, len(hedgeTL))):            # Loop over time
         dt = hedgeTL[k] - hedgeTL[k - 1]
         t = hedgeTL[k]
         tau = start - t
@@ -108,6 +109,7 @@ if __name__ == '__main__':
             else:
                 fwdT[p] = fwd
 
+    df = model.calc_zcb(r[k, :], delta)[0]
     payoff = delta * max0(fwdT - strike)
 
     plt.figure()

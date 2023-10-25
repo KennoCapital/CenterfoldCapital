@@ -34,3 +34,11 @@ def swap_rate(zcb: torch.Tensor, delta: torch.Tensor):
     if zcb.dim() == 2:
         return (zcb[0, :] - zcb[-1, :]) / (delta * torch.sum(zcb[1:], dim=0))
     return (zcb[0] - zcb[-1]) / (delta * torch.sum(zcb[1:]))
+
+
+def forward_rate_agreement(zcb: torch.Tensor,
+                           fwd: torch.Tensor,
+                           delta: torch.Tensor,
+                           K: torch.Tensor,
+                           N: torch.Tensor = torch.tensor(1.0)):
+    return N * delta * (fwd - K) * zcb

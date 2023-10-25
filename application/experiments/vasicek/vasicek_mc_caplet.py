@@ -18,6 +18,7 @@ if __name__ == '__main__':
     b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     r0 = torch.tensor(0.08)
+    notional = torch.tensor(1e6)
 
     start = torch.tensor(5.0)
     delta = torch.tensor(15.0)
@@ -32,7 +33,8 @@ if __name__ == '__main__':
     prd = Caplet(
         strike=swap_rate,
         start=start,
-        delta=delta
+        delta=delta,
+        notional=notional
     )
 
     payoff = mcSim(prd, model, rng, N, dTL)
@@ -42,5 +44,5 @@ if __name__ == '__main__':
     )
 
     print(
-        'Analytical price =', model.calc_cpl(r0, start, delta, swap_rate)
+        'Analytical price =', model.calc_cpl(r0, start, delta, swap_rate, notional)[0][0]
     )
