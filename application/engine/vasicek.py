@@ -319,7 +319,7 @@ class Vasicek(Model):
         fwd = self.calc_fwd(r0, t, delta)
         return forward_rate_agreement(zcb, fwd, delta, K, N)
 
-    def calc_cpl(self, r0, t, delta, K):
+    def calc_cpl(self, r0, t, delta, K, N: torch.Tensor = torch.tensor(1.0)):
         """
            Solution to Filipovic's prop. 7.2
                 Cpl(0; t, t+delta) = P(0,t) * N(d1) - P(0,t+delta) / K_bar * N(d2)
@@ -353,11 +353,11 @@ class Vasicek(Model):
         d1 = (torch.log(zcb_t * K_bar / zcb_tdt) + 0.5 * vol_integral) / torch.sqrt(vol_integral)
         d2 = d1 - torch.sqrt(vol_integral)
 
-        return zcb_t * N_cdf(d1) - zcb_tdt / K_bar * N_cdf(d2)
+        return N * (zcb_t * N_cdf(d1) - zcb_tdt / K_bar * N_cdf(d2))
 
-    def calc_cap(self, r0, t, delta, K):
+    def calc_cap(self, r0, t, delta, K, N: torch.Tensor = torch.tensor(1.0)):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """
-        cpl = self.calc_cpl(r0, t, delta, K)
+        cpl = self.calc_cpl(r0, t, delta, K, N)
         return torch.sum(cpl, dim=0)
 
 

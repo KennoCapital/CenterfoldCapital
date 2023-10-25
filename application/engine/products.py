@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from application.utils.torch_utils import max0
 from application.utils.prd_name_conventions import float_to_time_str, float_to_notional_str
+from application.engine.linearProducts import forward_rate_agreement
 
 
 @dataclass
@@ -159,18 +160,21 @@ class Caplet(Product):
     def __init__(self,
                  strike: torch.Tensor,
                  start: torch.Tensor,
-                 delta: torch.Tensor):  # TODO add notional
+                 delta: torch.Tensor,
+                 notional: torch.Tensor = torch.tensor(1.0)):
         """
             A caplet pays
-                delta * max{ F(t, t+delta) - K; 0.0 }   @   t + delta
+                N * delta * max{ F(t, t+delta) - K; 0.0 }   @   t + delta
         """
         self.strike = strike
         self.start = start
         self.delta = delta
-        self._Tn = start #+ delta  # TODO
+        self.notional = notional
+        self._Tn = start + delta
         self._name = (f'{float_to_time_str(start)}'
                       f'{float_to_time_str(delta)} '
-                      f'Caplet @ {float(strike) * 100:.4g}%')
+                      f'Caplet @ {float(strike) * 100:.4g}%'
+                      f'w {float_to_notional_str(notional)}')
 
         '''
         # The straight forward definition
@@ -232,8 +236,8 @@ class Caplet(Product):
         return self._payoffLabels
 
     def payoff(self, paths: Scenario):
-        # return self.delta * max0(paths[1].fwd[0] - self.strike) * paths[0].numeraire / paths[2].numeraire
-        return self.delta * max0(paths[1].fwd[0] - self.strike) * paths[0].numeraire / paths[1].numeraire * paths[1].disc[0]
+        # return self.notional * self.delta * max0(paths[1].fwd[0] - self.strike) * paths[0].numeraire / paths[2].numeraire
+        return self.notional * self.delta * max0(paths[1].fwd[0] - self.strike) * paths[0].numeraire / paths[1].numeraire * paths[1].disc[0]
 
 
 class Cap(Product):
@@ -241,17 +245,20 @@ class Cap(Product):
                  strike:            torch.Tensor,
                  firstFixingDate:   torch.Tensor,
                  lastFixingDate:    torch.Tensor,
-                 delta:             torch.Tensor):
+                 delta:             torch.Tensor,
+                 notional:          torch.Tensor = torch.tensor(1.0)):
         self.strike = strike
         self.firstFixingDate = firstFixingDate
         self.lastFixingDate = lastFixingDate
         self.delta = delta
+        self.notional = notional
 
-        self._Tn = lastFixingDate + delta # TODO
+        self._Tn = lastFixingDate + delta
         self._name = (f'{float_to_time_str(firstFixingDate)}'
                       f'{float_to_time_str(lastFixingDate)}'
                       f'{float_to_time_str(delta)} '
-                      f'Cap @ {float(strike) * 100:.4g}%')
+                      f'Cap @ {float(strike) * 100:.4g}%'
+                      f'w {float_to_notional_str(notional)}')
 
         '''
        # The straight forward definition
@@ -339,10 +346,10 @@ class Cap(Product):
 
     def payoff(self, paths):
         '''
-        res = [self.delta * max0(paths[i].fwd[0] - self.strike) * paths[0].numeraire / paths[i+1].numeraire
+        res = [self.notional * self.delta * max0(paths[i].fwd[0] - self.strike) * paths[0].numeraire / paths[i+1].numeraire
                for i in range(1, len(paths)-1)]  # No cashflows for the first and last sample
         '''
-        res = [self.delta * max0(paths[i].fwd[0] - self.strike) * paths[0].numeraire / paths[i].numeraire * paths[i].disc[0]
+        res = [self.notional * self.delta * max0(paths[i].fwd[0] - self.strike) * paths[0].numeraire / paths[i].numeraire * paths[i].disc[0]
                for i in range(1, len(paths))]
         return torch.vstack(res)
 
@@ -384,7 +391,7 @@ class Fraption(Product):
             )
         ]
 
-        self._payoffLabels = [f'max[FRA({start},{start + delta}, {strike}) ; 0.0]']
+        self._payoffLabels = [f'max[FRA({exerciseDate},{start},{start + delta}, {strike}) ; 0.0]']
 
     @property
     def Tn(self):
@@ -407,7 +414,6 @@ class Fraption(Product):
         return self._payoffLabels
 
     def payoff(self, paths: Scenario):
-        from application.engine.linearProducts import forward_rate_agreement
         fra = forward_rate_agreement(zcb=paths[1].disc[0],
                                      fwd=paths[1].fwd[0],
                                      delta=self.delta,
