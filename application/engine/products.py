@@ -156,6 +156,66 @@ class CapletAsPutOnZCB(Product):
         return max0(1 - paths[1].disc[0] * K_bar) * paths[0].numeraire / paths[1].numeraire
 
 
+
+class   EuropeanShortRateCall(Product):
+    def __init__(self,
+                 strike: torch.Tensor,
+                 exerciseDate: torch.Tensor,
+                 notional: torch.Tensor = torch.tensor(1.0)):
+        """
+            A caplet pays
+                N * delta * max{ F(t, t+delta) - K; 0.0 }   @   t + delta
+        """
+        self.strike = strike
+        self.exerciseDate = exerciseDate
+        self.notional = notional
+        self._Tn = exerciseDate
+        self._name = f'{float_to_time_str(exerciseDate)} EuSRcall @ {strike} w {float_to_notional_str(notional)}'
+
+        # Discounting the payment from T+delta to T
+        self._timeline = torch.concat([torch.tensor([0.0]), exerciseDate.view(1)])
+        self._defline = [
+            SampleDef(
+                fwdRates=[],
+                irs=[],
+                discMats=torch.tensor([]),
+                numeraire=True
+            ),
+            SampleDef(
+                fwdRates=[],
+                irs=[],
+                discMats=torch.tensor([]),
+                numeraire=True,
+                stateVar=True
+            )
+        ]
+
+        self._payoffLabels = ''
+
+    @property
+    def Tn(self):
+        return self._Tn
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def payoffLabels(self):
+        return self._payoffLabels
+
+    def payoff(self, paths: Scenario):
+        return self.notional * max0(paths[1].x - self.strike) * paths[0].numeraire / paths[1].numeraire
+
+
 class Caplet(Product):
     def __init__(self,
                  strike: torch.Tensor,
