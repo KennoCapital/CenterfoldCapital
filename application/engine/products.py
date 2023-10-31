@@ -100,17 +100,20 @@ class CallableProduct(Product):
     def exercise_idx(self) -> torch.Tensor:
         pass
 
+
 class CapletAsPutOnZCB(Product):
     def __init__(self,
                  strike: torch.Tensor,
                  exerciseDate: torch.Tensor,
-                 delta: torch.Tensor):
+                 delta: torch.Tensor,
+                 notional: torch.Tensor):
         """
             This is essentially the same as a caplet, just modeled differently.
         """
         self.strike = strike
         self.exerciseDate = exerciseDate
         self.delta = delta
+        self.notional = notional
 
         self._Tn = exerciseDate
         self._name = 'Caplet As Put On ZCB'
@@ -152,12 +155,12 @@ class CapletAsPutOnZCB(Product):
         return self._payoffLabels
 
     def payoff(self, paths: Scenario):
-        K_bar = 1 + self.delta * self.strike
-        return max0(1 - paths[1].disc[0] * K_bar) * paths[0].numeraire / paths[1].numeraire
+        K_bar = 1.0 + self.delta * self.strike
+        payment = K_bar * max0(1.0 / K_bar - paths[1].disc[0])
+        return self.notional * payment * paths[1].disc[0] * paths[0].numeraire / paths[1].numeraire
 
 
-
-class   EuropeanShortRateCall(Product):
+class EuropeanShortRateCall(Product):
     def __init__(self,
                  strike: torch.Tensor,
                  exerciseDate: torch.Tensor,
