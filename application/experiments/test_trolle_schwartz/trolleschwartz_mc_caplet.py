@@ -14,6 +14,7 @@ N = 100
 
 measure = 'risk_neutral'
 
+""" Parameters """
 kappa = torch.tensor(0.0553)
 sigma = torch.tensor(0.3325)
 alpha0 = torch.tensor(0.045)
@@ -33,6 +34,7 @@ phi6_0 = torch.clone(x0)
 
 r0 = torch.tensor(0.08)
 
+""" Product specification """
 firstFixingDate = torch.tensor(20.0)
 lastFixingDate = firstFixingDate
 delta = torch.tensor(5.)
@@ -41,6 +43,7 @@ strike = torch.tensor(0.084)
 
 dTL = torch.linspace(0.0, lastFixingDate + delta, int(50 * (lastFixingDate + delta) + 1))
 
+""" Model pricing """
 model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1,
                        x0, v0, phi1_0, phi2_0, phi3_0, phi4_0, phi5_0, phi6_0)
 
@@ -56,10 +59,7 @@ prd = Cap(
 t_event_dates = torch.concat([prd.timeline, (lastFixingDate).view(1)])
 
 cashflows = mcSim(prd, model, rng, N, dTL)
-print('Cashflows: \n', cashflows)
-
 payoff = torch.sum(cashflows, dim=0)
-print('Payoffs:\n', payoff)
 
 mc_price = torch.nanmean(payoff)
 print('MC Price =', mc_price)
@@ -74,19 +74,14 @@ if __name__ == '__main__':
         [x[:, 0, :], v[:, 0, :], phi1[:, 0, :], phi2[:, 0, :], phi3[:, 0, :], phi4[:, 0, :], phi5[:, 0, :],
          phi6[:, 0, :]], t=0.0)
 
-    print('r0', r0.mean())
-
-
     f00 = model.calc_instant_fwd( [x[:, 0, :], v[:, 0, :], phi1[:, 0, :], phi2[:, 0, :], phi3[:, 0, :], phi4[:, 0, :], phi5[:, 0, :], phi6[:, 0, :]], t=0.0, T=0.0)
-    f0T = model.calc_instant_fwd( [x[:, -1, :], v[:, -1, :], phi1[:, -1, :], phi2[:, -1, :], phi3[:, -1, :], phi4[:, -1, :], phi5[:, -1, :], phi6[:, -1, :]], t=0.0, T=1.0)
+    f0T = model.calc_instant_fwd( [x[:, -1, :], v[:, -1, :], phi1[:, -1, :], phi2[:, -1, :], phi3[:, -1, :], phi4[:, -1, :], phi5[:, -1, :], phi6[:, -1, :]], t=0.0, T=firstFixingDate)
 
     # zcb price time-0 using trapezoidal rule
-    zcb0 = torch.exp(-0.5 * (f00 + f0T))
+    zcb0 = torch.exp(-0.5 * (f00 + f0T) * firstFixingDate)
     print('zcb0', zcb0.mean())
 
-
     plots = False
-
     if plots:
         # plot forward rates
         plt.figure()

@@ -14,3 +14,14 @@ if __name__ == '__main__':
 
     zcb = model.calc_zcb(r0, t)
     print(zcb)
+
+    import matplotlib.pyplot as plt
+    T = torch.linspace(0.25, 20, 50)
+    zcbs = model.calc_zcb(torch.tensor(0.08), T)
+    y = - torch.log(zcbs).reshape(-1) * (1/T)
+
+    plt.figure()
+    plt.plot(T, zcbs, 'r-')
+    plt.title('term structure T --> P(0,T)')
+    plt.show()
+

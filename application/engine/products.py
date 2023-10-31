@@ -236,6 +236,65 @@ class Caplet(Product):
         return self.delta * max0(paths[1].fwd[0] - self.strike) * paths[0].numeraire / paths[1].numeraire * paths[1].disc[0]
 
 
+class CapletAsPutOnZCB(Product):
+    def __init__(self,
+                 strike: torch.Tensor,
+                 exerciseDate: torch.Tensor,
+                 delta: torch.Tensor,
+                 notional: torch.Tensor):
+        """
+            This is essentially the same as a caplet, just modeled differently.
+        """
+        self.strike = strike
+        self.exerciseDate = exerciseDate
+        self.delta = delta
+        self.notional = notional
+
+        self._Tn = exerciseDate
+        self._name = 'Caplet As Put On ZCB'
+        self._timeline = torch.concat([torch.tensor([0.0]), exerciseDate.view(1)])
+        self._defline = [
+            SampleDef(
+                fwdRates=[],
+                irs=[],
+                discMats=torch.tensor([]),
+                numeraire=True
+            ),
+            SampleDef(
+                fwdRates=[],
+                irs=[],
+                discMats=torch.tensor([exerciseDate + delta]),
+                numeraire=True
+            )
+        ]
+        self._payoffLabels = []
+
+    @property
+    def Tn(self):
+        return self._Tn
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def payoffLabels(self):
+        return self._payoffLabels
+
+    def payoff(self, paths: Scenario):
+        K_bar = 1.0 + self.delta * self.strike
+        payment = K_bar * max0(1.0 / K_bar - paths[1].disc[0])
+        return self.notional * payment * paths[1].disc[0] * paths[0].numeraire / paths[1].numeraire
+
+
 class Cap(Product):
     def __init__(self,
                  strike:            torch.Tensor,
