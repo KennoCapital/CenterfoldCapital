@@ -49,7 +49,8 @@ if __name__ == '__main__':
     prd = Caplet(
         strike=strike,
         start=exerciseDate,
-        delta=delta
+        delta=delta,
+        notional=notional
     )
 
     """ Helper functions for calculating pathwise payoffs and deltas, and generating training data """
@@ -85,7 +86,8 @@ if __name__ == '__main__':
             cPrd = Caplet(
                 strike=strike,
                 start=exerciseDate - t0,
-                delta=delta
+                delta=delta,
+                notional=notional
             )
             payoffs = mcSim(cPrd, cMdl, rng, len(r0_vec))
             return payoffs
@@ -118,7 +120,7 @@ if __name__ == '__main__':
     """ Calculate Analytical Caplet price """
     r0_test_vec = torch.linspace(r0_min, r0_max, N_test)
     X_test = mdl.calc_fwd(r0_test_vec, exerciseDate, delta)[0].reshape(-1, 1)
-    y_mdl = mdl.calc_cpl(r0_test_vec, exerciseDate, delta, strike)[0].reshape(-1, 1)
+    y_mdl = mdl.calc_cpl(r0_test_vec, exerciseDate, delta, strike, notional)[0].reshape(-1, 1)
     z_mdl = y_mdl.diff(dim=0) / X_test.diff(dim=0)
 
     """ Estimate Price and Delta using Differential Regression """
@@ -143,14 +145,14 @@ if __name__ == '__main__':
     # Plot price function
     ax[0].plot(X_train.flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25, label='Pathwise samples')
     ax[0].plot(X_test.flatten(), y_pred, label='DiffReg', color='orange')
-    ax[0].plot(X_test, y_mdl, color='black', label='MC (Bump and reval)')
+    ax[0].plot(X_test, y_mdl, color='black', label='Analytical (Bump and reval)')
     ax[0].set_ylabel('Price')
     ax[0].text(0.05, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0].transAxes)
 
     # Plot delta function
     ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
     ax[1].plot(X_test, z_pred, label='DiffReg', color='orange')
-    ax[1].plot(X_test[1:], z_mdl, color='black', label='MC (Bump and reval)')
+    ax[1].plot(X_test[1:], z_mdl, color='black', label='Analytical (Bump and reval)')
     ax[1].set_xlabel('Fwd(0)')
     ax[1].set_ylabel('Delta')
     ax[1].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1].transAxes)
@@ -172,5 +174,5 @@ if __name__ == '__main__':
     av_str = 'with AV' if use_av else 'without AV'
     fig.suptitle(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
 
-    # plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Caplet.png'), dpi=400)
+    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Caplet.png'), dpi=400)
     plt.show()

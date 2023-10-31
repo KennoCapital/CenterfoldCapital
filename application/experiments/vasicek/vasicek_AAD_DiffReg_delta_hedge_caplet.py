@@ -1,6 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
+from tqdm import tqdm
 from application.engine.vasicek import Vasicek
 from application.engine.products import Caplet
 from application.engine.standard_scalar import DifferentialStandardScaler
@@ -19,15 +20,15 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    hedge_points = 25
+    hedge_points = 10
 
-    r0_min = -0.02
-    r0_max = 0.15
+    r0_min = 0.05
+    r0_max = 0.11
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Setup Differential Regressor, and Scalar
-    deg = 15
+    deg = 9
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
     scalar = DifferentialStandardScaler()
@@ -44,7 +45,7 @@ if __name__ == '__main__':
     rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
-    exerciseDate = torch.tensor(0.25)
+    exerciseDate = torch.tensor(1.0)
     delta = torch.tensor(0.25)
     notional = torch.tensor(1e6)
 
@@ -53,7 +54,8 @@ if __name__ == '__main__':
     prd = Caplet(
         strike=strike,
         start=exerciseDate,
-        delta=delta
+        delta=delta,
+        notional=notional
     )
 
     # Simulate paths
@@ -74,12 +76,12 @@ if __name__ == '__main__':
             tuple with: (Forward Prices, Forward Prices differentiated wrt. r0 evaluated at x)
         """
 
-        def _cpl(r0_vec):
+        def _fwd(r0_vec):
             fwd = mdl.calc_fwd(r0_vec, exerciseDate - t0, delta)[0]
             return fwd
 
         ones = torch.ones_like(r0_vec)
-        res = jvp(_cpl, r0_vec, ones, create_graph=False)
+        res = jvp(_fwd, r0_vec, ones, create_graph=False)
         return res
 
 
@@ -93,13 +95,15 @@ if __name__ == '__main__':
         """
 
         def _payoffs(r0_vec):
-            cMdl = Vasicek(a, b, sigma, r0_vec, use_ATS=True, use_euler=False, measure='terminal')
+            cMdl = Vasicek(a, b, sigma, r0_vec, use_ATS=True, use_euler=False, measure='risk_neutral')
             cPrd = Caplet(
                 strike=strike,
                 start=exerciseDate - t0,
-                delta=delta
+                delta=delta,
+                notional=notional
             )
-            payoffs = mcSim(cPrd, cMdl, rng, len(r0_vec))
+            cTL = dTL[dTL > exerciseDate - t0]
+            payoffs = mcSim(cPrd, cMdl, rng, len(r0_vec), cTL)
             return payoffs
 
         ones = torch.ones_like(r0_vec)
@@ -112,12 +116,12 @@ if __name__ == '__main__':
             # X_train[i] = X_train[i + N_train],  for all i, when using AV
             r0_vec = torch.concat([r0_vec, r0_vec])
 
-        fwd, dSdr = calc_dfwd_dr(r0_vec, t0)
+        fwd, dFdr = calc_dfwd_dr(r0_vec, t0)
         y, dydr = calc_dcpl_dr(r0_vec, t0)
 
         X_train = fwd.reshape(-1, 1)
         y_train = y.reshape(-1, 1)
-        z_train = (dydr / dSdr).reshape(-1, 1)
+        z_train = (dydr / dFdr).reshape(-1, 1)
 
         if use_av:
             idx_half = N_train
@@ -149,6 +153,19 @@ if __name__ == '__main__':
 
         _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
 
+        """ Plot """
+        '''
+        y_pred_train, z_pred_train = diff_reg.predict(X_train_scaled)
+        _, y_pred_train, z_pred_train = scalar.predict(None, y_pred_train, z_pred_train)
+
+
+        fig, ax = plt.subplots(nrows=2, sharex='all')
+        ax[0].plot(X_train, y_train, 'o', color='gray', alpha=0.25)
+        ax[0].plot(X_train, y_pred_train, 'o', color='orange', alpha=0.5)
+        ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25)
+        ax[1].plot(X_train, z_pred_train, 'o', color='orange', alpha=0.5)
+        plt.show()
+        '''
         return z_pred.flatten()
 
     def calc_delta_bump_and_reval(r0_vec: torch.Tensor, t0: float, delta: torch.tensor, strike: torch.tensor, bump: float = 0.0001) -> torch.Tensor:
@@ -170,19 +187,22 @@ if __name__ == '__main__':
     """ Delta Hedge Experiment """
 
     # Get price of claim (no need to simulate as we have an analytical expression)
-    # cpl = mdl.calc_cpl(r0, exerciseDate, delta, strike)[0]
-    cpl = torch.mean(mcSim(prd, mdl, rng, 500000))
+    cpl = mdl.calc_cpl(r0, exerciseDate, delta, strike, notional)[0]
 
     # Initialize experiment
+    B = torch.ones((N_test, ))
     fwd = mdl.calc_fwd(r[0, :], exerciseDate, delta)[0]
 
     V = cpl * torch.ones_like(r[0, :])
-    #h_a = calc_delta_bump_and_reval(r[0], exerciseDate - 0.0, delta, strike)
+    # h_a = calc_delta_bump_and_reval(r[0], exerciseDate - 0.0, delta, strike)
     h_a = calc_delta(fwd_vec=fwd, r0_vec=r0_vec, t0=0.0, use_av=use_av)
-    h_b = V - h_a * fwd
+    h_b = (V - h_a * fwd) / B
+
+    cpl_prices = [V]
+    V_values = [V]
 
     # Loop over time
-    for k in range(1, last_idx + 1):
+    for k in tqdm(range(1, last_idx + 1)):
         dt = dTL[k] - dTL[k - 1]
         t = dTL[k]
 
@@ -190,18 +210,32 @@ if __name__ == '__main__':
         fwd = mdl.calc_fwd(r[k, :], exerciseDate - t, delta)[0]
 
         # Update portfolio
-        V = h_a * fwd + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
-        if k < last_idx:
-            #h_a = calc_delta_bump_and_reval(r[k, :], exerciseDate - t, delta, strike)
-            h_a = calc_delta(fwd_vec=fwd, r0_vec=r0_vec, t0=t, use_av=use_av)
-            h_b = V - h_a * fwd
+        B *= torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
+        V = h_a * fwd + h_b * B
 
-    # fwdT = torch.linspace(float(fwd.min()), float(fwd.max()), 1001)
+        V_values.append(V)
+        cpl_prices.append(mdl.calc_cpl(r[k, :], exerciseDate-t, delta, strike, notional))
+
+        if k < last_idx:
+            # h_a = calc_delta_bump_and_reval(r[k, :], exerciseDate - t, delta, strike)
+            h_a = calc_delta(fwd_vec=fwd, r0_vec=r0_vec, t0=t, use_av=use_av)
+            h_b = (V - h_a * fwd) / B
+
+    V_values = torch.vstack(V_values)
+    cpl_prices = torch.vstack(cpl_prices)
+
+    RMSE = torch.sqrt(torch.mean((V_values - cpl_prices) ** 2, dim=1))
+    plt.figure()
+    plt.plot(dTL, RMSE)
+    plt.xlabel('t')
+    plt.ylabel('RMSE')
+    plt.show()
+
     fwdT = mdl.calc_fwd(r[last_idx, ].sort().values, torch.tensor(0.0), delta)[0]
     df = mdl.calc_zcb(r[last_idx, ].sort().values, delta)[0]
-    payoff_func = delta * max0(fwdT - strike) * df
+    payoff_func = delta * max0(fwdT - strike) * df * notional
 
-    MAE_value = torch.mean(torch.abs(V - max0(fwd)))
+    MAE_value = torch.mean(torch.abs(V - notional * delta * max0(fwd - strike)))
 
     """ Plot """
     av_str = 'with AV' if use_av else 'without AV'
@@ -226,5 +260,5 @@ if __name__ == '__main__':
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
 
-    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Caplet_delta_hedge.png'), dpi=400)
+    # plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Caplet_delta_hedge.png'), dpi=400)
     plt.show()

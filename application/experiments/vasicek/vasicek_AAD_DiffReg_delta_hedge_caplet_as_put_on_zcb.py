@@ -2,7 +2,6 @@ import torch
 import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
 from tqdm import tqdm
-from application.engine.differential_NN import Neural_Approximator
 from application.engine.vasicek import Vasicek
 from application.engine.products import CapletAsPutOnZCB
 from application.engine.standard_scalar import DifferentialStandardScaler
@@ -17,7 +16,7 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 1024 * 8
+    N_train = 1024
     N_test = 256
     use_av = True
 
@@ -173,21 +172,17 @@ if __name__ == '__main__':
 
     # Get price of claim (no need to simulate as we have an analytical expression)
     cpl = mdl.calc_cpl(r0, exerciseDate, delta, strike, notional)[0]
-    # cpl = torch.mean(mcSim(prd, mdl, rng, 500000))
 
     # Initialize experiment
     B = torch.ones((N_test, ))
     zcb = mdl.calc_zcb(r[0, :], exerciseDate + delta)[0]
 
     V = cpl * torch.ones_like(r[0, :])
-    # h_a = torch.mean(training_data(r0 * torch.ones((N_train, )), use_av=False)[2]) * torch.ones((N_test, ))
     h_a = calc_delta(zcb_vec=zcb, r0_vec=r0_vec, t0=0.0, use_av=use_av)
     h_b = (V - h_a * zcb) / B
 
-    cpl_prices = []
-    V_values = []
-    cpl_prices.append(V)
-    V_values.append(V)
+    cpl_prices = [V]
+    V_values = [V]
 
     # Loop over time
     for k in tqdm(range(1, last_idx + 1)):
@@ -206,14 +201,13 @@ if __name__ == '__main__':
 
         if k < last_idx:
             h_a = calc_delta(zcb_vec=zcb, r0_vec=r0_vec, t0=t, use_av=use_av)
-            #for i in range(N_test):
-            #    h_a[i] = torch.mean(training_data(r[k, i] * torch.ones((N_train, )), t, use_av=True)[2])
             h_b = (V - h_a * zcb) / B
 
     V_values = torch.vstack(V_values)
     cpl_prices = torch.vstack(cpl_prices)
 
     RMSE = torch.sqrt(torch.mean((V_values - cpl_prices) ** 2, dim=1))
+    plt.figure()
     plt.plot(dTL, RMSE)
     plt.xlabel('t')
     plt.ylabel('RMSE')
@@ -224,7 +218,9 @@ if __name__ == '__main__':
     K_bar = 1.0 + delta * strike
     payoff_func = notional * K_bar * max0(1.0 / K_bar - zcbT) * df
 
-    MAE_value = torch.mean(torch.abs(V - notional * df * K_bar * max0(1.0 / K_bar - mdl.calc_zcb(r[k, :], delta)[0])))
+    V *= mdl.calc_zcb(r[last_idx], delta)[0]
+
+    MAE_value = torch.mean(torch.abs(V - notional * K_bar * max0(1.0 / K_bar - mdl.calc_zcb(r[last_idx, :], delta)[0])))
 
     """ Plot """
     av_str = 'with AV' if use_av else 'without AV'

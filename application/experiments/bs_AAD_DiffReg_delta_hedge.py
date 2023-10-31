@@ -8,9 +8,9 @@ from torch.autograd.functional import jvp
 
 if __name__ == '__main__':
 
-    N_train = 8192  # Number of training samples
+    N_train = 1024 * 8  # Number of training samples
     N_test = 256    # Number of test samples
-    M = 50          # Number of hedge points
+    M = 10          # Number of hedge points
 
     use_av = True
     scale_training_range_each_step = True
@@ -21,7 +21,7 @@ if __name__ == '__main__':
     S0 = torch.tensor(100.0)
     K = torch.tensor(100.0)
 
-    deg = 7
+    deg = 9
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
     scalar = DifferentialStandardScaler()
@@ -90,21 +90,33 @@ if __name__ == '__main__':
         y_scaled, z_scaled = diff_reg.predict(X_train_scaled, predict_derivs=True)
         _, y, z = scalar.predict(None, y_scaled, z_scaled)
 
-        """
         fig, ax = plt.subplots(2, sharex='all')
-        ax[0].plot(X_train, y_train, 'o', color='gray', alpha=0.25)
+        ax[0].plot(X_train, y_train, 'o', color='gray', alpha=0.50)
         ax[0].plot(X_train, y, color='blue', alpha=0.25)
         ax[0].plot(X_test, y_pred, 'o', color='orange', alpha=0.25)
         ax[0].plot(X_train, bs_call(X_train, sigma, r, tau, K), color='black')
         ax[0].set_ylabel('Value')
-        ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25)
-        ax[1].plot(X_train, z, color='blue', alpha=0.25)
-        ax[1].plot(X_test, z_pred, 'o', color='orange', alpha=0.25)
-        ax[1].plot(X_train, bs_delta(X_train, sigma, r, tau, K), color='black')
+        ax[1].plot(X_train, z_train, 'o', color='gray', label='Pathwise Samples', alpha=0.25)
+        ax[1].plot(X_train, z, color='blue', label='In-sample prediction', alpha=0.50)
+        ax[1].plot(X_test, z_pred, 'o', color='orange', label='Out-of-sample prediction', alpha=0.25)
+        ax[1].plot(X_train, bs_delta(X_train, sigma, r, tau, K), label='Black-Scholes', color='black')
         ax[1].set_ylabel('Delta')
-        fig.suptitle(f'Time to Expiry = {float(tau):.2f}')
+        ax[1].set_xlabel('S(t)')
+
+        # Adjust size of plot
+        box = ax[0].get_position()
+        ax[0].set_position([box.x0, box.y0, box.width, box.height * 0.8])
+        box = ax[1].get_position()
+        ax[1].set_position([box.x0, box.y0, box.width, box.height * 0.8])
+
+        # Legend
+        handles, labels = fig.gca().get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=4, fancybox=True, shadow=True,
+                   bbox_to_anchor=(0.5, 0.90))
+
         plt.show()
-        """
+
 
         return z_pred.flatten()
 
@@ -139,7 +151,7 @@ if __name__ == '__main__':
     plt.figure()
     plt.plot(ST, V, 'o', color='orange', alpha=0.25)
     plt.plot(x, y, color='black')
-    plt.title('Replication of Payoff Function')
+    plt.title('Black-Scholes: Replication of European Call Payoff Function')
     plt.xlabel('S(T)')
     plt.ylabel('Payoff')
     plt.show()
