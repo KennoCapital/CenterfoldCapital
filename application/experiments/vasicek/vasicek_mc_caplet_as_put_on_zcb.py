@@ -42,6 +42,10 @@ if __name__ == '__main__':
     cpl1 = torch.mean(mcSim(prd1, mdl, rng, N, dTL))
     cpl2 = torch.mean(mcSim(prd2, mdl, rng, N, dTL))
 
+    # Analytical
+    cpl3 = mdl.calc_cpl(r0, exerciseDate, delta, strike)[0][0]
+
     print(f'Caplet price:\n'
           f'as Put Option on ZCB \t: {cpl1}\n'
-          f'as Call Option on Fwd\t: {cpl2}')
+          f'as Call Option on Fwd\t: {cpl2}\n'
+          f'as analytical:       \t: {cpl3}')

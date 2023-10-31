@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
 from tqdm import tqdm
 from application.engine.vasicek import Vasicek
-from application.engine.products import Caplet
+from application.engine.products import CapletAsPutOnZCB
 from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
@@ -20,9 +20,9 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    hedge_points = 10
+    hedge_points = 250
 
-    r0_min = 0.05
+    r0_min = 0.04
     r0_max = 0.11
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
@@ -51,9 +51,9 @@ if __name__ == '__main__':
 
     strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
 
-    prd = Caplet(
+    prd = CapletAsPutOnZCB(
         strike=strike,
-        start=exerciseDate,
+        exerciseDate=exerciseDate,
         delta=delta,
         notional=notional
     )
@@ -67,7 +67,7 @@ if __name__ == '__main__':
     last_idx = int((dTL == exerciseDate).nonzero(as_tuple=True)[0])
 
     """ Helper functions for calculating pathwise payoffs and deltas, and generating training data """
-    def calc_dfwd_dr(r0_vec, t0):
+    def calc_dzcb_dr(r0_vec, t0):
         """
         :param  r0_vec:    Current Short rate r0
         :param  t0:        Current time
@@ -76,12 +76,12 @@ if __name__ == '__main__':
             tuple with: (Forward Prices, Forward Prices differentiated wrt. r0 evaluated at x)
         """
 
-        def _fwd(r0_vec):
-            fwd = mdl.calc_fwd(r0_vec, exerciseDate - t0, delta)[0]
-            return fwd
+        def _zcb(r0_vec):
+            zcb = mdl.calc_zcb(r0_vec, exerciseDate - t0 + delta)[0]
+            return zcb
 
         ones = torch.ones_like(r0_vec)
-        res = jvp(_fwd, r0_vec, ones, create_graph=False)
+        res = jvp(_zcb, r0_vec, ones, create_graph=False)
         return res
 
 
@@ -96,9 +96,9 @@ if __name__ == '__main__':
 
         def _payoffs(r0_vec):
             cMdl = Vasicek(a, b, sigma, r0_vec, use_ATS=True, use_euler=False, measure='risk_neutral')
-            cPrd = Caplet(
+            cPrd = CapletAsPutOnZCB(
                 strike=strike,
-                start=exerciseDate - t0,
+                exerciseDate=exerciseDate - t0,
                 delta=delta,
                 notional=notional
             )
@@ -116,12 +116,12 @@ if __name__ == '__main__':
             # X_train[i] = X_train[i + N_train],  for all i, when using AV
             r0_vec = torch.concat([r0_vec, r0_vec])
 
-        fwd, dFdr = calc_dfwd_dr(r0_vec, t0)
+        fwd, dPdr = calc_dzcb_dr(r0_vec, t0)
         y, dydr = calc_dcpl_dr(r0_vec, t0)
 
         X_train = fwd.reshape(-1, 1)
         y_train = y.reshape(-1, 1)
-        z_train = (dydr / dFdr).reshape(-1, 1)
+        z_train = (dydr / dPdr).reshape(-1, 1)
 
         if use_av:
             idx_half = N_train
@@ -131,16 +131,16 @@ if __name__ == '__main__':
 
         return X_train, y_train, z_train
 
-    def calc_delta(fwd_vec: torch.Tensor, r0_vec: torch.Tensor, t0: float, use_av: bool) -> torch.Tensor:
+    def calc_delta(zcb_vec: torch.Tensor, r0_vec: torch.Tensor, t0: float, use_av: bool) -> torch.Tensor:
         """
-        param fwd_vec:      1D vector of market variables (Fwd prices)
+        param zcb_vec:      1D vector of market variables (ZCB prices)
         param r0_vec:       1D vector of short rates to generate training data from (swap prices)
         param t0:           Current market time, effect time to expiry and fixings in the training
         param use_av:       Use antithetic variates to reduce variance of both y- and z-labels
 
-        returns:            1D vector of predicted deltas for `swap_vec`
+        returns:            1D vector of predicted deltas for `zcb_vec`
         """
-        X_test = fwd_vec.reshape(-1, 1)
+        X_test = zcb_vec.reshape(-1, 1)
 
         X_train, y_train, z_train = training_data(r0_vec=r0_vec, t0=t0, use_av=use_av)
 
@@ -154,11 +154,10 @@ if __name__ == '__main__':
         _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
 
         """ Plot """
-        '''
         y_pred_train, z_pred_train = diff_reg.predict(X_train_scaled)
         _, y_pred_train, z_pred_train = scalar.predict(None, y_pred_train, z_pred_train)
 
-
+        '''
         fig, ax = plt.subplots(nrows=2, sharex='all')
         ax[0].plot(X_train, y_train, 'o', color='gray', alpha=0.25)
         ax[0].plot(X_train, y_pred_train, 'o', color='orange', alpha=0.5)
@@ -166,23 +165,8 @@ if __name__ == '__main__':
         ax[1].plot(X_train, z_pred_train, 'o', color='orange', alpha=0.5)
         plt.show()
         '''
+
         return z_pred.flatten()
-
-    def calc_delta_bump_and_reval(r0_vec: torch.Tensor, t0: float, delta: torch.tensor, strike: torch.tensor, bump: float = 0.0001) -> torch.Tensor:
-        """
-
-        returns:            1D vector of predicted deltas
-        """
-
-        r_bump = r0_vec + bump
-        fwd = mdl.calc_fwd(r0_vec, t0, delta)[0]
-        fwd_bump = mdl.calc_fwd(r_bump, t0, delta)[0]
-        cpl = mdl.calc_cpl(r0_vec, t0, delta, strike)[0]
-        cpl_bump = mdl.calc_cpl(r_bump, t0, delta, strike)[0]
-
-        z = (cpl_bump - cpl) / (fwd_bump - fwd)
-
-        return z
 
     """ Delta Hedge Experiment """
 
@@ -191,12 +175,11 @@ if __name__ == '__main__':
 
     # Initialize experiment
     B = torch.ones((N_test, ))
-    fwd = mdl.calc_fwd(r[0, :], exerciseDate, delta)[0]
+    zcb = mdl.calc_zcb(r[0, :], exerciseDate + delta)[0]
 
     V = cpl * torch.ones_like(r[0, :])
-    # h_a = calc_delta_bump_and_reval(r[0], exerciseDate - 0.0, delta, strike)
-    h_a = calc_delta(fwd_vec=fwd, r0_vec=r0_vec, t0=0.0, use_av=use_av)
-    h_b = (V - h_a * fwd) / B
+    h_a = calc_delta(zcb_vec=zcb, r0_vec=r0_vec, t0=0.0, use_av=use_av)
+    h_b = (V - h_a * zcb) / B
 
     cpl_prices = [V]
     V_values = [V]
@@ -207,19 +190,18 @@ if __name__ == '__main__':
         t = dTL[k]
 
         # Update market variables
-        fwd = mdl.calc_fwd(r[k, :], exerciseDate - t, delta)[0]
+        zcb = mdl.calc_zcb(r[k, :], exerciseDate - t + delta)[0]
 
         # Update portfolio
         B *= torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
-        V = h_a * fwd + h_b * B
+        V = h_a * zcb + h_b * B
 
         V_values.append(V)
         cpl_prices.append(mdl.calc_cpl(r[k, :], exerciseDate-t, delta, strike, notional))
 
         if k < last_idx:
-            # h_a = calc_delta_bump_and_reval(r[k, :], exerciseDate - t, delta, strike)
-            h_a = calc_delta(fwd_vec=fwd, r0_vec=r0_vec, t0=t, use_av=use_av)
-            h_b = (V - h_a * fwd) / B
+            h_a = calc_delta(zcb_vec=zcb, r0_vec=r0_vec, t0=t, use_av=use_av)
+            h_b = (V - h_a * zcb) / B
 
     V_values = torch.vstack(V_values)
     cpl_prices = torch.vstack(cpl_prices)
@@ -231,19 +213,22 @@ if __name__ == '__main__':
     plt.ylabel('RMSE')
     plt.show()
 
-    fwdT = mdl.calc_fwd(r[last_idx, ].sort().values, torch.tensor(0.0), delta)[0]
+    zcbT = mdl.calc_zcb(r[last_idx, ].sort().values, delta)[0]
     df = mdl.calc_zcb(r[last_idx, ].sort().values, delta)[0]
-    payoff_func = delta * max0(fwdT - strike) * df * notional
+    K_bar = 1.0 + delta * strike
+    payoff_func = notional * K_bar * max0(1.0 / K_bar - zcbT) * df
 
-    MAE_value = torch.mean(torch.abs(V - notional * delta * max0(fwd - strike)))
+    V *= mdl.calc_zcb(r[last_idx], delta)[0]
+
+    MAE_value = torch.mean(torch.abs(V - notional * K_bar * max0(1.0 / K_bar - mdl.calc_zcb(r[last_idx, :], delta)[0])))
 
     """ Plot """
     av_str = 'with AV' if use_av else 'without AV'
 
     fig, ax = plt.subplots(1)
-    ax.plot(fwdT, payoff_func, color='black', label='Payoff function')
-    ax.plot(fwd, V, 'o', color='orange', label='Value of Hedge Portfolio', alpha=0.5)
-    ax.set_xlabel('Fwd(T)')
+    ax.plot(zcbT, payoff_func, color='black', label='Payoff function')
+    ax.plot(mdl.calc_zcb(r[last_idx], delta)[0], V, 'o', color='orange', label='Value of Hedge Portfolio', alpha=0.5)
+    ax.set_xlabel('ZCB(T)')
     ax.text(0.05, 0.8, f'MAE = {MAE_value:,.2f}', fontsize=8, transform=ax.transAxes)
 
     # Adjust size of plot
