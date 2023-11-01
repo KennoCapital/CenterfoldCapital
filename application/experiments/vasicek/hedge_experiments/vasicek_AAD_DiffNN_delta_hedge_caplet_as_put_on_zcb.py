@@ -34,9 +34,9 @@ if __name__ == '__main__':
     lam = 1.0
     hidden_units = 20
     hidden_layers = 4
-    nn_params = {'N_train': N_train, 'seed_weights' : seed_weights, 'epochs': epochs,
-                 'batches_per_epoch':batches_per_epoch,'min_batch_size' :min_batch_size,
-                 'lam':lam, 'hidden_units': hidden_units, 'hidden_layers':hidden_layers}
+    nn_params = {'N_train': N_train, 'seed_weights': seed_weights, 'epochs': epochs,
+                 'batches_per_epoch': batches_per_epoch,'min_batch_size': min_batch_size,
+                 'lam': lam, 'hidden_units': hidden_units, 'hidden_layers': hidden_layers}
 
     # Model specification
     a = torch.tensor(0.86)
