@@ -17,8 +17,8 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    r0_min = -0.02
-    r0_max = 0.15
+    r0_min = 0.02
+    r0_max = 0.13
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
