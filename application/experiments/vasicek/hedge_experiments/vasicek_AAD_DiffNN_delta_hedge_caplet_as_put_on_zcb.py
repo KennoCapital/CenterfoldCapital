@@ -196,5 +196,5 @@ if __name__ == '__main__':
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
     if save_plot:
-        plt.savefig(get_plot_path('vasicek_AAD_DiffNN_Caplet_delta_hedge.png'), dpi=400)
+        plt.savefig(get_plot_path('vasicek_AAD_DiffNN_delta_hedge_caplet.png'), dpi=400)
     plt.show()
