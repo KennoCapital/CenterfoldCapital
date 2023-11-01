@@ -2,7 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
 from tqdm import tqdm
-from application.engine.vasicek import Vasicek
+from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import CapletAsPutOnZCB
 from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
@@ -23,8 +23,8 @@ if __name__ == '__main__':
 
     hedge_points = 250
 
-    r0_min = 0.04
-    r0_max = 0.11
+    r0_min = 0.07
+    r0_max = 0.09
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -145,6 +145,7 @@ if __name__ == '__main__':
         cpl_prices.append(mdl.calc_cpl(r[k, :], exerciseDate-t, delta, strike, notional))
 
         if k < last_idx:
+            r0_vec = choose_training_grid(r[k,:], N_train)
             h_a = calc_delta_diff_reg(u_vec=zcb, r0_vec=r0_vec, t0=t,
                                       calc_dU_dr=calc_dzcb_dr, calc_dPrd_dr=calc_dcpl_dr, diff_reg=diff_reg, use_av=use_av)
             h_b = (V - h_a * zcb) / B

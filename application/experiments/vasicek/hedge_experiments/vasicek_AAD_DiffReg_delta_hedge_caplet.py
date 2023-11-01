@@ -2,7 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
 from tqdm import tqdm
-from application.engine.vasicek import Vasicek
+from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import Caplet
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
@@ -22,11 +22,6 @@ if __name__ == '__main__':
 
     hedge_points = 10
 
-    r0_min = 0.05
-    r0_max = 0.11
-
-    r0_vec = torch.linspace(r0_min, r0_max, N_train)
-
     # Setup Differential Regressor, and Scalar
     deg = 9
     alpha = 1.0
@@ -38,6 +33,11 @@ if __name__ == '__main__':
     sigma = torch.tensor(0.0148)
     r0 = torch.tensor(0.08)
     measure = 'risk_neutral'
+
+    # only chosen for time-0
+    r0_min = 0.07
+    r0_max = 0.09
+    r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
 
@@ -159,6 +159,7 @@ if __name__ == '__main__':
         cpl_prices.append(mdl.calc_cpl(r[k, :], exerciseDate-t, delta, strike, notional))
 
         if k < last_idx:
+            r0_vec = choose_training_grid(r[k, :], N_train)
             # h_a = calc_delta_bump_and_reval(r[k, :], exerciseDate - t, delta, strike)
             h_a = calc_delta_diff_reg(u_vec=fwd, r0_vec=r0_vec, t0=t,
                                       calc_dPrd_dr=calc_dcpl_dr, calc_dU_dr=calc_dfwd_dr, diff_reg=diff_reg, use_av=use_av)
