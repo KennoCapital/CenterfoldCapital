@@ -417,3 +417,5 @@ def calibrate_vasicek_zcb_price(maturities, market_prices, a=1.00, b=0.05, sigma
             'adaptive': True,
             'disp': True
         })
+
+
