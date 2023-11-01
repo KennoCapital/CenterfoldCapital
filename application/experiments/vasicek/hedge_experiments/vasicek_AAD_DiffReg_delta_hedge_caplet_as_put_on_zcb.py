@@ -9,6 +9,7 @@ from application.engine.differential_Regression import DifferentialPolynomialReg
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.path_config import get_plot_path
 from application.utils.torch_utils import max0
+from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_reg
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
@@ -111,63 +112,6 @@ if __name__ == '__main__':
         return res
 
 
-    def training_data(r0_vec: torch.Tensor, t0: float = 0.0, use_av: bool = True):
-        if use_av:
-            # X_train[i] = X_train[i + N_train],  for all i, when using AV
-            r0_vec = torch.concat([r0_vec, r0_vec])
-
-        fwd, dPdr = calc_dzcb_dr(r0_vec, t0)
-        y, dydr = calc_dcpl_dr(r0_vec, t0)
-
-        X_train = fwd.reshape(-1, 1)
-        y_train = y.reshape(-1, 1)
-        z_train = (dydr / dPdr).reshape(-1, 1)
-
-        if use_av:
-            idx_half = N_train
-            X_train = X_train[:idx_half]
-            y_train = 0.5 * (y_train[:idx_half] + y_train[idx_half:])
-            z_train = 0.5 * (z_train[:idx_half] + z_train[idx_half:])
-
-        return X_train, y_train, z_train
-
-    def calc_delta(zcb_vec: torch.Tensor, r0_vec: torch.Tensor, t0: float, use_av: bool) -> torch.Tensor:
-        """
-        param zcb_vec:      1D vector of market variables (ZCB prices)
-        param r0_vec:       1D vector of short rates to generate training data from (swap prices)
-        param t0:           Current market time, effect time to expiry and fixings in the training
-        param use_av:       Use antithetic variates to reduce variance of both y- and z-labels
-
-        returns:            1D vector of predicted deltas for `zcb_vec`
-        """
-        X_test = zcb_vec.reshape(-1, 1)
-
-        X_train, y_train, z_train = training_data(r0_vec=r0_vec, t0=t0, use_av=use_av)
-
-        X_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(X_train, y_train, z_train)
-
-        diff_reg.fit(X_train_scaled, y_train_scaled, z_train_scaled)
-
-        X_test_scaled, _, _ = scalar.transform(X_test, None, None)
-        y_pred_scaled, z_pred_scaled = diff_reg.predict(X_test_scaled, predict_derivs=True)
-
-        _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
-
-        """ Plot """
-        y_pred_train, z_pred_train = diff_reg.predict(X_train_scaled)
-        _, y_pred_train, z_pred_train = scalar.predict(None, y_pred_train, z_pred_train)
-
-        '''
-        fig, ax = plt.subplots(nrows=2, sharex='all')
-        ax[0].plot(X_train, y_train, 'o', color='gray', alpha=0.25)
-        ax[0].plot(X_train, y_pred_train, 'o', color='orange', alpha=0.5)
-        ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25)
-        ax[1].plot(X_train, z_pred_train, 'o', color='orange', alpha=0.5)
-        plt.show()
-        '''
-
-        return z_pred.flatten()
-
     """ Delta Hedge Experiment """
 
     # Get price of claim (no need to simulate as we have an analytical expression)
@@ -178,7 +122,8 @@ if __name__ == '__main__':
     zcb = mdl.calc_zcb(r[0, :], exerciseDate + delta)[0]
 
     V = cpl * torch.ones_like(r[0, :])
-    h_a = calc_delta(zcb_vec=zcb, r0_vec=r0_vec, t0=0.0, use_av=use_av)
+    h_a = calc_delta_diff_reg(u_vec=zcb, t0=0.0, r0_vec=r0_vec,
+                              calc_dU_dr=calc_dzcb_dr, calc_dPrd_dr=calc_dcpl_dr, diff_reg=diff_reg, use_av=use_av)
     h_b = (V - h_a * zcb) / B
 
     cpl_prices = [V]
@@ -201,7 +146,8 @@ if __name__ == '__main__':
 
         if k < last_idx:
             r0_vec = choose_training_grid(r[k,:], N_train)
-            h_a = calc_delta(zcb_vec=zcb, r0_vec=r0_vec, t0=t, use_av=use_av)
+            h_a = calc_delta_diff_reg(u_vec=zcb, r0_vec=r0_vec, t0=t,
+                                      calc_dU_dr=calc_dzcb_dr, calc_dPrd_dr=calc_dcpl_dr, diff_reg=diff_reg, use_av=use_av)
             h_b = (V - h_a * zcb) / B
 
     V_values = torch.vstack(V_values)

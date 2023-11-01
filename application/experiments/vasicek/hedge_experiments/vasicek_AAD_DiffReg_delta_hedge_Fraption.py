@@ -3,11 +3,11 @@ import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import Fraption
-from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.path_config import get_plot_path
 from application.utils.torch_utils import max0
+from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_reg
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
@@ -30,7 +30,6 @@ if __name__ == '__main__':
     deg = 15
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
-    scalar = DifferentialStandardScaler()
 
     # Model specification
     a = torch.tensor(0.86)
@@ -111,52 +110,6 @@ if __name__ == '__main__':
         return res
 
 
-    def training_data(r0_vec: torch.Tensor, t0: float = 0.0, use_av: bool = True):
-        if use_av:
-            # X_train[i] = X_train[i + N_train],  for all i, when using AV
-            r0_vec = torch.concat([r0_vec, r0_vec])
-
-        fra, dSdr = calc_dFRA_dr(r0_vec, t0)
-        y, dydr = calc_dFraption_dr(r0_vec, t0)
-
-        X_train = fra.reshape(-1, 1)
-        y_train = y.reshape(-1, 1)
-        z_train = (dydr / dSdr).reshape(-1, 1)
-
-        if use_av:
-            idx_half = N_train
-            X_train = X_train[:idx_half]
-            y_train = 0.5 * (y_train[:idx_half] + y_train[idx_half:])
-            z_train = 0.5 * (z_train[:idx_half] + z_train[idx_half:])
-
-        return X_train, y_train, z_train
-
-    def calc_delta(fra_vec: torch.Tensor, r0_vec: torch.Tensor, t0: float, use_av: bool) -> torch.Tensor:
-        """
-        param fra_vec:      1D vector of market variables (FRA prices)
-        param r0_vec:       1D vector of short rates to generate training data from (FRA prices)
-        param t0:           Current market time, effect time to expiry and fixings in the training
-        param use_av:       Use antithetic variates to reduce variance of both y- and z-labels
-
-        returns:            1D vector of predicted deltas for `fra_vec`
-        """
-        X_test = fra_vec.reshape(-1, 1)
-
-        X_train, y_train, z_train = training_data(r0_vec=r0_vec, t0=t0, use_av=use_av)
-
-        X_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(X_train, y_train, z_train)
-
-        diff_reg.fit(X_train_scaled, y_train_scaled, z_train_scaled)
-
-        X_test_scaled, _, _ = scalar.transform(X_test, None, None)
-        y_pred_scaled, z_pred_scaled = diff_reg.predict(X_test_scaled, predict_derivs=True)
-
-        _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
-
-        return z_pred.flatten()
-
-    """ Delta Hedge Experiment """
-
     # Get price of claim (no need to simulate as we have an analytical expression)
     mdl_pricer = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure='risk_neutral')
     fraption = torch.mean(mcSim(prd, mdl, rng, 500000))
@@ -165,7 +118,8 @@ if __name__ == '__main__':
     fra = mdl.calc_fra(r[0, :], start, delta, strike, notional)[0]
 
     V = fraption * torch.ones_like(r[0, :])
-    h_a = calc_delta(fra_vec=fra, r0_vec=r0_vec, t0=0.95, use_av=use_av)
+    h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=0.0,
+                              calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg, use_av=use_av)
     h_b = V - h_a * fra
 
     # Loop over time
@@ -180,7 +134,8 @@ if __name__ == '__main__':
         V = h_a * fra + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
         if k < last_idx:
             r0_vec = choose_training_grid(r[k, :], N_train)
-            h_a = calc_delta(fra_vec=fra, r0_vec=r0_vec, t0=t, use_av=use_av)
+            h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=t,
+                                      calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg, use_av=use_av)
             h_b = V - h_a * fra
 
     rT = torch.linspace(r[last_idx].min(), r[last_idx].max(), N_test)
@@ -212,5 +167,5 @@ if __name__ == '__main__':
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
 
-    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Fraption_delta_hedge.png'), dpi=400)
+    # plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Fraption_delta_hedge.png'), dpi=400)
     plt.show()
