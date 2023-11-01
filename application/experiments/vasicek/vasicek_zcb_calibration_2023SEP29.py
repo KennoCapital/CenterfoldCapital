@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 
 torch.set_default_dtype(torch.float64)
 
-
 if __name__ == '__main__':
 
     file_path_name = get_data_path('fred_zcb_yield_2023SEP29.csv')
