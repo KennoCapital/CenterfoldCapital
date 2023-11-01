@@ -1,7 +1,8 @@
 from application.engine.vasicek import Vasicek
+import matplotlib.pyplot as plt
 import torch
 
-
+"""checking term structure of vasicek model"""
 if __name__ == '__main__':
     a = torch.tensor(0.86)
     b = torch.tensor(0.02)
@@ -15,7 +16,6 @@ if __name__ == '__main__':
     zcb = model.calc_zcb(r0, t)
     print(zcb)
 
-    import matplotlib.pyplot as plt
     T = torch.linspace(0.25, 20, 50)
     zcbs = model.calc_zcb(torch.tensor(0.08), T)
     y = - torch.log(zcbs).reshape(-1) * (1/T)

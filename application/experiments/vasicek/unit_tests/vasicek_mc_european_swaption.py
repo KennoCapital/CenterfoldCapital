@@ -1,6 +1,7 @@
 from application.engine.mcBase import mcSim, RNG
 from application.engine.products import EuropeanPayerSwaption
 from application.engine.vasicek import Vasicek
+from tqdm import tqdm
 import torch
 import matplotlib.pyplot as plt
 
@@ -56,7 +57,7 @@ if __name__ == '__main__':
         return price
 
 
-    res = torch.tensor([[priceMC(N) for N in N_list] for _ in range(rep)])
+    res = torch.tensor([[priceMC(N) for N in N_list] for _ in tqdm(range(rep))])
 
     # Plotting
     plt.plot(N_list, torch.std(res / notional, dim=0))

@@ -20,5 +20,5 @@ if __name__ == '__main__':
 
     cpl = model.calc_cpl(r0, start, delta, strike)
 
-    print(torch.sum(cpl))
+    print(torch.sum(cpl))  # 0.00215686
 
