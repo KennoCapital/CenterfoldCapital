@@ -4,7 +4,7 @@ from application.engine.products import Cap
 from application.engine.mcBase import mcSim, RNG
 
 """
-    This script replicates the results in Filipovic's table 7.1
+    This script replicates the results in Filipovic's table 7.1 using MC
 """
 
 torch.set_default_dtype(torch.float64)

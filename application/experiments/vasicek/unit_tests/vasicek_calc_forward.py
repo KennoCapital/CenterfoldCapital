@@ -2,6 +2,7 @@ from application.engine.vasicek import Vasicek
 from application.engine.linearProducts import forward
 import torch
 
+""" checking that parallel implementation works """
 
 if __name__ == '__main__':
     a = torch.tensor(0.86)

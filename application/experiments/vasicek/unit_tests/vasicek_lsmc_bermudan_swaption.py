@@ -7,6 +7,10 @@ import torch
 torch.set_printoptions(2)
 torch.set_default_dtype(torch.float64)
 
+"""
+Testing implementation of Bermudan swaption and computes naive upper and lower bound.
+"""
+
 if __name__ == '__main__':
     seed = 1234
 

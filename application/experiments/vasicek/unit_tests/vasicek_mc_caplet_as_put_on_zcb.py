@@ -26,11 +26,13 @@ if __name__ == '__main__':
     exerciseDate = torch.tensor(0.25)
     delta = torch.tensor(0.25)
     strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
+    notional = torch.tensor(1.0)
 
     prd1 = CapletAsPutOnZCB(
         exerciseDate=exerciseDate,
         strike=strike,
-        delta=delta
+        delta=delta,
+        notional=notional
     )
 
     prd2 = Caplet(strike=strike, start=exerciseDate, delta=delta)
