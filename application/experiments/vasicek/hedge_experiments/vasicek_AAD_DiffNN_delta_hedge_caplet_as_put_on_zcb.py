@@ -4,10 +4,8 @@ from torch.autograd.functional import jvp
 from tqdm import tqdm
 from application.engine.vasicek import Vasicek
 from application.engine.products import CapletAsPutOnZCB
-from application.engine.standard_scalar import DifferentialStandardScaler
-from application.engine.differential_Regression import DifferentialPolynomialRegressor
+from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_nn
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
-from application.engine.differential_NN import Neural_Approximator
 from application.utils.path_config import get_plot_path
 from application.utils.torch_utils import max0
 
@@ -20,6 +18,7 @@ if __name__ == '__main__':
     N_train = 1024
     N_test = 256
     use_av = True
+    save_plot = False
 
     # Hedge experiment settings
     hedge_points = 25
@@ -35,6 +34,9 @@ if __name__ == '__main__':
     lam = 1.0
     hidden_units = 20
     hidden_layers = 4
+    nn_params = {'N_train': N_train, 'seed_weights' : seed_weights, 'epochs': epochs,
+                 'batches_per_epoch':batches_per_epoch,'min_batch_size' :min_batch_size,
+                 'lam':lam, 'hidden_units': hidden_units, 'hidden_layers':hidden_layers}
 
     # Model specification
     a = torch.tensor(0.86)
@@ -49,7 +51,7 @@ if __name__ == '__main__':
 
     # Product specification
     exerciseDate = torch.tensor(1.0)
-    delta = torch.tensor(0.25)
+    delta = torch.tensor(.25)
     notional = torch.tensor(1e6)
 
     strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
@@ -70,7 +72,6 @@ if __name__ == '__main__':
     last_idx = int((dTL == exerciseDate).nonzero(as_tuple=True)[0])
 
     """ Helper functions (AAD friendly) for calculating pathwise payoffs and deltas, and generating training data """
-
     def calc_dzcb_dr(r0_vec, t0):
         """
         :param  r0_vec:    Current Short rate r0
@@ -114,61 +115,6 @@ if __name__ == '__main__':
         return res
 
 
-    def training_data(r0_vec: torch.Tensor, t0: float = 0.0, use_av: bool = True):
-        if use_av:
-            # X_train[i] = X_train[i + N_train],  for all i, when using AV
-            r0_vec = torch.concat([r0_vec, r0_vec])
-
-        fwd, dPdr = calc_dzcb_dr(r0_vec, t0)
-        y, dydr = calc_dcpl_dr(r0_vec, t0)
-
-        X_train = fwd.reshape(-1, 1)
-        y_train = y.reshape(-1, 1)
-        z_train = (dydr / dPdr).reshape(-1, 1)
-
-        if use_av:
-            idx_half = N_train
-            X_train = X_train[:idx_half]
-            y_train = 0.5 * (y_train[:idx_half] + y_train[idx_half:])
-            z_train = 0.5 * (z_train[:idx_half] + z_train[idx_half:])
-
-        return X_train, y_train, z_train
-
-    def calc_delta(zcb_vec: torch.Tensor, r0_vec: torch.Tensor, t0: float, use_av: bool) -> torch.Tensor:
-        """
-        param zcb_vec:      1D vector of market variables (ZCB prices)
-        param r0_vec:       1D vector of short rates to generate training data from (swap prices)
-        param t0:           Current market time, effect time to expiry and fixings in the training
-        param use_av:       Use antithetic variates to reduce variance of both y- and z-labels
-
-        returns:            1D vector of predicted deltas for `zcb_vec`
-        """
-        X_test = zcb_vec.reshape(-1, 1)
-
-        X_train, y_train, z_train = training_data(r0_vec=r0_vec, t0=t0, use_av=use_av)
-
-        # Setup Differential Neutral Network
-        diff_nn = Neural_Approximator(X_train, y_train, z_train)
-        diff_nn.prepare(N_train, True, weight_seed=seed_weights, lam=lam, hidden_units=hidden_units,
-                        hidden_layers=hidden_layers)
-        diff_nn.train(epochs=epochs, batches_per_epoch=batches_per_epoch, min_batch_size=min_batch_size)
-
-        _, z_pred = diff_nn.predict_values_and_derivs(X_test)
-
-        """
-        Plotting
-        """
-        y_pred_train, z_pred_train = diff_nn.predict_values_and_derivs(X_train)
-
-        fig, ax = plt.subplots(nrows=2, sharex='all')
-        ax[0].plot(X_train, y_train, 'o', color='gray', alpha=0.25)
-        ax[0].plot(X_train, y_pred_train, 'o', color='orange', alpha=0.5)
-        ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25)
-        ax[1].plot(X_train, z_pred_train, 'o', color='orange', alpha=0.5)
-        plt.show()
-
-        return z_pred.flatten()
-
     """ Delta Hedge Experiment """
 
     # Get price of claim (no need to simulate as we have an analytical expression)
@@ -179,7 +125,9 @@ if __name__ == '__main__':
     zcb = mdl.calc_zcb(r[0, :], exerciseDate + delta)[0]
 
     V = cpl * torch.ones_like(r[0, :])
-    h_a = calc_delta(zcb_vec=zcb, r0_vec=r0_vec, t0=0.0, use_av=use_av)
+    h_a = calc_delta_diff_nn(u_vec=zcb, r0_vec=r0_vec, t0=0.0,
+                             calc_dPrd_dr=calc_dcpl_dr, calc_dU_dr=calc_dzcb_dr,
+                             nn_Params=nn_params, use_av=use_av)
     h_b = (V - h_a * zcb) / B
 
     cpl_prices = [V]
@@ -201,7 +149,9 @@ if __name__ == '__main__':
         cpl_prices.append(mdl.calc_cpl(r[k, :], exerciseDate-t, delta, strike, notional))
 
         if k < last_idx:
-            h_a = calc_delta(zcb_vec=zcb, r0_vec=r0_vec, t0=t, use_av=use_av)
+            h_a = calc_delta_diff_nn(u_vec=zcb, r0_vec=r0_vec, t0=t,
+                                     calc_dPrd_dr=calc_dcpl_dr, calc_dU_dr=calc_dzcb_dr,
+                                    nn_Params=nn_params, use_av=use_av)
             h_b = (V - h_a * zcb) / B
 
     V_values = torch.vstack(V_values)
@@ -245,6 +195,6 @@ if __name__ == '__main__':
     by_label = dict(zip(labels, handles))
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
-
-    plt.savefig(get_plot_path('vasicek_AAD_DiffNN_Caplet_delta_hedge.png'), dpi=400)
+    if save_plot:
+        plt.savefig(get_plot_path('vasicek_AAD_DiffNN_Caplet_delta_hedge.png'), dpi=400)
     plt.show()
