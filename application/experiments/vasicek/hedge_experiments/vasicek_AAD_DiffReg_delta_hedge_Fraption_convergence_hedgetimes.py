@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import linregress
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek, choose_training_grid
-from application.engine.products import EuropeanPayerSwaption
+from application.engine.products import Fraption
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.path_config import get_plot_path
@@ -15,11 +15,12 @@ torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
-
     seed = 1234
     N_train = 1024
     N_test = 256
     use_av = True
+
+    hedge_points = 100
 
     r0_min = 0.07
     r0_max = 0.09
@@ -43,65 +44,59 @@ if __name__ == '__main__':
     rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
-    exerciseDate = torch.tensor(1.0)
-    delta = torch.tensor(0.25)
-    swapFirstFixingDate = exerciseDate
-    swapLastFixingDate = exerciseDate + torch.tensor(5.0)
+    exerciseDate = torch.tensor(0.25)
+    start = torch.tensor(1.0)
+    delta = torch.tensor(5.0)
     notional = torch.tensor(1e6)
 
-    t_swap_fixings = torch.linspace(
-        float(swapFirstFixingDate),
-        float(swapLastFixingDate),
-        int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
-    )
+    strike = mdl.calc_fwd(r0, start, delta)
 
-    strike = mdl.calc_swap_rate(r0, t_swap_fixings, delta)
-
-    prd = EuropeanPayerSwaption(
-        strike=strike,
+    prd = Fraption(
         exerciseDate=exerciseDate,
+        strike=strike,
+        start=start,
         delta=delta,
-        swapFirstFixingDate=swapFirstFixingDate,
-        swapLastFixingDate=swapLastFixingDate,
         notional=notional
     )
 
-    """ Helper functions for generating training data of pathwise payoffs and deltas """
-    def calc_dswap_dr(r0_vec: torch.Tensor, t0: float):
+""" Helper functions for generating training data of pathwise payoffs and deltas """
+
+
+    def calc_dFRA_dr(r0_vec, t0):
         """
-        :param  r0_vec: Current Short rate r0
-        :param  t0:     Current time
+        :param  r0_vec:    Current Short rate r0
+        :param  t0:        Current time
 
         returns:
-            tuple with: (Swap Prices, Swap Prices differentiated wrt. r0 evaluated at entries in r0_vec)
+            tuple with: (FRA prices, FRA Prices differentiated wrt. r0 evaluated at r0_vec)
         """
-        def _swap_price(r0_vec):
-            tau = t_swap_fixings - t0
-            return mdl.calc_swap(r0_vec, tau, delta, strike, notional)
+
+        def _FRA(r0_vec):
+            return mdl.calc_fra(r0_vec, start - t0, delta, strike, notional)[0]
 
         ones = torch.ones_like(r0_vec)
-        res = jvp(_swap_price, r0_vec, ones, create_graph=False)
+        res = jvp(_FRA, r0_vec, ones, create_graph=False)
         return res
 
-    def calc_dswpt_dr(r0_vec: torch.Tensor, t0: float):
+
+    def calc_dFraption_dr(r0_vec, t0):
         """
         :param  r0_vec: Current Short rate r0
         :param  t0:     Current time
 
         returns:
-            tuple with: (Pathwise payoffs, Pathwise differentials wrt. r0 evaluated at entries in r0_vec)
+            tuple with: (Pathwise payoffs, Pathwise differentials wrt. r0 evaluated at x)
         """
-        def _payoffs(r0_vec):
-            cMdl = Vasicek(a, b, sigma, r0_vec, use_ATS=True, use_euler=False, measure=measure)
-            cPrd = EuropeanPayerSwaption(
-                    strike=strike,
-                    exerciseDate=exerciseDate - t0,
-                    delta=delta,
-                    swapFirstFixingDate=swapFirstFixingDate - t0,
-                    swapLastFixingDate=swapLastFixingDate - t0,
-                    notional=notional
-            )
 
+        def _payoffs(r0_vec):
+            cMdl = Vasicek(a, b, sigma, r0_vec, use_ATS=True, use_euler=False, measure='terminal')
+            cPrd = Fraption(
+                exerciseDate=exerciseDate - t0,
+                strike=strike,
+                start=start - t0,
+                delta=delta,
+                notional=notional
+            )
             payoffs = mcSim(cPrd, cMdl, rng, len(r0_vec))
             return payoffs
 
@@ -118,19 +113,22 @@ if __name__ == '__main__':
 
     for steps in hedge_times:
 
-        dTL = torch.linspace(0.0, float(swapFirstFixingDate), steps + 1)
+        dTL = torch.linspace(0.0, float(exerciseDate), steps + 1)
         mcSimPaths(prd, mdl, rng, N_test, dTL)
         r = mdl.x
-        # Get price of claim (we use 500k simulations to get an accurate estimate)
-        swpt = torch.mean(mcSim(prd, mdl, rng, 500000))
+
+        # Get price of claim (no need to simulate as we have an analytical expression)
+        mdl_pricer = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure='risk_neutral')
+        fraption = torch.mean(mcSim(prd, mdl, rng, 500000))
 
         # Initialize experiment
-        swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
+        fra = mdl.calc_fra(r[0, :], start, delta, strike, notional)[0]
 
-        V = swpt * torch.ones_like(r[0, :])
-        h_a = calc_delta_diff_reg(u_vec=swap, r0_vec=r0_vec, t0=0.0,
-                                  calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr, diff_reg=diff_reg, use_av=use_av)
-        h_b = V - h_a * swap
+        V = fraption * torch.ones_like(r[0, :])
+        h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=0.0,
+                                  calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg,
+                                  use_av=use_av)
+        h_b = V - h_a * fra
 
         # Loop over time
         for k in range(1, len(dTL)):
@@ -138,17 +136,18 @@ if __name__ == '__main__':
             t = dTL[k]
 
             # Update market variables
-            swap = mdl.calc_swap(r[k, :], t_swap_fixings - t, delta, strike, notional)
+            fra = mdl.calc_fra(r[k, :], start - t, delta, strike, notional)[0]
 
             # Update portfolio
-            V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
+            V = h_a * fra + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
             if k < len(dTL) - 1:
                 r0_vec = choose_training_grid(r[k, :], N_train)
-                h_a = calc_delta_diff_reg(u_vec=swap, r0_vec=r0_vec, t0=t,
-                                          calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr, diff_reg=diff_reg, use_av=use_av)
-                h_b = V - h_a * swap
+                h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=t,
+                                          calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg,
+                                          use_av=use_av)
+                h_b = V - h_a * fra
 
-        hedge_error.append(torch.std(V - max0(swap)))
+        hedge_error.append(torch.std(V - max0(fra)))
 
     """ Plot """
     # add convergence order line
@@ -169,6 +168,6 @@ if __name__ == '__main__':
     plt.xticks(ticks=x, labels=hedge_times)
     plt.yticks(ticks=y, labels=np.round(y, 2))
 
-    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_EuPayerSwpt_convergence_hedgetimes.png'), dpi=400)
+    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_Fraption_convergence_hedgetimes.png'), dpi=400)
     plt.show()
 

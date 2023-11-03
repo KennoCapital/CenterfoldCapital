@@ -13,7 +13,6 @@ torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
-
     seed = 1234
     N_train = 1024
     N_test = 256
