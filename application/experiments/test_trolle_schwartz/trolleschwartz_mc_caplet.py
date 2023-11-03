@@ -1,73 +1,69 @@
-from application.engine.mcBase import mcSim, RNG
-from application.engine.products import Cap
+from application.engine.products import Caplet
 from application.engine.trolleSchwartz import trolleSchwartz
 import torch
 from application.engine.mcBase import mcSim, RNG
 
-
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
-seed = 1234
+if __name__ == "__main__":
+    # Setup
+    seed = 1234
+    N = 100
+    measure = 'risk_neutral'
+    produce_plots = False
 
-N = 100
+    # Trolle-Schwartz model specification
+    kappa = torch.tensor(0.0553) #0553
+    sigma = torch.tensor(0.3325)
+    alpha0 = torch.tensor(0.045)
+    alpha1 = torch.tensor(0.0131)
+    gamma = torch.tensor(0.3341)
+    rho = torch.tensor(0.4615)
+    theta = torch.tensor(0.09) #7542
+    r0 = torch.tensor(0.08)
 
-measure = 'risk_neutral'
+    #todo: these should be initialized @ 0 in model
+    x0 = torch.tensor([.0])
+    v0= torch.clone(x0)
+    phi1_0 = torch.clone(x0)
+    phi2_0 = torch.clone(x0)
+    phi3_0 = torch.clone(x0)
+    phi4_0 = torch.clone(x0)
+    phi5_0 = torch.clone(x0)
+    phi6_0 = torch.clone(x0)
 
-""" Parameters """
-kappa = torch.tensor(0.0553)
-sigma = torch.tensor(0.3325)
-alpha0 = torch.tensor(0.045)
-alpha1 = torch.tensor(0.0131)
-gamma = torch.tensor(0.3341)
-rho = torch.tensor(0.4615)
-theta = torch.tensor(0.7542)
+    # Product specification
+    start = torch.tensor(5.0)
+    delta = torch.tensor(1.)
+    strike = torch.tensor(0.084)
+    notional = torch.tensor(1e6)
 
-x0 = torch.tensor([.0])
-v0= torch.clone(x0)
-phi1_0 = torch.clone(x0)
-phi2_0 = torch.clone(x0)
-phi3_0 = torch.clone(x0)
-phi4_0 = torch.clone(x0)
-phi5_0 = torch.clone(x0)
-phi6_0 = torch.clone(x0)
+    dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
 
-r0 = torch.tensor(0.08)
+    # instantiate model
+    model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1,
+                           x0, v0, phi1_0, phi2_0, phi3_0, phi4_0, phi5_0, phi6_0)
 
-""" Product specification """
-firstFixingDate = torch.tensor(20.0)
-lastFixingDate = firstFixingDate
-delta = torch.tensor(5.)
+    rng = RNG(seed=seed, use_av=False)
 
-strike = torch.tensor(0.084)
+    prd = Caplet(
+        strike=strike,
+        start=start,
+        delta=delta,
+        notional=notional
+    )
 
-dTL = torch.linspace(0.0, lastFixingDate + delta, int(50 * (lastFixingDate + delta) + 1))
 
-""" Model pricing """
-model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1,
-                       x0, v0, phi1_0, phi2_0, phi3_0, phi4_0, phi5_0, phi6_0)
+    cashflows = mcSim(prd, model, rng, N, dTL)
+    payoff = torch.sum(cashflows, dim=0)
 
-rng = RNG(seed=seed, use_av=False)
+    mc_price = torch.nanmean(payoff)
+    print('MC Price =', mc_price)
 
-prd = Cap(
-    strike=strike,
-    firstFixingDate=firstFixingDate,
-    lastFixingDate=lastFixingDate,
-    delta=delta
-)
+    #cpl = model.calc_cpl(0, prd.start, prd.delta, prd.strike)
+    #print('Semi-analytic Price =', cpl)
 
-t_event_dates = torch.concat([prd.timeline, (lastFixingDate).view(1)])
-
-cashflows = mcSim(prd, model, rng, N, dTL)
-payoff = torch.sum(cashflows, dim=0)
-
-mc_price = torch.nanmean(payoff)
-print('MC Price =', mc_price)
-
-cpl = model.calc_cpl(0, prd.firstFixingDate, prd.delta, prd.strike)
-print('Semi-analytic Price =', cpl)
-if __name__ == '__main__':
-    import matplotlib.pyplot as plt
 
     x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i for i in model.x]
     r0 = model.calc_short_rate(
@@ -75,14 +71,13 @@ if __name__ == '__main__':
          phi6[:, 0, :]], t=0.0)
 
     f00 = model.calc_instant_fwd( [x[:, 0, :], v[:, 0, :], phi1[:, 0, :], phi2[:, 0, :], phi3[:, 0, :], phi4[:, 0, :], phi5[:, 0, :], phi6[:, 0, :]], t=0.0, T=0.0)
-    f0T = model.calc_instant_fwd( [x[:, -1, :], v[:, -1, :], phi1[:, -1, :], phi2[:, -1, :], phi3[:, -1, :], phi4[:, -1, :], phi5[:, -1, :], phi6[:, -1, :]], t=0.0, T=firstFixingDate)
+    f0T = model.calc_instant_fwd( [x[:, -1, :], v[:, -1, :], phi1[:, -1, :], phi2[:, -1, :], phi3[:, -1, :], phi4[:, -1, :], phi5[:, -1, :], phi6[:, -1, :]], t=0.0, T=start)
 
     # zcb price time-0 using trapezoidal rule
-    zcb0 = torch.exp(-0.5 * (f00 + f0T) * firstFixingDate)
+    zcb0 = torch.exp(-0.5 * (f00 + f0T) * start)
     print('zcb0', zcb0.mean())
 
-    plots = False
-    if plots:
+    if produce_plots:
         # plot forward rates
         plt.figure()
         plt.plot(model.paths[1].fwd[0][0], color='blue', label='F')
@@ -114,7 +109,7 @@ if __name__ == '__main__':
         plt.show()
 
         # plot f variance
-        sigma_fct = model._sigma(model.timeline, lastFixingDate + delta)
+        sigma_fct = model._sigma(model.timeline, start + delta)
         v_sqrt = v[0][:,0:5].sqrt()
         colors = ['b', 'r', 'y', 'g', 'c']
         plt.figure()

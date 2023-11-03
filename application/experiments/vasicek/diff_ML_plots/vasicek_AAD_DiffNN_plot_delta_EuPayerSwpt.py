@@ -38,7 +38,7 @@ if __name__ == '__main__':
 
     # Product specification
     exerciseDate = torch.tensor(1.0)
-    delta = torch.tensor(0.25)
+    delta = torch.tensor(.25)
     swapFirstFixingDate = exerciseDate
     swapLastFixingDate = exerciseDate + torch.tensor(5.0)
     notional = torch.tensor(1e6)
@@ -158,3 +158,4 @@ if __name__ == '__main__':
     plt.title('Learning Sensitivities')
     plt.legend()
     plt.show()
+

@@ -21,7 +21,7 @@ if __name__ == '__main__':
     notional = torch.tensor(1e6)
 
     start = torch.tensor(5.0)
-    delta = torch.tensor(15.0)
+    delta = torch.tensor(1.0)
 
     dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
 
