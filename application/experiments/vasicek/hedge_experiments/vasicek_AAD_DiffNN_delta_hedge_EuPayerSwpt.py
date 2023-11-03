@@ -3,11 +3,9 @@ import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek
 from application.engine.products import EuropeanPayerSwaption
-#from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.torch_utils import max0
 from application.utils.path_config import get_plot_path
-#from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_reg
 from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_nn
 
 torch.set_printoptions(4)
