@@ -21,9 +21,9 @@ def training_data(r0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use
     u, dUdr = calc_dU_dr(r0_vec, t0)
     y, dydr = calc_dPrd_dr(r0_vec, t0)
 
-    X_train = u.reshape(-1, 1)
+    X_train = u.reshape(-1, u.shape[1])
     y_train = y.reshape(-1, 1)
-    z_train = (dydr / dUdr).reshape(-1, 1)
+    z_train = dydr.reshape(-1, 1) / dUdr.reshape(-1, dUdr.shape[1])
 
     if use_av:
         idx_half = N_train
