@@ -186,10 +186,5 @@ if __name__ == '__main__':
     av_str = 'with AV' if use_av else 'without AV'
     fig.suptitle(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
 
-    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_BerPayerSwpt.png'), dpi=400)
+    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_BerPayerSwpt.png'), dpi=400)
     plt.show()
-
-
-
-
-
