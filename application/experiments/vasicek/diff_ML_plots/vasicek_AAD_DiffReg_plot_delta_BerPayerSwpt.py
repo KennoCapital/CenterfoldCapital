@@ -37,14 +37,18 @@ if __name__ == '__main__':
 
     # Setup Differential Regressor, and Scalar
     deg_lsmc = 5
-    deg = 7
+    deg = 5
     alpha = 1.0
+    use_SVD = True
+    bias = True
+    include_interactions = True
+
     diff_reg = DifferentialPolynomialRegressor(
         deg=deg,
         alpha=alpha,
-        use_SVD=True,
-        bias=True,
-        include_interactions=True
+        use_SVD=use_SVD,
+        bias=bias,
+        include_interactions=include_interactions
     )
     scalar = DifferentialStandardScaler()
 
@@ -84,7 +88,7 @@ if __name__ == '__main__':
     idx_start = int(0.0 not in exerciseDates)
     t_swap_fixings = [sample.irs[0].fixingDates for i, sample in enumerate(prd.defline[idx_start:])]
 
-    poly_reg = PolynomialRegressor(deg=deg_lsmc, use_SVD=True)
+    poly_reg = PolynomialRegressor(deg=deg_lsmc, use_SVD=use_SVD, bias=bias, include_interactions=include_interactions)
     lsmc = LSMC(reg=poly_reg)
 
     """ Helper functions for generating training data of pathwise payoffs and deltas """
@@ -114,7 +118,7 @@ if __name__ == '__main__':
                     notional=notional
                 )
             cRng = RNG(seed=seed, use_av=use_av)
-            cPoly_reg = PolynomialRegressor(deg=deg_lsmc)
+            cPoly_reg = PolynomialRegressor(deg=deg_lsmc, use_SVD=use_SVD, bias=bias, include_interactions=include_interactions)
             cLsmc = LSMC(reg=cPoly_reg)
             payoff = lsmcDefaultSim(prd=cPrd, mdl=cMdl, rng=cRng, N=len(r0_vec), n=len(r0_vec), lsmc=cLsmc)
             return torch.sum(payoff, dim=0)
