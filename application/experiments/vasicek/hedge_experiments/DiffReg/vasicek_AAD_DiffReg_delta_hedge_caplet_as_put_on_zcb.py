@@ -4,7 +4,6 @@ from torch.autograd.functional import jvp
 from tqdm import tqdm
 from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import CapletAsPutOnZCB
-from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.path_config import get_plot_path
@@ -23,8 +22,8 @@ if __name__ == '__main__':
 
     hedge_points = 250
 
-    r0_min = 0.07
-    r0_max = 0.09
+    r0_min = 0.02
+    r0_max = 0.12
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -32,13 +31,12 @@ if __name__ == '__main__':
     deg = 9
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
-    scalar = DifferentialStandardScaler()
 
     # Model specification
+    r0 = torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = torch.tensor(0.09)
+    b = r0.median()
     sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.08)
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -50,7 +48,7 @@ if __name__ == '__main__':
     delta = torch.tensor(0.25)
     notional = torch.tensor(1e6)
 
-    strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
+    strike = mdl.calc_swap_rate(r0.median(), exerciseDate, delta)
 
     prd = CapletAsPutOnZCB(
         strike=strike,
@@ -63,9 +61,6 @@ if __name__ == '__main__':
     dTL = torch.linspace(0.0, float(exerciseDate), hedge_points + 1)
     mcSimPaths(prd, mdl, rng, N_test, dTL)
     r = mdl.x
-
-    # Find index of the exercise date
-    last_idx = int((dTL == exerciseDate).nonzero(as_tuple=True)[0])
 
     """ Helper functions for calculating pathwise payoffs and deltas, and generating training data """
     def calc_dzcb_dr(r0_vec, t0):
@@ -115,7 +110,10 @@ if __name__ == '__main__':
     """ Delta Hedge Experiment """
 
     # Get price of claim (no need to simulate as we have an analytical expression)
-    cpl = mdl.calc_cpl(r0, exerciseDate, delta, strike, notional)[0]
+    cpl = torch.empty_like(r[0, :])
+    for n in range(N_test):
+        mdl.r0 = r[0, n]
+        cpl = mdl.calc_cpl(r0, exerciseDate, delta, strike, notional)[0]
 
     # Initialize experiment
     B = torch.ones((N_test, ))
@@ -130,7 +128,7 @@ if __name__ == '__main__':
     V_values = [V]
 
     # Loop over time
-    for k in tqdm(range(1, last_idx + 1)):
+    for k in tqdm(range(1, len(dTL))):
         dt = dTL[k] - dTL[k - 1]
         t = dTL[k]
 
@@ -144,7 +142,7 @@ if __name__ == '__main__':
         V_values.append(V)
         cpl_prices.append(mdl.calc_cpl(r[k, :], exerciseDate-t, delta, strike, notional))
 
-        if k < last_idx:
+        if k < len(dTL) - 1:
             r0_vec = choose_training_grid(r[k,:], N_train)
             h_a = calc_delta_diff_reg(u_vec=zcb, r0_vec=r0_vec, t0=t,
                                       calc_dU_dr=calc_dzcb_dr, calc_dPrd_dr=calc_dcpl_dr, diff_reg=diff_reg, use_av=use_av)
@@ -160,12 +158,12 @@ if __name__ == '__main__':
     plt.ylabel('RMSE')
     plt.show()
 
-    zcbT = mdl.calc_zcb(r[last_idx, ].sort().values, delta)[0]
-    df = mdl.calc_zcb(r[last_idx, ].sort().values, delta)[0]
+    zcbT = mdl.calc_zcb(r[-1, ].sort().values, delta)[0]
+    df = mdl.calc_zcb(r[-1, ].sort().values, delta)[0]
     K_bar = 1.0 + delta * strike
     payoff_func = notional * K_bar * max0(1.0 / K_bar - zcbT) * df
 
-    V *= mdl.calc_zcb(r[last_idx], delta)[0]
+    V *= mdl.calc_zcb(r[-1], delta)[0]
 
     MAE_value = torch.mean(torch.abs(V - notional * K_bar * max0(1.0 / K_bar - mdl.calc_zcb(r[last_idx, :], delta)[0])))
 
@@ -174,7 +172,7 @@ if __name__ == '__main__':
 
     fig, ax = plt.subplots(1)
     ax.plot(zcbT, payoff_func, color='black', label='Payoff function')
-    ax.plot(mdl.calc_zcb(r[last_idx], delta)[0], V, 'o', color='orange', label='Value of Hedge Portfolio', alpha=0.5)
+    ax.plot(mdl.calc_zcb(r[-1], delta)[0], V, 'o', color='orange', label='Value of Hedge Portfolio', alpha=0.5)
     ax.set_xlabel('ZCB(T)')
     ax.text(0.05, 0.8, f'MAE = {MAE_value:,.2f}', fontsize=8, transform=ax.transAxes)
 
@@ -192,5 +190,5 @@ if __name__ == '__main__':
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
 
-    # plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Caplet_delta_hedge.png'), dpi=400)
+    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_caplet_as_put_on_zcb_delta_hedge.png'), dpi=400)
     plt.show()

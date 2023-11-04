@@ -1,7 +1,6 @@
 import torch
-import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import linregress
+from tqdm import tqdm
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import Fraption
@@ -22,8 +21,8 @@ if __name__ == '__main__':
 
     hedge_points = 100
 
-    r0_min = 0.07
-    r0_max = 0.09
+    r0_min = 0.02
+    r0_max = 0.12
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -33,10 +32,10 @@ if __name__ == '__main__':
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 
     # Model specification
+    r0 = torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = torch.tensor(0.09)
+    b = r0.median()
     sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.08)
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -49,7 +48,7 @@ if __name__ == '__main__':
     delta = torch.tensor(5.0)
     notional = torch.tensor(1e6)
 
-    strike = mdl.calc_fwd(r0, start, delta)
+    strike = mdl.calc_fwd(r0.median(), start, delta)
 
     prd = Fraption(
         exerciseDate=exerciseDate,
@@ -59,9 +58,13 @@ if __name__ == '__main__':
         notional=notional
     )
 
-""" Helper functions for generating training data of pathwise payoffs and deltas """
+    # Simulate paths
+    dTL = torch.linspace(0.0, float(exerciseDate), hedge_points + 1)
+    mcSimPaths(prd, mdl, rng, N_test, dTL)
+    r = mdl.x
 
 
+    """ Helper functions for calculating pathwise payoffs and deltas, and generating training data """
     def calc_dFRA_dr(r0_vec, t0):
         """
         :param  r0_vec:    Current Short rate r0
@@ -104,70 +107,65 @@ if __name__ == '__main__':
         res = jvp(_payoffs, r0_vec, ones, create_graph=False)
         return res
 
-    """ Delta Hedge Experiment """
 
+    # Get price of claim (no need to simulate as we have an analytical expression)
+    fraption = torch.empty_like(r[0, :])
+    for n in range(N_test):
+        mdl.r0 = r[0, n]
+        fraption[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
 
-    # Simulate paths
-    hedge_times = [10, 25, 50, 100, 250, 500, 1000]
-    hedge_error = []
+    # Initialize experiment
+    fra = mdl.calc_fra(r[0, :], start, delta, strike, notional)[0]
 
-    for steps in hedge_times:
+    V = fraption
+    h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=0.0,
+                              calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg, use_av=use_av)
+    h_b = V - h_a * fra
 
-        dTL = torch.linspace(0.0, float(exerciseDate), steps + 1)
-        mcSimPaths(prd, mdl, rng, N_test, dTL)
-        r = mdl.x
+    # Loop over time
+    for k in tqdm(range(1, len(dTL))):
+        dt = dTL[k] - dTL[k - 1]
+        t = dTL[k]
 
-        # Get price of claim (no need to simulate as we have an analytical expression)
-        mdl_pricer = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure='risk_neutral')
-        fraption = torch.mean(mcSim(prd, mdl, rng, 500000))
+        # Update market variables
+        fra = mdl.calc_fra(r[k, :], start - t, delta, strike, notional)[0]
 
-        # Initialize experiment
-        fra = mdl.calc_fra(r[0, :], start, delta, strike, notional)[0]
+        # Update portfolio
+        V = h_a * fra + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
+        if k < len(dTL) - 1:
+            r0_vec = choose_training_grid(r[k, :], N_train)
+            h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=t,
+                                      calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg, use_av=use_av)
+            h_b = V - h_a * fra
 
-        V = fraption * torch.ones_like(r[0, :])
-        h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=0.0,
-                                  calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg,
-                                  use_av=use_av)
-        h_b = V - h_a * fra
+    rT = torch.linspace(r[-1].min(), r[-1].max(), N_test)
+    fraT = mdl.calc_fra(rT, start - exerciseDate, delta, strike, notional)[0]
+    payoff_func = max0(fraT)
 
-        # Loop over time
-        for k in range(1, len(dTL)):
-            dt = dTL[k] - dTL[k-1]
-            t = dTL[k]
-
-            # Update market variables
-            fra = mdl.calc_fra(r[k, :], start - t, delta, strike, notional)[0]
-
-            # Update portfolio
-            V = h_a * fra + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
-            if k < len(dTL) - 1:
-                r0_vec = choose_training_grid(r[k, :], N_train)
-                h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=t,
-                                          calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg,
-                                          use_av=use_av)
-                h_b = V - h_a * fra
-
-        hedge_error.append(torch.std(V - max0(fra)))
+    MAE_value = torch.mean(torch.abs(V - max0(fra)))
 
     """ Plot """
-    # add convergence order line
-    x = np.log(hedge_times)
-    y = np.log(hedge_error)
-    res = linregress(x, y)
-    fit_y_log = res.slope * x + res.intercept
+    av_str = 'with AV' if use_av else 'without AV'
 
-    plt.figure()
-    plt.suptitle(prd.name + f'alpha = {alpha}, deg={deg}, {N_train} samples, notional = {notional}')
-    plt.title(f'convergence order = {res.slope:.2f}')
-    plt.plot(x, fit_y_log, '--', color='red')
-    plt.plot(x, y, 'o-', color='blue')
+    fig, ax = plt.subplots(1)
+    ax.plot(fraT, payoff_func, color='black', label='Payoff function')
+    ax.plot(fra, V, 'o', color='orange', label='Value of Hedge Portfolio', alpha=0.5)
+    ax.set_xlabel('FRA(T)')
+    ax.text(0.05, 0.8, f'MAE = {MAE_value:,.2f}', fontsize=8, transform=ax.transAxes)
 
-    plt.xlabel('steps per fixing')
-    plt.ylabel('std. dev. of hedge error')
+    # Adjust size of plot
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0, box.width, box.height * 0.9])
 
-    plt.xticks(ticks=x, labels=hedge_times)
-    plt.yticks(ticks=y, labels=np.round(y, 2))
+    # Title
+    fig.suptitle(
+        prd.name + f'\nHedgeFreq={dTL[1]:.4g}, alpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
 
-    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_Fraption_convergence_hedgetimes.png'), dpi=400)
+    # Legend
+    handles, labels = fig.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
+               bbox_to_anchor=(0.5, 0.90))
+
+    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_Fraption.png'), dpi=400)
     plt.show()
-
