@@ -35,8 +35,8 @@ class DifferentialStandardScaler:
 
         self.x_mean = torch.mean(X, dim=dim[0])
         self.x_std = torch.maximum(torch.std(X, dim=dim[0]), torch.tensor(self._eps))
-        self.y_mean = torch.mean(y, dim=dim[1])
-        self.y_std = torch.maximum(torch.std(y, dim=dim[1]), torch.tensor(self._eps))
+        self.y_mean = torch.mean(y, dim=dim[0])
+        self.y_std = torch.maximum(torch.std(y, dim=dim[0]), torch.tensor(self._eps))
 
     def transform(self, X: torch.Tensor or None = None, y: torch.Tensor or None = None, z: torch.Tensor or None = None):
         x_ = (X - self.x_mean) / self.x_std if X is not None else None
