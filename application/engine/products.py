@@ -628,19 +628,16 @@ class BermudanPayerSwaption(CallableProduct):
                  strike:                torch.Tensor,
                  exerciseDates:         torch.Tensor,
                  delta:                 torch.Tensor,
-                 swapFirstFixingDate:   torch.Tensor,
                  swapLastFixingDate:    torch.Tensor,
                  notional:              torch.Tensor = torch.tensor([1.0])):
         self.strike = strike
         self._exerciseDates = exerciseDates
         self.delta = delta
         self.swapLastFixingDate = swapLastFixingDate
-        self.swapFirstFixingDate = swapFirstFixingDate
         self.notional = notional
         self._exercise_idx = None
 
-        self._name = (f'{float_to_time_str(swapFirstFixingDate)}'
-                      f'{float_to_time_str(swapLastFixingDate)}'
+        self._name = (f'{float_to_time_str(swapLastFixingDate)}'
                       f'{float_to_time_str(delta)} '
                       f'BermPayerSwpt @ {strike * 100}% '
                       f'\w {float_to_notional_str(notional)} '
@@ -654,7 +651,6 @@ class BermudanPayerSwaption(CallableProduct):
             float(self.swapLastFixingDate),
             int((self.swapLastFixingDate - t) / self.delta) + 1
         ) for t in exerciseDates]
-
 
         if self._exerciseAtTimeZero:
             # First exercise is at time 0.0

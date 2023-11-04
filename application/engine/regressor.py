@@ -68,10 +68,11 @@ def create_polynomial_features(
         X = X.reshape(-1, 1)
 
     n_features = X.shape[1]
+    if n_features == 1 and include_interactions:
+        n_features = deg
     powers = polynomial_powers(deg=deg, n_features=n_features, include_interactions=include_interactions)
 
     X_pow = torch.hstack([torch.prod(torch.pow(X, p), dim=1, keepdim=True) for p in powers])
-
 
     if bias:
         ones = torch.ones(size=(len(X), 1))
@@ -133,5 +134,5 @@ class PolynomialRegressor(OLSRegressor):
         self._coef = normal_equation(phi, y, self.use_SVD)
 
     def predict(self, X):
-        phi, _ = create_polynomial_features(X, deg=self.deg, bias=self.bias)
+        phi, _ = create_polynomial_features(X, deg=self.deg, bias=self.bias, include_interactions=self.include_interactions)
         return (phi @ self._coef).squeeze()

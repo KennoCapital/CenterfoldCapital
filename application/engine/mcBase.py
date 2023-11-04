@@ -173,6 +173,7 @@ class LSMC:
             cv = self.reg.predict(X=paths[k + idx_offset].x)
             exercise = ev[k] > max0(cv) + self._eps
             exercise = torch.logical_and(alive, exercise)
+            alive = torch.logical_and(alive, ~exercise)
             stopping_idx[exercise] = k
 
         return stopping_idx
