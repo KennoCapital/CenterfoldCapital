@@ -17,8 +17,8 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    r0_min = 0.07
-    r0_max = 0.09
+    r0_min = 0.02
+    r0_max = 0.12
 
     # Setup Differential Regressor, and Scalar
     deg = 15
@@ -26,10 +26,10 @@ if __name__ == '__main__':
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 
     # Model specification
+    r0 = torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = torch.tensor(0.09)
+    b = r0.median()
     sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.08)
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -49,7 +49,7 @@ if __name__ == '__main__':
         int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
     )
 
-    strike = mdl.calc_swap_rate(r0, t_swap_fixings, delta)
+    strike = mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
 
     prd = EuropeanPayerSwaption(
         strike=strike,
@@ -118,7 +118,10 @@ if __name__ == '__main__':
         r0_vec = torch.linspace(r0_min, r0_max, N)
 
         # Get price of claim (we use 500k simulations to get an accurate estimate)
-        swpt = torch.mean(mcSim(prd, mdl, rng, 500000))
+        swpt = torch.empty_like(r[0, :])
+        for n in range(N_test):
+            mdl.r0 = r[0, n]
+            swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
 
         # Initialize experiment
         swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
@@ -151,5 +154,5 @@ if __name__ == '__main__':
                 Y=hedge_error,
                 title_add=prd.name + f'alpha = {alpha}, deg={deg}, times hedging = {steps}, notional = {notional}',
                 save=False,
-                file_name='vasicek_AAD_DiffReg_delta_hedge_EuPayerSwpt_convergence_trainingsamples.png')
+                file_name='vasicek_AAD_DiffReg_delta_hedge_EuPayerSwpt_convergence_trainingsamples')
 

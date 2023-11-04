@@ -1,12 +1,10 @@
 import torch
 from tqdm import tqdm
-from scipy.stats import linregress
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import Fraption
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
-from application.utils.path_config import get_plot_path
 from application.utils.torch_utils import max0
 from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_reg, log_plotter
 
@@ -18,8 +16,8 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    r0_min = 0.07
-    r0_max = 0.09
+    r0_min = 0.02
+    r0_max = 0.12
 
     # Setup Differential Regressor, and Scalar
     deg = 15
@@ -27,10 +25,10 @@ if __name__ == '__main__':
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 
     # Model specification
+    r0 = torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = torch.tensor(0.09)
+    b = r0.median()
     sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.08)
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -43,7 +41,7 @@ if __name__ == '__main__':
     delta = torch.tensor(5.0)
     notional = torch.tensor(1e6)
 
-    strike = mdl.calc_fwd(r0, start, delta)
+    strike = mdl.calc_fwd(r0.median(), start, delta)
 
     prd = Fraption(
         exerciseDate=exerciseDate,
@@ -112,8 +110,10 @@ if __name__ == '__main__':
         r0_vec = torch.linspace(r0_min, r0_max, N)
 
         # Get price of claim (no need to simulate as we have an analytical expression)
-        mdl_pricer = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure='risk_neutral')
-        fraption = torch.mean(mcSim(prd, mdl, rng, 500000))
+        fraption = torch.empty_like(r[0, :])
+        for n in range(N_test):
+            mdl.r0 = r[0, n]
+            fraption[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
 
         # Initialize experiment
         fra = mdl.calc_fra(r[0, :], start, delta, strike, notional)[0]
@@ -148,5 +148,5 @@ if __name__ == '__main__':
                 Y=hedge_error,
                 title_add=prd.name + f'alpha = {alpha}, deg={deg}, times hedging = {steps}, notional = {notional}',
                 save=False,
-                file_name='vasicek_AAD_DiffReg_delta_hedge_Fraption_convergence_trainingsamples.png')
+                file_name='vasicek_AAD_DiffReg_delta_hedge_Fraption_convergence_trainingsamples')
 

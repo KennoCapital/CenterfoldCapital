@@ -1,5 +1,6 @@
 import torch
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import EuropeanPayerSwaption
@@ -19,10 +20,10 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    steps_per_fixing = 10
+    hedge_times = 100
 
-    r0_min = 0.07
-    r0_max = 0.09
+    r0_min = 0.02
+    r0_max = 0.12
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -32,10 +33,10 @@ if __name__ == '__main__':
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 
     # Model specification
+    r0 = torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = torch.tensor(0.09)
+    b = r0.median()
     sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.08)
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -55,7 +56,7 @@ if __name__ == '__main__':
         int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
     )
 
-    strike = mdl.calc_swap_rate(r0, t_swap_fixings, delta)
+    strike = mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
 
     prd = EuropeanPayerSwaption(
         strike=strike,
@@ -67,12 +68,9 @@ if __name__ == '__main__':
     )
 
     # Simulate paths
-    dTL = torch.linspace(0.0, float(swapLastFixingDate), steps_per_fixing * int(swapLastFixingDate / delta) + 1)
+    dTL = torch.linspace(0.0, float(swapFirstFixingDate), hedge_times + 1)
     mcSimPaths(prd, mdl, rng, N_test, dTL)
     r = mdl.x
-
-    # Find index of the exercise date
-    last_idx = int((dTL == exerciseDate).nonzero(as_tuple=True)[0])
 
     """ Helper functions for generating training data of pathwise payoffs and deltas """
     def calc_dswap_dr(r0_vec: torch.Tensor, t0: float):
@@ -120,18 +118,21 @@ if __name__ == '__main__':
     """ Delta Hedge Experiment """
 
     # Get price of claim (we use 500k simulations to get an accurate estimate)
-    swpt = torch.mean(mcSim(prd, mdl, rng, 500000))
+    swpt = torch.empty_like(r[0, :])
+    for n in range(N_test):
+        mdl.r0 = r[0, n]
+        swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
 
     # Initialize experiment
     swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
 
-    V = swpt * torch.ones_like(r[0, :])
+    V = swpt
     h_a = calc_delta_diff_reg(u_vec=swap, r0_vec=r0_vec, t0=0.0,
                               calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr, diff_reg=diff_reg, use_av=use_av)
     h_b = V - h_a * swap
 
     # Loop over time
-    for k in range(1, last_idx + 1):
+    for k in tqdm(range(1, len(dTL))):
         dt = dTL[k] - dTL[k-1]
         t = dTL[k]
 
@@ -140,7 +141,7 @@ if __name__ == '__main__':
 
         # Update portfolio
         V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
-        if k < last_idx:
+        if k < len(dTL) - 1:
             r0_vec = choose_training_grid(r[k, :], N_train)
             h_a = calc_delta_diff_reg(u_vec=swap, r0_vec=r0_vec, t0=t,
                                       calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr, diff_reg=diff_reg, use_av=use_av)
@@ -173,6 +174,6 @@ if __name__ == '__main__':
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
 
-    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Fraption_delta_hedge.png'), dpi=400)
+    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_EuPayerSwpt.png'), dpi=400)
     plt.show()
 

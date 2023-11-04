@@ -3,7 +3,6 @@ from torch.autograd.functional import jvp
 from tqdm import tqdm
 from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import CapletAsPutOnZCB
-from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.torch_utils import max0
@@ -18,20 +17,19 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    r0_min = 0.07
-    r0_max = 0.09
+    r0_min = 0.02
+    r0_max = 0.12
 
     # Setup Differential Regressor, and Scalar
     deg = 9
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
-    scalar = DifferentialStandardScaler()
 
     # Model specification
+    r0 = torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = torch.tensor(0.09)
+    b = r0.median()
     sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.08)
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -43,7 +41,7 @@ if __name__ == '__main__':
     delta = torch.tensor(0.25)
     notional = torch.tensor(1e6)
 
-    strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
+    strike = mdl.calc_swap_rate(r0.median(), exerciseDate, delta)
 
     prd = CapletAsPutOnZCB(
         strike=strike,
@@ -99,7 +97,7 @@ if __name__ == '__main__':
 
 
     """ Delta Hedge Experiment """
-    steps = 100
+    steps = 1000
     dTL = torch.linspace(0.0, float(exerciseDate), steps + 1)
     mcSimPaths(prd, mdl, rng, N_test, dTL)
     r = mdl.x
@@ -111,7 +109,10 @@ if __name__ == '__main__':
     for N in tqdm(N_train):
         r0_vec = torch.linspace(r0_min, r0_max, N)
         # Get price of claim (no need to simulate as we have an analytical expression)
-        cpl = mdl.calc_cpl(r0, exerciseDate, delta, strike, notional)[0]
+        cpl = torch.empty_like(r[0, :])
+        for n in range(N_test):
+            mdl.r0 = r[0, n]
+            cpl[n] = mdl.calc_cpl(r[0, n], exerciseDate, delta, strike, notional)[0]
 
         # Initialize experiment
         B = torch.ones((N_test,))
@@ -141,8 +142,8 @@ if __name__ == '__main__':
                                           use_av=use_av)
                 h_b = (V - h_a * zcb) / B
 
-        zcbT = mdl.calc_zcb(r[-1], delta)[0]
-        df = mdl.calc_zcb(r[-1], delta)[0]
+        zcbT = mdl.calc_zcb(r[-1,:], delta)[0]
+        df = mdl.calc_zcb(r[-1,:], delta)[0]
         K_bar = 1.0 + delta * strike
         payoff_func = notional * K_bar * max0(1.0 / K_bar - zcbT) * df
 
@@ -151,6 +152,6 @@ if __name__ == '__main__':
     """ Plot """
     log_plotter(X=N_train,
                 Y=hedge_error,
-                title_add=prd.name + f'alpha = {alpha}, deg={deg}, times hedging = {steps}, notional = {notional}',
+                title_add=prd.name + f' alpha = {alpha}, deg={deg}, times hedging = {steps}, notional = {notional}',
                 save=False,
                 file_name='vasicek_AAD_DiffReg_delta_hedge_caplet_as_put_on_zcb_convergence_trainingsamples')

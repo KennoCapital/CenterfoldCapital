@@ -1,15 +1,12 @@
 import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import linregress
+from tqdm import tqdm
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import EuropeanPayerSwaption
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
-from application.utils.path_config import get_plot_path
 from application.utils.torch_utils import max0
-from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_reg
+from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_reg, log_plotter
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
@@ -21,8 +18,8 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    r0_min = 0.07
-    r0_max = 0.09
+    r0_min = 0.02
+    r0_max = 0.12
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -32,10 +29,10 @@ if __name__ == '__main__':
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 
     # Model specification
+    r0 = torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = torch.tensor(0.09)
+    b = r0.median()
     sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.08)
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -55,7 +52,7 @@ if __name__ == '__main__':
         int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
     )
 
-    strike = mdl.calc_swap_rate(r0, t_swap_fixings, delta)
+    strike = mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
 
     prd = EuropeanPayerSwaption(
         strike=strike,
@@ -116,18 +113,21 @@ if __name__ == '__main__':
     hedge_times = [10, 25, 50, 100, 250, 500, 1000]
     hedge_error = []
 
-    for steps in hedge_times:
+    for steps in tqdm(hedge_times):
 
         dTL = torch.linspace(0.0, float(swapFirstFixingDate), steps + 1)
         mcSimPaths(prd, mdl, rng, N_test, dTL)
         r = mdl.x
         # Get price of claim (we use 500k simulations to get an accurate estimate)
-        swpt = torch.mean(mcSim(prd, mdl, rng, 500000))
+        swpt = torch.empty_like(r[0, :])
+        for n in range(N_test):
+            mdl.r0 = r[0, n]
+            swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
 
         # Initialize experiment
         swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
 
-        V = swpt * torch.ones_like(r[0, :])
+        V = swpt
         h_a = calc_delta_diff_reg(u_vec=swap, r0_vec=r0_vec, t0=0.0,
                                   calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr, diff_reg=diff_reg, use_av=use_av)
         h_b = V - h_a * swap
@@ -151,24 +151,8 @@ if __name__ == '__main__':
         hedge_error.append(torch.std(V - max0(swap)))
 
     """ Plot """
-    # add convergence order line
-    x = np.log(hedge_times)
-    y = np.log(hedge_error)
-    res = linregress(x, y)
-    fit_y_log = res.slope * x + res.intercept
-
-    plt.figure()
-    plt.suptitle(prd.name + f'alpha = {alpha}, deg={deg}, {N_train} samples, notional = {notional}')
-    plt.title(f'convergence order = {res.slope:.2f}')
-    plt.plot(x, fit_y_log, '--', color='red')
-    plt.plot(x, y, 'o-', color='blue')
-
-    plt.xlabel('steps per fixing')
-    plt.ylabel('std. dev. of hedge error')
-
-    plt.xticks(ticks=x, labels=hedge_times)
-    plt.yticks(ticks=y, labels=np.round(y, 2))
-
-    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_EuPayerSwpt_convergence_hedgetimes.png'), dpi=400)
-    plt.show()
-
+    log_plotter(X=hedge_times,
+                Y=hedge_error,
+                title_add=prd.name + f'alpha = {alpha}, deg={deg}, {N_train} samples, notional = {notional}',
+                save=False,
+                file_name='vasicek_AAD_DiffReg_delta_hedge_EuPayerSwpt_convergence_hedgetimes')

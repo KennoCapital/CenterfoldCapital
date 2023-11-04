@@ -189,5 +189,5 @@ if __name__ == '__main__':
                bbox_to_anchor=(0.5, 0.90))
 
     if save_plot:
-        plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Fraption_delta_hedge.png'), dpi=400)
+        plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_Fraption.png'), dpi=400)
     plt.show()

@@ -1,5 +1,6 @@
 import torch
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import Fraption
@@ -20,8 +21,8 @@ if __name__ == '__main__':
 
     hedge_points = 100
 
-    r0_min = 0.07
-    r0_max = 0.09
+    r0_min = 0.02
+    r0_max = 0.12
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -31,10 +32,10 @@ if __name__ == '__main__':
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 
     # Model specification
+    r0 = torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = torch.tensor(0.09)
+    b = r0.median()
     sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.08)
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -47,7 +48,7 @@ if __name__ == '__main__':
     delta = torch.tensor(5.0)
     notional = torch.tensor(1e6)
 
-    strike = mdl.calc_fwd(r0, start, delta)
+    strike = mdl.calc_fwd(r0.median(), start, delta)
 
     prd = Fraption(
         exerciseDate=exerciseDate,
@@ -62,8 +63,6 @@ if __name__ == '__main__':
     mcSimPaths(prd, mdl, rng, N_test, dTL)
     r = mdl.x
 
-    # Find index of the exercise date
-    last_idx = int((dTL == exerciseDate).nonzero(as_tuple=True)[0])
 
     """ Helper functions for calculating pathwise payoffs and deltas, and generating training data """
     def calc_dFRA_dr(r0_vec, t0):
@@ -110,19 +109,21 @@ if __name__ == '__main__':
 
 
     # Get price of claim (no need to simulate as we have an analytical expression)
-    mdl_pricer = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure='risk_neutral')
-    fraption = torch.mean(mcSim(prd, mdl, rng, 500000))
+    fraption = torch.empty_like(r[0, :])
+    for n in range(N_test):
+        mdl.r0 = r[0, n]
+        fraption[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
 
     # Initialize experiment
     fra = mdl.calc_fra(r[0, :], start, delta, strike, notional)[0]
 
-    V = fraption * torch.ones_like(r[0, :])
+    V = fraption
     h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=0.0,
                               calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg, use_av=use_av)
     h_b = V - h_a * fra
 
     # Loop over time
-    for k in range(1, last_idx + 1):
+    for k in tqdm(range(1, len(dTL))):
         dt = dTL[k] - dTL[k - 1]
         t = dTL[k]
 
@@ -131,13 +132,13 @@ if __name__ == '__main__':
 
         # Update portfolio
         V = h_a * fra + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
-        if k < last_idx:
+        if k < len(dTL) - 1:
             r0_vec = choose_training_grid(r[k, :], N_train)
             h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=t,
                                       calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg, use_av=use_av)
             h_b = V - h_a * fra
 
-    rT = torch.linspace(r[last_idx].min(), r[last_idx].max(), N_test)
+    rT = torch.linspace(r[-1].min(), r[-1].max(), N_test)
     fraT = mdl.calc_fra(rT, start - exerciseDate, delta, strike, notional)[0]
     payoff_func = max0(fraT)
 
@@ -166,5 +167,5 @@ if __name__ == '__main__':
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
 
-    # plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Fraption_delta_hedge.png'), dpi=400)
+    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_Fraption.png'), dpi=400)
     plt.show()

@@ -1,17 +1,12 @@
 import torch
-import matplotlib.pyplot as plt
-import numpy as np
 from torch.autograd.functional import jvp
-from scipy.stats import linregress
 from tqdm import tqdm
 from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import CapletAsPutOnZCB
-from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
-from application.utils.path_config import get_plot_path
 from application.utils.torch_utils import max0
-from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_reg
+from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_reg, log_plotter
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
@@ -23,10 +18,8 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    hedge_points = 250
-
-    r0_min = 0.07
-    r0_max = 0.09
+    r0_min = 0.02
+    r0_max = 0.12
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -34,13 +27,12 @@ if __name__ == '__main__':
     deg = 9
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
-    scalar = DifferentialStandardScaler()
 
     # Model specification
+    r0 = torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = torch.tensor(0.09)
+    b = r0.median()
     sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.08)
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -52,7 +44,7 @@ if __name__ == '__main__':
     delta = torch.tensor(0.25)
     notional = torch.tensor(1e6)
 
-    strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
+    strike = mdl.calc_swap_rate(r0.median(), exerciseDate, delta)
 
     prd = CapletAsPutOnZCB(
         strike=strike,
@@ -112,25 +104,28 @@ if __name__ == '__main__':
     hedge_times = [10, 25, 50, 100, 250, 500, 1000]
     hedge_error = []
 
-    for steps in hedge_times:
+    for steps in tqdm(hedge_times):
         dTL = torch.linspace(0.0, float(exerciseDate), steps + 1)
         mcSimPaths(prd, mdl, rng, N_test, dTL)
         r = mdl.x
 
         # Get price of claim (no need to simulate as we have an analytical expression)
-        cpl = mdl.calc_cpl(r0, exerciseDate, delta, strike, notional)[0]
+        cpl = torch.empty_like(r[0, :])
+        for n in range(N_test):
+            mdl.r0 = r[0, n]
+            cpl[n] = mdl.calc_cpl(r[0, n], exerciseDate, delta, strike, notional)[0]
 
         # Initialize experiment
         B = torch.ones((N_test,))
         zcb = mdl.calc_zcb(r[0, :], exerciseDate + delta)[0]
 
-        V = cpl * torch.ones_like(r[0, :])
+        V = cpl
         h_a = calc_delta_diff_reg(u_vec=zcb, t0=0.0, r0_vec=r0_vec,
                                   calc_dU_dr=calc_dzcb_dr, calc_dPrd_dr=calc_dcpl_dr, diff_reg=diff_reg, use_av=use_av)
         h_b = (V - h_a * zcb) / B
 
         # Loop over time
-        for k in tqdm(range(1, len(dTL))):
+        for k in range(1, len(dTL)):
             dt = dTL[k] - dTL[k - 1]
             t = dTL[k]
 
@@ -148,33 +143,18 @@ if __name__ == '__main__':
                                           use_av=use_av)
                 h_b = (V - h_a * zcb) / B
 
-        zcbT = mdl.calc_zcb(r[-1], delta)[0]
-        df = mdl.calc_zcb(r[-1], delta)[0]
+        zcbT = mdl.calc_zcb(r[-1, :], delta)[0]
+        df = mdl.calc_zcb(r[-1, :], delta)[0]
         K_bar = 1.0 + delta * strike
         payoff_func = notional * K_bar * max0(1.0 / K_bar - zcbT) * df
 
         hedge_error.append(torch.std(V - payoff_func))
 
     """ Plot """
-    # add convergence order line
-    x = np.log(hedge_times)
-    y = np.log(hedge_error)
-    res = linregress(x, y)
-    fit_y_log = res.slope * x + res.intercept
-
-    plt.figure()
-    plt.suptitle(prd.name + f'alpha = {alpha}, deg={deg}, {N_train} samples, notional = {notional}')
-    plt.title(f'convergence order = {res.slope:.2f}')
-    plt.plot(x, fit_y_log, '--', color='red')
-    plt.plot(x, y, 'o-', color='blue')
-
-    plt.xlabel('steps per fixing')
-    plt.ylabel('std. dev. of hedge error')
-
-    plt.xticks(ticks=x, labels=hedge_times)
-    plt.yticks(ticks=y, labels=np.round(y, 2))
-
-    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_caplet_as_put_on_zcb_convergence_hedgetimes.png'), dpi=400)
-    plt.show()
+    log_plotter(X=hedge_times,
+                Y=hedge_error,
+                title_add=prd.name + f'alpha = {alpha}, deg={deg}, {N_train} samples, notional = {notional}',
+                save=False,
+                file_name='vasicek_AAD_DiffReg_delta_hedge_caplet_as_put_on_zcb_convergence_hedgetimes')
 
 
