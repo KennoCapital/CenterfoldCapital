@@ -1,7 +1,12 @@
+import numpy as np
 import torch
+from matplotlib import pyplot as plt
+from scipy.stats import linregress
 from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.differential_NN import Neural_Approximator
+from application.utils.path_config import get_plot_path
+
 
 def training_data(r0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use_av: bool = True):
     """
@@ -119,3 +124,26 @@ def calc_delta_diff_nn(u_vec: torch.Tensor,
     _, z_pred = diff_nn.predict_values_and_derivs(X_test)
 
     return z_pred.flatten()
+
+def log_plotter(X, Y, title_add : str, save: bool, file_name: str = None):
+    # add convergence order line
+    x = np.log(X)
+    y = np.log(Y)
+    res = linregress(x, y)
+    fit_y_log = res.slope * x + res.intercept
+
+    plt.figure()
+    plt.suptitle(title_add)
+    plt.title(f'convergence order = {res.slope:.2f}')
+    plt.plot(x, fit_y_log, '--', color='red')
+    plt.plot(x, y, 'o-', color='blue')
+
+    plt.xlabel('steps per fixing')
+    plt.ylabel('std. dev. of hedge error')
+
+    plt.xticks(ticks=x, labels=X)
+    plt.yticks(ticks=y, labels=np.round(y, 2))
+
+    if save:
+        plt.savefig(get_plot_path(f'{file_name}.png'), dpi=400)
+    plt.show()
