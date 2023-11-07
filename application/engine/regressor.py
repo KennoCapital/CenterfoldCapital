@@ -68,8 +68,7 @@ def create_polynomial_features(
         X = X.reshape(-1, 1)
 
     n_features = X.shape[1]
-    if n_features == 1 and include_interactions:
-        n_features = deg
+
     powers = polynomial_powers(deg=deg, n_features=n_features, include_interactions=include_interactions)
 
     X_pow = torch.hstack([torch.prod(torch.pow(X, p), dim=1, keepdim=True) for p in powers])

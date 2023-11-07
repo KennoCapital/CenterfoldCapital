@@ -2,6 +2,8 @@ import torch
 import pickle
 import os
 import matplotlib.pyplot as plt
+from functools import partial
+from concurrent.futures import ProcessPoolExecutor
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek
 from application.engine.products import BermudanPayerSwaption
@@ -16,6 +18,16 @@ from application.experiments.vasicek.vasicek_hedge_tools import training_data
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
+
+MAX_PROCESSES = os.cpu_count() - 1
+
+
+def calc_mc_swpt(r0, a, b, sigma, prd, lsmc, reg, seed = None):
+    tmp_mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure='terminal')
+    tmp_rng = RNG(seed=seed, use_av=True)
+    payoff = lsmcDefaultSim(prd=prd, mdl=tmp_mdl, rng=tmp_rng, N=50000, n=5000, lsmc=lsmc, reg=reg)
+    return torch.mean(torch.sum(payoff, dim=0))
+
 
 if __name__ == '__main__':
     # Set this to `None` if existing data should not be imported
@@ -137,13 +149,16 @@ if __name__ == '__main__':
             [mdl.calc_swap(r0_test_vec, t_swap_fixings[i], delta, strike, notional).reshape(-1, 1)
              for i in range(len(exerciseDates))]
         )
-        y_test = torch.full_like(r0_test_vec, torch.nan)
-        for j in tqdm(range(len(r0_test_vec)), desc='Calculating pricing of BerPayerSwpt using MC'):
-            tmp_mdl = Vasicek(a, b, sigma, r0_test_vec[j], use_ATS=True, use_euler=False, measure='terminal')
-            tmp_rng = RNG(seed=seed, use_av=True)
-            payoff = lsmcDefaultSim(prd=prd, mdl=tmp_mdl, rng=tmp_rng, N=50000, n=5000, lsmc=lsmc, reg=poly_reg)
-            y_test[j] = torch.mean(torch.sum(payoff, dim=0))
-        y_test = y_test.reshape(-1, 1)
+
+        mc_prices = {}
+        with ProcessPoolExecutor(MAX_PROCESSES) as executor:
+            pFunc = partial(calc_mc_swpt, a=a, b=b, sigma=sigma, prd=prd, lsmc=lsmc, reg=poly_reg, seed=seed)
+            for r0, price in tqdm(zip(r0_test_vec, executor.map(pFunc, r0_test_vec)),
+                                  desc=f'Pricing BerPayerSwpt using MC ({MAX_PROCESSES} processes)',
+                                  total=len(r0_test_vec)):
+                mc_prices[r0] = price.view(1)
+        mc_prices = dict(sorted(mc_prices.items()))
+        y_test = torch.tensor(list(mc_prices.values())).reshape(-1, 1)
         z_test = y_test.diff(dim=0) / x_test.diff(dim=0)
 
         # Export results
@@ -172,11 +187,11 @@ if __name__ == '__main__':
     fig, ax = plt.subplots(nrows=2, ncols=len(exerciseDates), sharex='col')
 
     for i in range(len(exerciseDates)):
-        ax[0, i].plot(x_train[:, i].flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25)
+        ax[0, i].plot(x_train[:, i].flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25 * 1024 / N_train)
         ax[0, i].plot(x_test[:, i].flatten(), y_test, color='black')
         ax[0, i].plot(x_test[:, i].flatten(), y_pred, 'o', color='orange', alpha=0.5)
 
-        ax[1, i].plot(x_train[:, i].flatten(), z_train[:, i].flatten(), 'o', color='gray', alpha=0.25)
+        ax[1, i].plot(x_train[:, i].flatten(), z_train[:, i].flatten(), 'o', color='gray', alpha=0.25 * 1024 / N_train)
         ax[1, i].plot(x_test[1:, i].flatten(), z_test[:, i].flatten(), color='black')
         ax[1, i].plot(x_test[1:, i].flatten(), z_pred[1:, i].flatten(), 'o', color='orange', alpha=0.5)
 
