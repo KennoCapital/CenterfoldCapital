@@ -639,9 +639,9 @@ class BermudanPayerSwaption(CallableProduct):
 
         self._name = (f'{float_to_time_str(swapLastFixingDate)}'
                       f'{float_to_time_str(delta)} '
-                      f'BermPayerSwpt @ {strike * 100}% '
+                      f'BermPayerSwpt @ {float(strike) * 100:.4f}% '
                       f'\w {float_to_notional_str(notional)} '
-                      f'x on {[float_to_time_str(d) + ", " for d in exerciseDates]}')
+                      f'x on {[float_to_time_str(d) for d in exerciseDates]}')
 
         self._exerciseAtTimeZero = 0.0 in exerciseDates
         self._k = int(not self._exerciseAtTimeZero)  # Auxiliary index used in the methods `payoff` and `early_exercise`

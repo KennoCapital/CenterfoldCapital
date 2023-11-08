@@ -52,7 +52,7 @@ def calc_delta_diff_reg(u_vec: torch.Tensor,
     returns:                1D vector of predicted deltas for `u_vec`
     """
     scalar = DifferentialStandardScaler()
-    X_test = u_vec.reshape(-1, 1)
+    X_test = u_vec.reshape(-1, u_vec.shape[1])
 
     x_train, y_train, z_train = training_data(r0_vec=r0_vec,
                                               t0=t0,

@@ -2,6 +2,7 @@ import torch
 import pickle
 import os
 import matplotlib.pyplot as plt
+import itertools
 from functools import partial
 from concurrent.futures import ProcessPoolExecutor
 from torch.autograd.functional import jvp
@@ -12,8 +13,8 @@ from application.engine.differential_Regression import DifferentialPolynomialReg
 from application.engine.mcBase import RNG, LSMC, lsmcDefaultSim
 from application.engine.regressor import PolynomialRegressor
 from application.utils.path_config import get_plot_path, get_data_path
+from application.utils.prd_name_conventions import float_to_time_str
 from tqdm import tqdm
-from application.experiments.vasicek.vasicek_hedge_tools import training_data
 
 
 torch.set_printoptions(4)
@@ -22,11 +23,34 @@ torch.set_default_dtype(torch.float64)
 MAX_PROCESSES = os.cpu_count() - 1
 
 
-def calc_mc_swpt(r0, a, b, sigma, prd, lsmc, reg, seed = None):
+def calc_mc_swpt(r0, a, b, sigma, prd, lsmc, reg, seed: int = None):
     tmp_mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure='terminal')
     tmp_rng = RNG(seed=seed, use_av=True)
-    payoff = lsmcDefaultSim(prd=prd, mdl=tmp_mdl, rng=tmp_rng, N=50000, n=5000, lsmc=lsmc, reg=reg)
+    payoff = lsmcDefaultSim(prd=prd, mdl=tmp_mdl, rng=tmp_rng, N=250000, n=25000, lsmc=lsmc, reg=reg)
     return torch.mean(torch.sum(payoff, dim=0))
+
+
+def training_data(r0_vec, t0, calc_dU_dr, calc_dPrd_dr, use_av: bool = True):
+    if use_av:
+        r0_vec = torch.hstack([r0_vec, r0_vec])
+
+    x_train, dxdr = calc_dU_dr(r0_vec, t0)
+    y_train, dydr = calc_dPrd_dr(r0_vec, t0)
+    y_train = y_train.reshape(-1, 1)
+    dydr = dydr.reshape(-1, 1)
+
+    solve_rowwise = lambda dxdr_, dydr_: (torch.pinverse(dxdr_.T) @ dydr_.T).flatten()
+    equations = (
+        (dxdr[i, :].reshape(-1, 1), dydr[i, :].reshape(-1, 1)) for i in range(len(r0_vec))
+    )
+    solutions = itertools.starmap(solve_rowwise, equations)
+    z_train = torch.vstack(list(solutions))
+
+    if use_av:
+        x_train = x_train[:N_train]
+        y_train = 0.5 * (y_train[:N_train] + y_train[N_train:])
+        z_train = 0.5 * (z_train[:N_train] + z_train[N_train:])
+    return x_train, y_train, z_train
 
 
 if __name__ == '__main__':
@@ -36,7 +60,7 @@ if __name__ == '__main__':
 
     seed = 1234
     N_train = 4096
-    use_av = True
+    use_av = False
 
     test_bump_size_bp = torch.tensor(1.0)
 
@@ -159,7 +183,16 @@ if __name__ == '__main__':
                 mc_prices[r0] = price.view(1)
         mc_prices = dict(sorted(mc_prices.items()))
         y_test = torch.tensor(list(mc_prices.values())).reshape(-1, 1)
-        z_test = y_test.diff(dim=0) / x_test.diff(dim=0)
+
+        # z_test = y_test.diff(dim=0) / x_test.diff(dim=0)
+        solve_rowwise = lambda dxdr_, dydr_: (torch.pinverse(dxdr_.T) @ dydr_.T).flatten()
+        dxdr = x_test.diff(dim=0)
+        dydr = y_test.diff(dim=0)
+        equations = (
+            (dxdr[i, :].reshape(-1, 1), dydr[i, :].reshape(-1, 1)) for i in range(len(r0_test_vec) - 1)
+        )
+        solutions = itertools.starmap(solve_rowwise, equations)
+        z_test = torch.vstack(list(solutions))
 
         # Export results
         if test_set_filename is not None:
@@ -181,22 +214,47 @@ if __name__ == '__main__':
 
     _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
 
+    """ Plot results"""
     RMSE_price = torch.sqrt(torch.mean((y_pred - y_test) ** 2))
-    MAE_delta = torch.mean(torch.abs(z_pred[1:] - z_test))
+    MAE_delta = torch.mean(torch.abs(z_pred[1:] - z_test), dim=0)
+
+    dyn_alpha = min(0.25 * 1024 / N_train, 0.5)
+    av_str = 'with AV' if use_av else 'without AV'
+    interactions_str = 'with interactions' if include_interactions else 'without interactions'
 
     fig, ax = plt.subplots(nrows=2, ncols=len(exerciseDates), sharex='col')
 
     for i in range(len(exerciseDates)):
-        ax[0, i].plot(x_train[:, i].flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25 * 1024 / N_train)
-        ax[0, i].plot(x_test[:, i].flatten(), y_test, color='black')
-        ax[0, i].plot(x_test[:, i].flatten(), y_pred, 'o', color='orange', alpha=0.5)
+        ax[0, i].plot(x_train[:, i].flatten(), y_train.flatten(), 'o', color='gray', alpha=dyn_alpha, label='Sample Payoffs')
+        ax[0, i].plot(x_test[:, i].flatten(), y_pred, 'o', color='orange', alpha=0.5, label='DiffReg')
+        ax[0, i].plot(x_test[:, i].flatten(), y_test, color='black', label='MC (bump & reval)')
+        ax[0, i].text(0.05, 0.8, f'RMSE = {RMSE_price:,.2f}', fontsize=8, transform=ax[0, i].transAxes)
 
-        ax[1, i].plot(x_train[:, i].flatten(), z_train[:, i].flatten(), 'o', color='gray', alpha=0.25 * 1024 / N_train)
-        ax[1, i].plot(x_test[1:, i].flatten(), z_test[:, i].flatten(), color='black')
-        ax[1, i].plot(x_test[1:, i].flatten(), z_pred[1:, i].flatten(), 'o', color='orange', alpha=0.5)
+        ax[1, i].plot(x_train[:, i].flatten(), z_train[:, i].flatten(), 'o', color='gray', alpha=dyn_alpha, label='Sample Differentials')
+        ax[1, i].plot(x_test[1:, i].flatten(), z_pred[1:, i].flatten(), 'o', color='orange', alpha=0.5, label='DiffReg')
+        ax[1, i].plot(x_test[1:, i].flatten(), z_test[:, i].flatten(), color='black', label='MC (bump & reval)')
+        ax[1, i].text(0.05, 0.8, f'MAE = {MAE_delta[i]:,.4f}', fontsize=8, transform=ax[1, i].transAxes)
 
+        ax[1, i].set_xlabel(f'Swap(0; {float_to_time_str(exerciseDates[i])} | '
+                            f'{float_to_time_str(swapLastFixingDate)}x{float_to_time_str(delta)})')
+
+        # Adjust size of price plot
+        box = ax[0, i].get_position()
+        ax[0, i].set_position([box.x0, box.y0, box.width, box.height * 0.8])
+
+    ax[0, 0].set_ylabel('Value')
+    ax[1, 0].set_ylabel('Delta')
+
+    # Title
+    fig.suptitle(
+        prd.name + '\n' + f'alpha = {alpha}, deg={deg} ({interactions_str}), {N_train} training samples ' + av_str)
+
+    # Legend
+    handles, labels = fig.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=3, fancybox=True, shadow=True,
+               bbox_to_anchor=(0.5, 0.90))
+
+    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_BerPayerSwpt.png'), dpi=400)
     plt.show()
-
-
-
 
