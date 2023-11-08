@@ -1,9 +1,8 @@
 from application.engine.products import Caplet
 from application.engine.trolleSchwartz import trolleSchwartz
-from application.engine.vasicek import Vasicek
 import torch
 from application.engine.mcBase import mcSim, RNG
-import matplotlib.pyplot as plt
+
 
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
@@ -13,9 +12,6 @@ if __name__ == "__main__":
     seed = 1234
     N = 1024*10
     measure = 'risk_neutral'
-    produce_plots = False
-    perform_calibration = False
-    gradient_plot = True
 
     # Trolle-Schwartz model specification
     kappa = torch.tensor(0.0553) #0553
@@ -39,7 +35,7 @@ if __name__ == "__main__":
     # instantiate model
     model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
 
-    rng = RNG(seed=seed, use_av=False)
+    rng = RNG(seed=seed, use_av=True)
 
     prd = Caplet(
         strike=strike,
