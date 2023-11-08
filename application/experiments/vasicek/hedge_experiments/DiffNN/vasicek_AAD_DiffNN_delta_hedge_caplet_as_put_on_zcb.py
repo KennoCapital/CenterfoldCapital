@@ -4,12 +4,10 @@ from torch.autograd.functional import jvp
 from tqdm import tqdm
 from application.engine.vasicek import Vasicek
 from application.engine.products import CapletAsPutOnZCB
-from application.engine.standard_scalar import DifferentialStandardScaler
-from application.engine.differential_Regression import DifferentialPolynomialRegressor
+from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_nn
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.path_config import get_plot_path
 from application.utils.torch_utils import max0
-from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_reg
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
@@ -20,19 +18,25 @@ if __name__ == '__main__':
     N_train = 1024
     N_test = 256
     use_av = True
+    save_plot = False
 
-    hedge_points = 250
-
-    r0_min = 0.04
-    r0_max = 0.11
-
+    # Hedge experiment settings
+    hedge_points = 25
+    r0_min = 0.06
+    r0_max = 0.13
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
-    # Setup Differential Regressor, and Scalar
-    deg = 9
-    alpha = 1.0
-    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
-    scalar = DifferentialStandardScaler()
+    # Differential Neural Network Settings
+    seed_weights = 1234
+    epochs = 100
+    batches_per_epoch = 32
+    min_batch_size = 256
+    lam = 1.0
+    hidden_units = 20
+    hidden_layers = 4
+    nn_params = {'N_train': N_train, 'seed_weights': seed_weights, 'epochs': epochs,
+                 'batches_per_epoch': batches_per_epoch,'min_batch_size': min_batch_size,
+                 'lam': lam, 'hidden_units': hidden_units, 'hidden_layers': hidden_layers}
 
     # Model specification
     a = torch.tensor(0.86)
@@ -47,7 +51,7 @@ if __name__ == '__main__':
 
     # Product specification
     exerciseDate = torch.tensor(1.0)
-    delta = torch.tensor(0.25)
+    delta = torch.tensor(.25)
     notional = torch.tensor(1e6)
 
     strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
@@ -67,7 +71,7 @@ if __name__ == '__main__':
     # Find index of the exercise date
     last_idx = int((dTL == exerciseDate).nonzero(as_tuple=True)[0])
 
-    """ Helper functions for calculating pathwise payoffs and deltas, and generating training data """
+    """ Helper functions (AAD friendly) for calculating pathwise payoffs and deltas, and generating training data """
     def calc_dzcb_dr(r0_vec, t0):
         """
         :param  r0_vec:    Current Short rate r0
@@ -84,7 +88,6 @@ if __name__ == '__main__':
         ones = torch.ones_like(r0_vec)
         res = jvp(_zcb, r0_vec, ones, create_graph=False)
         return res
-
 
     def calc_dcpl_dr(r0_vec, t0):
         """
@@ -122,8 +125,9 @@ if __name__ == '__main__':
     zcb = mdl.calc_zcb(r[0, :], exerciseDate + delta)[0]
 
     V = cpl * torch.ones_like(r[0, :])
-    h_a = calc_delta_diff_reg(u_vec=zcb, t0=0.0, r0_vec=r0_vec,
-                              calc_dU_dr=calc_dzcb_dr, calc_dPrd_dr=calc_dcpl_dr, diff_reg=diff_reg, use_av=use_av)
+    h_a = calc_delta_diff_nn(u_vec=zcb, r0_vec=r0_vec, t0=0.0,
+                             calc_dPrd_dr=calc_dcpl_dr, calc_dU_dr=calc_dzcb_dr,
+                             nn_Params=nn_params, use_av=use_av)
     h_b = (V - h_a * zcb) / B
 
     cpl_prices = [V]
@@ -145,8 +149,9 @@ if __name__ == '__main__':
         cpl_prices.append(mdl.calc_cpl(r[k, :], exerciseDate-t, delta, strike, notional))
 
         if k < last_idx:
-            h_a = calc_delta_diff_reg(u_vec=zcb, r0_vec=r0_vec, t0=t,
-                                      calc_dU_dr=calc_dzcb_dr, calc_dPrd_dr=calc_dcpl_dr, diff_reg=diff_reg, use_av=use_av)
+            h_a = calc_delta_diff_nn(u_vec=zcb, r0_vec=r0_vec, t0=t,
+                                     calc_dPrd_dr=calc_dcpl_dr, calc_dU_dr=calc_dzcb_dr,
+                                    nn_Params=nn_params, use_av=use_av)
             h_b = (V - h_a * zcb) / B
 
     V_values = torch.vstack(V_values)
@@ -183,13 +188,13 @@ if __name__ == '__main__':
 
     # Title
     fig.suptitle(
-        prd.name + f'\nHedgeFreq={dTL[1]:.4g}, alpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
+        prd.name + f'\nHedgeFreq={dTL[1]:.4g}, epochs = {100}, nw={hidden_layers}x{hidden_units}, {N_train} training samples ' + av_str)
 
     # Legend
     handles, labels = fig.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
-
-    # plt.savefig(get_plot_path('vasicek_AAD_DiffReg_Caplet_delta_hedge.png'), dpi=400)
+    if save_plot:
+        plt.savefig(get_plot_path('vasicek_AAD_DiffNN_delta_hedge_caplet.png'), dpi=400)
     plt.show()

@@ -257,4 +257,3 @@ if __name__ == '__main__':
 
     plt.savefig(get_plot_path('vasicek_AAD_DiffReg_BerPayerSwpt.png'), dpi=400)
     plt.show()
-

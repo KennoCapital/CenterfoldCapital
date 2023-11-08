@@ -418,4 +418,9 @@ def calibrate_vasicek_zcb_price(maturities, market_prices, a=1.00, b=0.05, sigma
             'disp': True
         })
 
-
+def choose_training_grid(r : torch.Tensor, training_sz : int):
+    sd = r.std()
+    lower = r.min() - sd
+    upper = r.max() + sd
+    grid = torch.linspace(lower, upper, training_sz)
+    return grid
