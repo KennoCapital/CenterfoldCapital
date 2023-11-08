@@ -14,7 +14,11 @@ Testing implementation of Bermudan swaption and computes naive upper and lower b
 if __name__ == '__main__':
     seed = 1234
 
+    use_SVD = True
+    bias = True
+    include_interactions = True
     deg = 5
+
     n = 5000
     N = 50000
 
@@ -27,9 +31,7 @@ if __name__ == '__main__':
 
     exerciseDates = torch.tensor([5.0, 10.0, 15.0])
     delta = torch.tensor(0.25)
-    swapFirstFixingDate = torch.tensor(15.0)
     swapLastFixingDate = torch.tensor(30.0)
-    # strike = torch.tensor(0.09102013)
     notional = torch.tensor(1e6)
 
     if measure == 'risk_neutral':
@@ -39,9 +41,9 @@ if __name__ == '__main__':
 
     model = Vasicek(a, b, sigma, r0, False, False, measure)
 
-    t = torch.linspace(float(swapFirstFixingDate),
+    t = torch.linspace(float(exerciseDates[-1]),
                        float(swapLastFixingDate),
-                       int((swapLastFixingDate - swapFirstFixingDate) / delta) + 1)
+                       int((swapLastFixingDate - exerciseDates[-1]) / delta) + 1)
     strike = model.calc_swap_rate(r0, t, delta)
 
     rng = RNG(seed=seed, use_av=True)
@@ -51,12 +53,11 @@ if __name__ == '__main__':
         strike=strike,
         exerciseDates=exerciseDates,
         delta=delta,
-        swapFirstFixingDate=swapFirstFixingDate,
         swapLastFixingDate=swapLastFixingDate,
         notional=notional
     )
 
-    poly_reg = PolynomialRegressor(deg=deg, use_SVD=True)
+    poly_reg = PolynomialRegressor(deg=deg, use_SVD=use_SVD, bias=bias, include_interactions=include_interactions)
     lsmc = LSMC(reg=poly_reg)
 
     payoff = lsmcDefaultSim(
@@ -65,25 +66,11 @@ if __name__ == '__main__':
 
     price_bermudan_payer_swpt = torch.mean(torch.sum(payoff, dim=0))
 
-    print(f'BermudanPayerSwpt = {price_bermudan_payer_swpt}')
+    # Determine upper and lower bound
+    lower_bound = torch.tensor(0.0)
+    upper_bound = torch.tensor(0.0)
+    eu_prices = []
 
-    # European Payer Swaption (lower bound)
-    european_payer_swpt = EuropeanPayerSwaption(
-        strike=strike,
-        exerciseDate=exerciseDates[-1],
-        delta=delta,
-        swapFirstFixingDate=exerciseDates[-1],
-        swapLastFixingDate=swapLastFixingDate,
-        notional=notional
-    )
-
-    payoff = mcSim(prd=european_payer_swpt, mdl=model, rng=rng, N=N, dTL=dTL)
-    price_european_payer_swpt = torch.mean(payoff)
-
-    print(f'EuropeanPayerSwpt (lower bound) = {price_european_payer_swpt}')
-
-    # Sum of European Payer Swaption (upper bound)
-    upper_bound = 0.0
     for T in exerciseDates:
         european_payer_swpt = EuropeanPayerSwaption(
             strike=strike,
@@ -95,6 +82,12 @@ if __name__ == '__main__':
         )
 
         payoff = mcSim(prd=european_payer_swpt, mdl=model, rng=rng, N=N, dTL=dTL)
-        upper_bound += torch.mean(payoff)
+        eu_prices.append(torch.mean(payoff).view(1))
 
+    eu_prices = torch.concat(eu_prices)
+    lower_bound = torch.max(eu_prices)
+    upper_bound = torch.sum(eu_prices)
+
+    print(f'EuropeanPayerSwpt (lower bound) = {lower_bound}')
+    print(f'BermudanPayerSwpt = {price_bermudan_payer_swpt}')
     print(f'EuropeanPayerSwpt (upper bound) = {upper_bound}')

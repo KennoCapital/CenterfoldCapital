@@ -1,5 +1,6 @@
-from abc import ABC, abstractmethod
 import torch
+import itertools
+from abc import ABC, abstractmethod
 from application.engine.standard_scalar import StandardScaler
 
 
@@ -23,32 +24,65 @@ def normal_equation(X: torch.Tensor, y: torch.Tensor, use_SVD: bool = True):
     return w.squeeze()
 
 
-def create_polynomial_features(X: torch.tensor, deg: int = 5, bias: bool = True):
+def polynomial_powers(deg: int, n_features: int, include_interactions: bool = False):
+    if include_interactions:
+        comb = itertools.combinations_with_replacement
+        iter = itertools.chain.from_iterable(
+            comb(range(n_features), i) for i in range(1, deg + 1)
+        )
+
+        powers = torch.vstack(
+            [torch.bincount(torch.tensor(c), minlength=n_features) for c in iter]
+        )
+    else:
+        powers = torch.tensor(
+            [[p for _ in range(n_features)] for p in range(1, deg + 1)]
+        )
+
+    return powers
+
+
+def create_polynomial_features(
+        X: torch.tensor,
+        deg: int = 5,
+        bias: bool = True,
+        include_interactions: bool = False
+):
     """
     param:  X:              Matrix which size NxM. Rows are observations and columns are features
     param:  deg:            Degree of the polynomial
     param:  bias:           Add an intercept, i.e. a feature (column) where all observations (rows) are one (1)
+    param:  include_interactions:
+                            Include interactions between the monomials for all features
 
     returns:
         A matrix with the transformed features.
+        A matrix with the powers
 
     Note:
     X is assumed to be a matrix with dim (N, M),
         where each row is an observation.
-    The features generated are
-        [1, x[i], x[i]**2, x[i]**3, ... x[i]**deg].
     After the transformation, all the features are stacked horizontally.
     """
     if X.dim() == 1:
         X = X.reshape(-1, 1)
-    X_pow = torch.hstack([torch.pow(X, i) for i in range(1, deg + 1)])
+
+    n_features = X.shape[1]
+
+    powers = polynomial_powers(deg=deg, n_features=n_features, include_interactions=include_interactions)
+
+    X_pow = torch.hstack([torch.prod(torch.pow(X, p), dim=1, keepdim=True) for p in powers])
+
     if bias:
-        one = torch.ones(size=(len(X), 1))
-        phi = torch.hstack([one, X_pow])
+        ones = torch.ones(size=(len(X), 1))
+        phi = torch.hstack([ones, X_pow])
+
+        zeros = torch.zeros(size=(1, powers.shape[1]))
+        powers = torch.vstack([zeros, powers])
     else:
         phi = X_pow
 
-    return phi
+    return phi, powers
 
 
 class OLSRegressor(ABC):
@@ -71,7 +105,7 @@ class OLSRegressor(ABC):
 
 
 class PolynomialRegressor(OLSRegressor):
-    def __init__(self, deg: int = 5, use_SVD: bool = True, bias: bool = True):
+    def __init__(self, deg: int = 5, use_SVD: bool = True, bias: bool = True, include_interactions: bool = False):
         """
         param:  deg:            Degree of the polynomial
         param:  standardize:    Standardize covariates (X) to have mean zero and variance one
@@ -81,7 +115,9 @@ class PolynomialRegressor(OLSRegressor):
         self.deg = deg
         self.use_SVD = use_SVD
         self.bias = bias
+        self.include_interactions = include_interactions
         self._coef = None
+        self._powers = None
 
     @property
     def coef(self):
@@ -93,9 +129,9 @@ class PolynomialRegressor(OLSRegressor):
         self._coef = coef
 
     def fit(self, X: torch.Tensor, y: torch.Tensor):
-        phi = create_polynomial_features(X, deg=self.deg, bias=self.bias)
+        phi, self._powers = create_polynomial_features(X, deg=self.deg, bias=self.bias, include_interactions=self.include_interactions)
         self._coef = normal_equation(phi, y, self.use_SVD)
 
     def predict(self, X):
-        phi = create_polynomial_features(X, deg=self.deg, bias=self.bias)
+        phi, _ = create_polynomial_features(X, deg=self.deg, bias=self.bias, include_interactions=self.include_interactions)
         return (phi @ self._coef).squeeze()

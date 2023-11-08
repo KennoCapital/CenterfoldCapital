@@ -2,6 +2,9 @@ import torch
 import pickle
 import os
 import matplotlib.pyplot as plt
+import itertools
+from functools import partial
+from concurrent.futures import ProcessPoolExecutor
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek
 from application.engine.products import BermudanPayerSwaption
@@ -10,21 +13,54 @@ from application.engine.differential_Regression import DifferentialPolynomialReg
 from application.engine.mcBase import RNG, LSMC, lsmcDefaultSim
 from application.engine.regressor import PolynomialRegressor
 from application.utils.path_config import get_plot_path, get_data_path
+from application.utils.prd_name_conventions import float_to_time_str
 from tqdm import tqdm
-from application.experiments.vasicek.vasicek_hedge_tools import training_data
 
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
+MAX_PROCESSES = os.cpu_count() - 1
+
+
+def calc_mc_swpt(r0, a, b, sigma, prd, lsmc, reg, seed: int = None):
+    tmp_mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure='terminal')
+    tmp_rng = RNG(seed=seed, use_av=True)
+    payoff = lsmcDefaultSim(prd=prd, mdl=tmp_mdl, rng=tmp_rng, N=250000, n=25000, lsmc=lsmc, reg=reg)
+    return torch.mean(torch.sum(payoff, dim=0))
+
+
+def training_data(r0_vec, t0, calc_dU_dr, calc_dPrd_dr, use_av: bool = True):
+    if use_av:
+        r0_vec = torch.hstack([r0_vec, r0_vec])
+
+    x_train, dxdr = calc_dU_dr(r0_vec, t0)
+    y_train, dydr = calc_dPrd_dr(r0_vec, t0)
+    y_train = y_train.reshape(-1, 1)
+    dydr = dydr.reshape(-1, 1)
+
+    solve_rowwise = lambda dxdr_, dydr_: (torch.pinverse(dxdr_.T) @ dydr_.T).flatten()
+    equations = (
+        (dxdr[i, :].reshape(-1, 1), dydr[i, :].reshape(-1, 1)) for i in range(len(r0_vec))
+    )
+    solutions = itertools.starmap(solve_rowwise, equations)
+    z_train = torch.vstack(list(solutions))
+
+    if use_av:
+        x_train = x_train[:N_train]
+        y_train = 0.5 * (y_train[:N_train] + y_train[N_train:])
+        z_train = 0.5 * (z_train[:N_train] + z_train[N_train:])
+    return x_train, y_train, z_train
+
+
 if __name__ == '__main__':
     # Set this to `None` if existing data should not be imported
-    test_set_filename = 'vasicek_BerPayerSwpt_test_set'
+    test_set_filename = 'vasicek_BerPayerSwpt_test_set_086'
     filename_path = get_data_path(test_set_filename + '.pkl')
 
     seed = 1234
-    N_train = 16384
-    use_av = True
+    N_train = 4096
+    use_av = False
 
     test_bump_size_bp = torch.tensor(1.0)
 
@@ -36,10 +72,20 @@ if __name__ == '__main__':
     r0_vec = torch.linspace(float(r0_min), float(r0_max), N_train)
 
     # Setup Differential Regressor, and Scalar
-    deg_lsmc = 15
-    deg = 15
+    deg_lsmc = 5
+    deg = 5
     alpha = 1.0
-    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
+    use_SVD = True
+    bias = True
+    include_interactions = True
+
+    diff_reg = DifferentialPolynomialRegressor(
+        deg=deg,
+        alpha=alpha,
+        use_SVD=use_SVD,
+        bias=bias,
+        include_interactions=include_interactions
+    )
     scalar = DifferentialStandardScaler()
 
     # Model specification
@@ -56,40 +102,46 @@ if __name__ == '__main__':
     # Product specification
     exerciseDates = torch.tensor([1.0, 2.0, 5.0])
     delta = torch.tensor(0.25)
-    swapFirstFixingDate = torch.tensor(5.0)
     swapLastFixingDate = torch.tensor(10.0)
     notional = torch.tensor(1e6)
 
-    t_swap_fixings = torch.linspace(
-        float(swapFirstFixingDate),
+    t0_swap_fixings = torch.linspace(
+        float(exerciseDates[-1]),
         float(swapLastFixingDate),
-        int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
+        int((swapLastFixingDate - exerciseDates[-1]) / delta + 1)
     )
 
-    strike = mdl.calc_swap_rate(r0, t_swap_fixings, delta)
+    strike = mdl.calc_swap_rate(r0, t0_swap_fixings, delta)
 
     prd = BermudanPayerSwaption(
         strike=strike,
         exerciseDates=exerciseDates,
         delta=delta,
-        swapFirstFixingDate=swapFirstFixingDate,
         swapLastFixingDate=swapLastFixingDate,
         notional=notional
     )
 
-    poly_reg = PolynomialRegressor(deg=deg_lsmc, use_SVD=True)
+    idx_start = int(0.0 not in exerciseDates)
+    t_swap_fixings = [sample.irs[0].fixingDates for i, sample in enumerate(prd.defline[idx_start:])]
+
+    poly_reg = PolynomialRegressor(deg=deg_lsmc, use_SVD=use_SVD, bias=bias, include_interactions=include_interactions)
     lsmc = LSMC(reg=poly_reg)
 
     """ Helper functions for generating training data of pathwise payoffs and deltas """
 
     def calc_dswap_dr(r0_vec, t0):
-        def _swap_price(r0_vec):
-            tau = t_swap_fixings - t0
-            S = mdl.calc_swap(r0_vec, tau, delta, strike, notional)
-            return S
         ones = torch.ones_like(r0_vec)
-        res = jvp(_swap_price, r0_vec, ones, create_graph=False)
-        return res
+        res = []
+        for i in range(len(exerciseDates)):
+            def _swap_price(r0_vec):
+                tau = t_swap_fixings[i] - t0
+                S = mdl.calc_swap(r0_vec, tau, delta, strike, notional)
+                return S
+            Jv = jvp(_swap_price, r0_vec, ones, create_graph=False)
+            res.append(Jv)
+        prices = torch.vstack([x[0] for x in res]).T
+        derivs = torch.vstack([x[1] for x in res]).T
+        return prices, derivs
 
     def calc_dswpt_dr(r0_vec, t0):
         def _swpt(r0_vec):
@@ -98,83 +150,104 @@ if __name__ == '__main__':
                     strike=strike,
                     exerciseDates=exerciseDates - t0,
                     delta=delta,
-                    swapFirstFixingDate=swapFirstFixingDate - t0,
                     swapLastFixingDate=swapLastFixingDate - t0,
                     notional=notional
                 )
             cRng = RNG(seed=seed, use_av=use_av)
-            cPoly_reg = PolynomialRegressor(deg=deg_lsmc)
+            cPoly_reg = PolynomialRegressor(deg=deg_lsmc, use_SVD=use_SVD, bias=bias, include_interactions=include_interactions)
             cLsmc = LSMC(reg=cPoly_reg)
             payoff = lsmcDefaultSim(prd=cPrd, mdl=cMdl, rng=cRng, N=len(r0_vec), n=len(r0_vec), lsmc=cLsmc)
             return torch.sum(payoff, dim=0)
         ones = torch.ones_like(r0_vec)
-        J = jvp(func=_swpt, inputs=r0_vec, v=ones, create_graph=False)
-        return J
+        prices, derivs = jvp(func=_swpt, inputs=r0_vec, v=ones, create_graph=False)
+        return prices, derivs
 
 
     """ Calculate `true` swaption price using Monte Carlo for comparison """
     if test_set_filename is not None and os.path.isfile(filename_path):
         with open(filename_path, "rb") as input_file:
-            X_test, y_test, z_test = pickle.load(input_file)
+            x_test, y_test, z_test = pickle.load(input_file)
     else:
         r0_test_vec = torch.linspace(float(r0_min), float(r0_max), int(N_test) + 1)
-        X_test = mdl.calc_swap(r0_test_vec, t_swap_fixings, delta, strike, notional).reshape(-1, 1)
-        y_test = torch.full_like(r0_test_vec, torch.nan)
-        for j in tqdm(range(len(r0_test_vec)), desc='Calculating pricing of BerPayerSwpt using MC'):
-            tmp_mdl = Vasicek(a, b, sigma, r0_test_vec[j], use_ATS=True, use_euler=False, measure='terminal')
-            tmp_rng = RNG(seed=seed, use_av=True)
-            payoff = lsmcDefaultSim(prd=prd, mdl=tmp_mdl, rng=tmp_rng, N=500000, n=25000, lsmc=lsmc, reg=poly_reg)
-            y_test[j] = torch.mean(torch.sum(payoff, dim=0))
-        y_test = y_test.reshape(-1, 1)
-        z_test = y_test.diff(dim=0) / X_test.diff(dim=0)
+        x_test = torch.hstack(
+            [mdl.calc_swap(r0_test_vec, t_swap_fixings[i], delta, strike, notional).reshape(-1, 1)
+             for i in range(len(exerciseDates))]
+        )
+
+        mc_prices = {}
+        with ProcessPoolExecutor(MAX_PROCESSES) as executor:
+            pFunc = partial(calc_mc_swpt, a=a, b=b, sigma=sigma, prd=prd, lsmc=lsmc, reg=poly_reg, seed=seed)
+            for r0, price in tqdm(zip(r0_test_vec, executor.map(pFunc, r0_test_vec)),
+                                  desc=f'Pricing BerPayerSwpt using MC ({MAX_PROCESSES} processes)',
+                                  total=len(r0_test_vec)):
+                mc_prices[r0] = price.view(1)
+        mc_prices = dict(sorted(mc_prices.items()))
+        y_test = torch.tensor(list(mc_prices.values())).reshape(-1, 1)
+
+        # z_test = y_test.diff(dim=0) / x_test.diff(dim=0)
+        solve_rowwise = lambda dxdr_, dydr_: (torch.pinverse(dxdr_.T) @ dydr_.T).flatten()
+        dxdr = x_test.diff(dim=0)
+        dydr = y_test.diff(dim=0)
+        equations = (
+            (dxdr[i, :].reshape(-1, 1), dydr[i, :].reshape(-1, 1)) for i in range(len(r0_test_vec) - 1)
+        )
+        solutions = itertools.starmap(solve_rowwise, equations)
+        z_test = torch.vstack(list(solutions))
 
         # Export results
         if test_set_filename is not None:
             with open(filename_path, 'wb') as output_file:
-                pickle.dump((X_test, y_test, z_test), output_file, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump((x_test, y_test, z_test), output_file, protocol=pickle.HIGHEST_PROTOCOL)
 
     """ Estimate Price and Delta using Differential Regression """
 
-    swap_vec = mdl.calc_swap(r0_vec, t_swap_fixings, delta, strike, notional)
-    X_train, y_train, z_train = training_data(
+    x_train, y_train, z_train = training_data(
         r0_vec=r0_vec, t0=0.0, calc_dU_dr=calc_dswap_dr, calc_dPrd_dr=calc_dswpt_dr, use_av=use_av
     )
 
-    X_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(X_train, y_train, z_train)
+    x_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(x_train, y_train, z_train)
 
-    diff_reg.fit(X_train_scaled, y_train_scaled, z_train_scaled)
+    diff_reg.fit(x_train_scaled, y_train_scaled, z_train_scaled)
 
-    X_test_scaled, _, _ = scalar.transform(X_test, None, None)
-    y_pred_scaled, z_pred_scaled = diff_reg.predict(X_test_scaled, predict_derivs=True)
+    x_test_scaled, _, _ = scalar.transform(x_test, None, None)
+    y_pred_scaled, z_pred_scaled = diff_reg.predict(x_test_scaled, predict_derivs=True)
 
     _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
 
+    """ Plot results"""
     RMSE_price = torch.sqrt(torch.mean((y_pred - y_test) ** 2))
-    MAE_delta = torch.mean(torch.abs(z_pred[1:] - z_test))
+    MAE_delta = torch.mean(torch.abs(z_pred[1:] - z_test), dim=0)
 
-    """ Plot results """
-    fig, ax = plt.subplots(2, sharex='col')
-    # Plot price function
-    ax[0].plot(X_train.flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25, label='Pathwise samples')
-    ax[0].plot(X_test.flatten(), y_pred, label='DiffReg', color='orange')
-    ax[0].plot(X_test, y_test, color='black', label='MC (Bump and reval)')
-    ax[0].set_ylabel('Price')
-    ax[0].text(0.05, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0].transAxes)
+    dyn_alpha = min(0.25 * 1024 / N_train, 0.5)
+    av_str = 'with AV' if use_av else 'without AV'
+    interactions_str = 'with interactions' if include_interactions else 'without interactions'
 
-    # Plot delta function
-    ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
-    ax[1].plot(X_test, z_pred, label='DiffReg', color='orange')
-    ax[1].plot(X_test[1:], z_test, color='black', label='MC (Bump and reval)')
-    ax[1].set_xlabel('Swap(0)')
-    ax[1].set_ylabel('Delta')
-    ax[1].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1].transAxes)
+    fig, ax = plt.subplots(nrows=2, ncols=len(exerciseDates), sharex='col')
 
-    # Adjust size of subplots
-    box0 = ax[0].get_position()
-    ax[0].set_position([box0.x0, box0.y0 - box0.height * 0.1, box0.width, box0.height * 0.9])
+    for i in range(len(exerciseDates)):
+        ax[0, i].plot(x_train[:, i].flatten(), y_train.flatten(), 'o', color='gray', alpha=dyn_alpha, label='Sample Payoffs')
+        ax[0, i].plot(x_test[:, i].flatten(), y_pred, 'o', color='orange', alpha=0.5, label='DiffReg')
+        ax[0, i].plot(x_test[:, i].flatten(), y_test, color='black', label='MC (bump & reval)')
+        ax[0, i].text(0.05, 0.8, f'RMSE = {RMSE_price:,.2f}', fontsize=8, transform=ax[0, i].transAxes)
 
-    box1 = ax[1].get_position()
-    ax[1].set_position([box1.x0, box1.y0, box1.width, box1.height * 0.9])
+        ax[1, i].plot(x_train[:, i].flatten(), z_train[:, i].flatten(), 'o', color='gray', alpha=dyn_alpha, label='Sample Differentials')
+        ax[1, i].plot(x_test[1:, i].flatten(), z_pred[1:, i].flatten(), 'o', color='orange', alpha=0.5, label='DiffReg')
+        ax[1, i].plot(x_test[1:, i].flatten(), z_test[:, i].flatten(), color='black', label='MC (bump & reval)')
+        ax[1, i].text(0.05, 0.8, f'MAE = {MAE_delta[i]:,.4f}', fontsize=8, transform=ax[1, i].transAxes)
+
+        ax[1, i].set_xlabel(f'Swap(0; {float_to_time_str(exerciseDates[i])} | '
+                            f'{float_to_time_str(swapLastFixingDate)}x{float_to_time_str(delta)})')
+
+        # Adjust size of price plot
+        box = ax[0, i].get_position()
+        ax[0, i].set_position([box.x0, box.y0, box.width, box.height * 0.8])
+
+    ax[0, 0].set_ylabel('Value')
+    ax[1, 0].set_ylabel('Delta')
+
+    # Title
+    fig.suptitle(
+        prd.name + '\n' + f'alpha = {alpha}, deg={deg} ({interactions_str}), {N_train} training samples ' + av_str)
 
     # Legend
     handles, labels = fig.gca().get_legend_handles_labels()
@@ -182,9 +255,5 @@ if __name__ == '__main__':
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=3, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
 
-    # Title
-    av_str = 'with AV' if use_av else 'without AV'
-    fig.suptitle(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
-
-    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_BerPayerSwpt.png'), dpi=400)
+    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_BerPayerSwpt.png'), dpi=400)
     plt.show()

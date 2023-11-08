@@ -12,20 +12,25 @@ class DifferentialPolynomialRegressor:
                  deg: int = 5,
                  alpha: float = 1.0,
                  use_SVD: bool = True,
-                 bias: bool = True):
+                 bias: bool = True,
+                 include_interactions: bool = False):
         """
         param:  deg:            Degree of the polynomial
         param:  alpha:          Coefficient of Differential Regularization
         param:  use_SVD:        Use Singular Value Decomposition in the normal equation to solve for the coefficients
         param:  bias:           Add an intercept, i.e. a feature (column) where all observations (rows) are one (1)
+        param:  include_interactions:
+                                Include interactions between the monomials for all features
         """
         self.deg = deg
         self.alpha = alpha
         self.use_SVD = use_SVD
         self.bias = bias
+        self.include_interactions = include_interactions
         self._coef = None
+        self._powers = None
         self._eps = 1e-12
-        self._powers = torch.arange(start=int(not self.bias), end=self.deg + 1).reshape(-1, 1)
+
 
     @property
     def coef(self):
@@ -37,7 +42,7 @@ class DifferentialPolynomialRegressor:
         self._coef = coef
 
     def fit(self, X: torch.Tensor, y: torch.Tensor, z: torch.Tensor):
-        phi = create_polynomial_features(X, deg=self.deg, bias=self.bias)
+        phi, self._powers = create_polynomial_features(X, deg=self.deg, bias=self.bias, include_interactions=self.include_interactions)
         dphi = phi[:, :, None] * self._powers[None, :, :] / (X[:, None, :] + self._eps)
 
         lamj = (torch.pow(y, 2.0).mean(dim=0) / torch.pow(z, 2).mean(dim=0)).reshape(1, 1, -1)
@@ -50,12 +55,12 @@ class DifferentialPolynomialRegressor:
         self._coef = (inv @ (phi.T @ y + self.alpha * phiTz)).reshape(-1, 1)
 
     def predict(self, X, predict_derivs: bool = True):
-        phi = create_polynomial_features(X, deg=self.deg, bias=self.bias)
-        y_pred = (phi @ self._coef).squeeze()
+        phi, _ = create_polynomial_features(X, deg=self.deg, bias=self.bias, include_interactions=self.include_interactions)
+        y_pred = phi @ self._coef
 
         if predict_derivs:
             dphi = phi[:, :, None] * self._powers[None, :, :] / (X[:, None, :] + self._eps)
             z_pred = torch.tensordot(dphi, self._coef, dims=([1], [0])).reshape(dphi.shape[0], -1)
-            return y_pred.reshape(-1, 1), z_pred.reshape(-1, 1)
+            return y_pred, z_pred
         else:
-            return y_pred.reshape(-1, 1)
+            return y_pred
