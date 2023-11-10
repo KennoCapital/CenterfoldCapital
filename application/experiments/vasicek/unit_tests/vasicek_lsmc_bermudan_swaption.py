@@ -3,6 +3,7 @@ from application.engine.products import BermudanPayerSwaption, EuropeanPayerSwap
 from application.engine.vasicek import Vasicek
 from application.engine.regressor import PolynomialRegressor
 import torch
+import matplotlib.pyplot as plt
 
 torch.set_printoptions(2)
 torch.set_default_dtype(torch.float64)
@@ -13,6 +14,7 @@ Testing implementation of Bermudan swaption and computes naive upper and lower b
 
 if __name__ == '__main__':
     seed = 1234
+    plot_lower_bound = True
 
     use_SVD = True
     bias = True
@@ -91,3 +93,36 @@ if __name__ == '__main__':
     print(f'EuropeanPayerSwpt (lower bound) = {lower_bound}')
     print(f'BermudanPayerSwpt = {price_bermudan_payer_swpt}')
     print(f'EuropeanPayerSwpt (upper bound) = {upper_bound}')
+
+    if plot_lower_bound:
+        # European Payer Swaption constituents (lower bound)
+        EuPayerSwpts = []
+        prds = []
+        for e in exerciseDates:
+            european_payer_swpt = EuropeanPayerSwaption(
+                strike=strike,
+                exerciseDate=e,
+                delta=delta,
+                swapFirstFixingDate=e,
+                swapLastFixingDate=swapLastFixingDate,
+                notional=notional
+            )
+            prds.append(european_payer_swpt)
+
+            payoff = mcSim(prd=european_payer_swpt, mdl=model, rng=rng, N=N, dTL=dTL)
+            price_european_payer_swpt = torch.mean(payoff)
+            EuPayerSwpts.append(price_european_payer_swpt)
+
+        # Create a list of labels for the x-axis
+        x_labels = ['{}x{}'.format(int(i), int(swapLastFixingDate - i)) for i in exerciseDates]
+
+        # Create the plot
+        plt.figure()
+        plt.plot(EuPayerSwpts, '--o', label='European swaption')
+        plt.axhline(y=price_bermudan_payer_swpt, linestyle='dashed', color='orange', label='Bermudan swaption')
+        plt.xticks(range(len(EuPayerSwpts)), x_labels)  # Set x-axis tick positions and labels
+        plt.xlabel('Maturity x Tenor')
+        plt.title(
+            f'Bermudan payer swaption {int(swapLastFixingDate)}nc{int(exerciseDates[0])} struck at {strike[0].round(decimals=3) * 100}%')
+        plt.legend()
+        plt.show()

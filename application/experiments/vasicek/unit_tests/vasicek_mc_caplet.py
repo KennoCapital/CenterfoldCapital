@@ -18,10 +18,10 @@ if __name__ == '__main__':
     b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     r0 = torch.tensor(0.08)
-    notional = torch.tensor(1e6)
+    notional = torch.tensor(1.)
 
-    start = torch.tensor(5.0)
-    delta = torch.tensor(15.0)
+    start = torch.tensor(5.25)
+    delta = torch.tensor(1.25)
 
     dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
 
