@@ -11,8 +11,8 @@ torch.set_default_dtype(torch.float64)
 if __name__ == "__main__":
     # Setup
     seed = 1234
-    rep = 50
-    N_list = [2 ** i for i in range(10, 16)]  # ~1k to 65k
+    rep = 10
+    N_list = [2 ** i for i in range(7, 15)]  # ~0.100 to 65k
     measure = 'risk_neutral'
 
     # Trolle-Schwartz model specification
@@ -41,7 +41,7 @@ if __name__ == "__main__":
 
     # instantiate model
     model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
-    swap_rate = torch.tensor(0.084) #model.calc_swap_rate([x[:,0,:].mean(1) for x in model.x], t, delta)
+    swap_rate = model.calc_swap_rate([x.mean(0) for x in model.x0], t, delta)
     rng = RNG(seed=seed, use_av=True)
 
     prd = EuropeanPayerSwaption(
