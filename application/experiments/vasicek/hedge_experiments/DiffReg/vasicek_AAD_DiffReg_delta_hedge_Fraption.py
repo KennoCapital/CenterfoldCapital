@@ -8,7 +8,7 @@ from application.engine.differential_Regression import DifferentialPolynomialReg
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.path_config import get_plot_path
 from application.utils.torch_utils import max0
-from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_reg
+from application.experiments.vasicek.vasicek_hedge_tools import diff_reg_fit_predict
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
@@ -118,8 +118,9 @@ if __name__ == '__main__':
     fra = mdl.calc_fra(r[0, :], start, delta, strike, notional)[0]
 
     V = fraption
-    h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=0.0,
-                              calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg, use_av=use_av)
+    h_a = diff_reg_fit_predict(u_vec=fra, r0_vec=r0_vec, t0=0.0,
+                               calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr,
+                               diff_reg=diff_reg, use_av=use_av)[1].flatten()
     h_b = V - h_a * fra
 
     # Loop over time
@@ -134,8 +135,9 @@ if __name__ == '__main__':
         V = h_a * fra + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
         if k < len(dTL) - 1:
             r0_vec = choose_training_grid(r[k, :], N_train)
-            h_a = calc_delta_diff_reg(u_vec=fra, r0_vec=r0_vec, t0=t,
-                                      calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr, diff_reg=diff_reg, use_av=use_av)
+            h_a = diff_reg_fit_predict(u_vec=fra, r0_vec=r0_vec, t0=t,
+                                       calc_dPrd_dr=calc_dFraption_dr, calc_dU_dr=calc_dFRA_dr,
+                                       diff_reg=diff_reg, use_av=use_av)[1].flatten()
             h_b = V - h_a * fra
 
     rT = torch.linspace(r[-1].min(), r[-1].max(), N_test)

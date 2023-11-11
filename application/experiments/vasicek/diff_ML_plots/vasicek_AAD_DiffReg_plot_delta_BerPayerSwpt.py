@@ -3,6 +3,7 @@ import pickle
 import os
 import matplotlib.pyplot as plt
 import itertools
+from tqdm import tqdm
 from functools import partial
 from concurrent.futures import ProcessPoolExecutor
 from torch.autograd.functional import jvp
@@ -12,9 +13,9 @@ from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import RNG, LSMC, lsmcDefaultSim
 from application.engine.regressor import PolynomialRegressor
+from application.experiments.vasicek.vasicek_hedge_tools import training_data
 from application.utils.path_config import get_plot_path, get_data_path
 from application.utils.prd_name_conventions import float_to_time_str
-from tqdm import tqdm
 
 
 torch.set_printoptions(4)
@@ -28,29 +29,6 @@ def calc_mc_swpt(r0, a, b, sigma, prd, lsmc, reg, seed: int = None):
     tmp_rng = RNG(seed=seed, use_av=True)
     payoff = lsmcDefaultSim(prd=prd, mdl=tmp_mdl, rng=tmp_rng, N=250000, n=25000, lsmc=lsmc, reg=reg)
     return torch.mean(torch.sum(payoff, dim=0))
-
-
-def training_data(r0_vec, t0, calc_dU_dr, calc_dPrd_dr, use_av: bool = True):
-    if use_av:
-        r0_vec = torch.hstack([r0_vec, r0_vec])
-
-    x_train, dxdr = calc_dU_dr(r0_vec, t0)
-    y_train, dydr = calc_dPrd_dr(r0_vec, t0)
-    y_train = y_train.reshape(-1, 1)
-    dydr = dydr.reshape(-1, 1)
-
-    solve_rowwise = lambda dxdr_, dydr_: (torch.pinverse(dxdr_.T) @ dydr_.T).flatten()
-    equations = (
-        (dxdr[i, :].reshape(-1, 1), dydr[i, :].reshape(-1, 1)) for i in range(len(r0_vec))
-    )
-    solutions = itertools.starmap(solve_rowwise, equations)
-    z_train = torch.vstack(list(solutions))
-
-    if use_av:
-        x_train = x_train[:N_train]
-        y_train = 0.5 * (y_train[:N_train] + y_train[N_train:])
-        z_train = 0.5 * (z_train[:N_train] + z_train[N_train:])
-    return x_train, y_train, z_train
 
 
 if __name__ == '__main__':
@@ -184,7 +162,6 @@ if __name__ == '__main__':
         mc_prices = dict(sorted(mc_prices.items()))
         y_test = torch.tensor(list(mc_prices.values())).reshape(-1, 1)
 
-        # z_test = y_test.diff(dim=0) / x_test.diff(dim=0)
         solve_rowwise = lambda dxdr_, dydr_: (torch.pinverse(dxdr_.T) @ dydr_.T).flatten()
         dxdr = x_test.diff(dim=0)
         dydr = y_test.diff(dim=0)

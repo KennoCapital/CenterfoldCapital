@@ -8,7 +8,7 @@ from application.engine.differential_Regression import DifferentialPolynomialReg
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.path_config import get_plot_path
 from application.utils.torch_utils import max0
-from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_reg
+from application.experiments.vasicek.vasicek_hedge_tools import diff_reg_fit_predict
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
@@ -120,8 +120,9 @@ if __name__ == '__main__':
     zcb = mdl.calc_zcb(r[0, :], exerciseDate + delta)[0]
 
     V = cpl * torch.ones_like(r[0, :])
-    h_a = calc_delta_diff_reg(u_vec=zcb, t0=0.0, r0_vec=r0_vec,
-                              calc_dU_dr=calc_dzcb_dr, calc_dPrd_dr=calc_dcpl_dr, diff_reg=diff_reg, use_av=use_av)
+    h_a = diff_reg_fit_predict(u_vec=zcb, t0=0.0, r0_vec=r0_vec,
+                               calc_dU_dr=calc_dzcb_dr, calc_dPrd_dr=calc_dcpl_dr,
+                               diff_reg=diff_reg, use_av=use_av)[1].flatten()
     h_b = (V - h_a * zcb) / B
 
     cpl_prices = [V]
@@ -144,8 +145,9 @@ if __name__ == '__main__':
 
         if k < len(dTL) - 1:
             r0_vec = choose_training_grid(r[k,:], N_train)
-            h_a = calc_delta_diff_reg(u_vec=zcb, r0_vec=r0_vec, t0=t,
-                                      calc_dU_dr=calc_dzcb_dr, calc_dPrd_dr=calc_dcpl_dr, diff_reg=diff_reg, use_av=use_av)
+            h_a = diff_reg_fit_predict(u_vec=zcb, r0_vec=r0_vec, t0=t,
+                                       calc_dU_dr=calc_dzcb_dr, calc_dPrd_dr=calc_dcpl_dr,
+                                       diff_reg=diff_reg, use_av=use_av)[1].flatten()
             h_b = (V - h_a * zcb) / B
 
     V_values = torch.vstack(V_values)
@@ -165,7 +167,7 @@ if __name__ == '__main__':
 
     V *= mdl.calc_zcb(r[-1], delta)[0]
 
-    MAE_value = torch.mean(torch.abs(V - notional * K_bar * max0(1.0 / K_bar - mdl.calc_zcb(r[last_idx, :], delta)[0])))
+    MAE_value = torch.mean(torch.abs(V - notional * K_bar * max0(1.0 / K_bar - mdl.calc_zcb(r[-1, :], delta)[0])))
 
     """ Plot """
     av_str = 'with AV' if use_av else 'without AV'
