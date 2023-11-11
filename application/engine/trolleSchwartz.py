@@ -207,7 +207,7 @@ class trolleSchwartz(Model):
 
         return Wf, Wv
 
-    def _sigma(self, t, T):
+    def _fwd_rate_vol(self, t, T):
         """sigma(0,t) = (alpha0 + alpha1(T-t)) * exp^{ -gamma *(T-t) }"""
         return (self.alpha0 + self.alpha1 * (T-t)) * torch.exp(-self.gamma * (T-t))
 

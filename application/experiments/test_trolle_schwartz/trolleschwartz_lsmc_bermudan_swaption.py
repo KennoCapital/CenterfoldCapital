@@ -14,7 +14,7 @@ Testing implementation of Bermudan swaption and computes naive upper and lower b
 
 if __name__ == '__main__':
     seed = 1234
-    plot_lower_bound = False
+    plot_lower_bound = True
 
     deg = 5
     n = 500
@@ -23,14 +23,24 @@ if __name__ == '__main__':
     measure = 'risk_neutral'
 
     # Trolle-Schwartz model specification
+    kappa = torch.tensor(0.5509)  # 0553
+    sigma = torch.tensor(1.0497)  # 3325
+    alpha0 = torch.tensor(0.000)  # 45
+    alpha1 = torch.tensor(0.0046)  # 0131
+    gamma = torch.tensor(0.1777)
+    rho = torch.tensor(0.327)
+    theta = torch.tensor(2.1070)  # * torch.tensor(.1476)/ kappa
+    varphi = torch.tensor(0.068)
+    """
     kappa = torch.tensor(0.0553) #0553
     sigma = torch.tensor(0.3325) #3325
     alpha0 = torch.tensor(0.45) #45
     alpha1 = torch.tensor(0.0131) #0131
     gamma = torch.tensor(0.3341)
     rho = torch.tensor(0.4615)
-    theta = torch.tensor(0.7542) * torch.tensor(2.1476)/ kappa
+    theta = torch.tensor(0.7542) * torch.tensor(.1476)/ kappa
     varphi = torch.tensor(0.0832)
+    """
 
     # Product specification
     exerciseDates = torch.tensor([5.0, 10.0, 15.0])
@@ -137,8 +147,3 @@ if __name__ == '__main__':
         plt.legend()
         plt.show()
 
-        # plotting vol
-        v = model.x[1].squeeze()[:,0]
-        plt.figure()
-        plt.plot(v)
-        plt.show()
