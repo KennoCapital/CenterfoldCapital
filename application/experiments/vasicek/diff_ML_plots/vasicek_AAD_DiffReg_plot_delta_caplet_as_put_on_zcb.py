@@ -23,7 +23,7 @@ if __name__ == '__main__':
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Setup Differential Regressor, and Scalar
-    deg = 15
+    deg = 7
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
     scalar = DifferentialStandardScaler()
@@ -125,9 +125,6 @@ if __name__ == '__main__':
     y_mdl = mdl.calc_cpl(r0_test_vec, exerciseDate, delta, strike, notional)[0].reshape(-1, 1)
     z_mdl = y_mdl.diff(dim=0) / X_test.diff(dim=0)
 
-    plt.figure()
-    plt.plot(X_test, z_mdl, 'o')
-    plt.show()
 
     """ Estimate Price and Delta using Differential Regression """
 
