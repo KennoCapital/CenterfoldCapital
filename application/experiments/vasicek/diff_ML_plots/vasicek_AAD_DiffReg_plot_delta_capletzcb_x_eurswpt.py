@@ -18,8 +18,8 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    r0_min = -0.02
-    r0_max = 0.15
+    r0_min = 0.00
+    r0_max = 0.16
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -150,7 +150,7 @@ if __name__ == '__main__':
     ax[0,0].plot(X_test.flatten(), y_pred, label='DiffReg', color='orange')
     ax[0,0].plot(X_test, y_mdl, color='black', label='Analytical (Bump and reval)')
     ax[0,0].set_ylabel('Price')
-    ax[0,0].text(0.05, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0,0].transAxes)
+    ax[0,0].text(0.8, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0,0].transAxes)
 
     # Plot delta function
     ax[1,0].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
@@ -167,23 +167,19 @@ if __name__ == '__main__':
     box1 = ax[1,0].get_position()
     ax[1,0].set_position([box1.x0, box1.y0, box1.width, box1.height * 0.9])
 
-    # Legend
-    handles, labels = fig.gca().get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    ax[0,0].legend(by_label.values(), by_label.keys(), loc='upper center', ncol=3, fancybox=True, shadow=True,
-               bbox_to_anchor=(0.5, 0.90))
-
     # Title
     av_str = 'with AV' if use_av else 'without AV'
     ax[0,0].set_title(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples, notional={int(notional)}, '
                                  f'strike={np.round(float(strike), 3)} ' + av_str)
 
-    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_plot_delta_caplet_as_put_on_zcb.png'), dpi=400)
-    plt.show()
 
 
 
     """EUR SWAPTION"""
+    r0_min = -0.02
+    r0_max = 0.15
+
+    r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Product specification
     exerciseDate = torch.tensor(1.0)
@@ -340,5 +336,5 @@ if __name__ == '__main__':
     ax[0, 1].set_title(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples, '
                                   f'notional={int(notional)}, '
                    f'strike={np.round(float(strike), 3)} ' + av_str)
-    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_plot_delta_capletzcb_x_eurswpt.png'), dpi=400)
+    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_plot_delta_capletzcb_x_eurswpt.png'), dpi=400)
     plt.show()
