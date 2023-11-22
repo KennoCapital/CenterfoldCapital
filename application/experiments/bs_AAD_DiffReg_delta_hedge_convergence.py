@@ -32,33 +32,43 @@ if __name__ == '__main__':
 
     s_train_vec = torch.linspace(20.0, 180, N_train)
 
+
     def simulate(spot, vol, rate, expiry, Z):
         return spot * torch.exp((rate - 0.5 * vol ** 2) * expiry - torch.sqrt(expiry) * vol * Z)
+
 
     def bs_call(spot, vol, rate, expiry, strike):
         d1 = (torch.log(spot / strike) + (rate + 0.5 * vol ** 2) * expiry) / (vol * torch.sqrt(expiry))
         d2 = d1 - vol * torch.sqrt(expiry)
         return N_cdf(d1) * spot - N_cdf(d2) * strike * torch.exp(-rate * expiry)
 
+
     def bs_delta(spot, vol, rate, expiry, strike):
         d1 = (torch.log(spot / strike) + (rate + 0.5 * vol ** 2) * expiry) / (vol * torch.sqrt(expiry))
         return N_cdf(d1)
 
-    def calc_dCds(spot_vec, tau):
+
+    def calc_dCds(spot_vec, tau, use_av: bool = True):
         def payoff(s0):
-            rv = torch.randn((len(spot_vec),))
+            if use_av:
+                rv = torch.randn((len(spot_vec) // 2,))
+                rv = torch.concat([rv, -rv])
+            else:
+                rv = torch.randn((len(spot_vec),))
             ST = simulate(s0, sigma, r, tau, rv)
             df = torch.exp(-r * tau)
             return df * max0(ST - K)
+
         ones = torch.ones_like(spot_vec)
         return jvp(payoff, spot_vec, ones, create_graph=False)
+
 
     def training_data(spot_vec: torch.Tensor, tau: float = 0.0, use_av: bool = True):
         if use_av:
             # X_train[i] = X_train[i + N_train],  for all i, when using AV
             spot_vec = torch.concat([spot_vec, spot_vec])
 
-        y, dydr = calc_dCds(spot_vec, tau)
+        y, dydr = calc_dCds(spot_vec, tau, use_av)
 
         X_train = spot_vec.reshape(-1, 1)
         y_train = y.reshape(-1, 1)
@@ -71,25 +81,6 @@ if __name__ == '__main__':
             z_train = 0.5 * (z_train[:idx_half] + z_train[idx_half:])
 
         return X_train, y_train, z_train
-
-    def calc_delta(spot_vec: torch.Tensor, s_train_vec: torch.Tensor, tau, use_av: bool = True) -> torch.Tensor:
-        X_test = spot_vec.reshape(-1, 1)
-
-        X_train, y_train, z_train = training_data(s_train_vec, tau, use_av)
-
-        X_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(X_train, y_train, z_train)
-
-        diff_reg.fit(X_train_scaled, y_train_scaled, z_train_scaled)
-
-        X_test_scaled, _, _ = scalar.transform(X_test, None, None)
-        y_pred_scaled, z_pred_scaled = diff_reg.predict(X_test_scaled, predict_derivs=True)
-
-        _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
-
-        y_scaled, z_scaled = diff_reg.predict(X_train_scaled, predict_derivs=True)
-        _, y, z = scalar.predict(None, y_scaled, z_scaled)
-
-        return z_pred.flatten()
 
     # Price of call option
     eu_call = bs_call(S0, sigma, r, T, K)

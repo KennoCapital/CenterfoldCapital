@@ -8,7 +8,7 @@ from torch.autograd.functional import jvp
 
 if __name__ == '__main__':
 
-    N_train = 1024 * 8  # Number of training samples
+    N_train = 1024 * 8 # Number of training samples
     N_test = 256    # Number of test samples
     M = 10          # Number of hedge points
 
@@ -17,13 +17,13 @@ if __name__ == '__main__':
 
     r = torch.tensor(0.03)
     sigma = torch.tensor(0.2)
-    T = torch.tensor(1.0)
+    T = torch.tensor(0.25)
     S0 = torch.tensor(100.0)
     K = torch.tensor(100.0)
 
-    deg = 9
+    deg = 5
     alpha = 1.0
-    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
+    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True, include_interactions=True)
     scalar = DifferentialStandardScaler()
 
     TL = torch.linspace(0.0, float(T), M + 1)
@@ -45,9 +45,13 @@ if __name__ == '__main__':
         d1 = (torch.log(spot / strike) + (rate + 0.5 * vol ** 2) * expiry) / (vol * torch.sqrt(expiry))
         return N_cdf(d1)
 
-    def calc_dCds(spot_vec, tau):
+    def calc_dCds(spot_vec, tau, use_av: bool=True):
         def payoff(s0):
-            rv = torch.randn((len(spot_vec),))
+            if use_av:
+                rv = torch.randn((len(spot_vec)//2,))
+                rv = torch.concat([rv, -rv])
+            else:
+                rv = torch.randn((len(spot_vec),))
             ST = simulate(s0, sigma, r, tau, rv)
             df = torch.exp(-r * tau)
             return df * max0(ST - K)
@@ -59,7 +63,7 @@ if __name__ == '__main__':
             # X_train[i] = X_train[i + N_train],  for all i, when using AV
             spot_vec = torch.concat([spot_vec, spot_vec])
 
-        y, dydr = calc_dCds(spot_vec, tau)
+        y, dydr = calc_dCds(spot_vec, tau, use_av)
 
         X_train = spot_vec.reshape(-1, 1)
         y_train = y.reshape(-1, 1)
@@ -116,7 +120,6 @@ if __name__ == '__main__':
                    bbox_to_anchor=(0.5, 0.90))
 
         plt.show()
-
 
         return z_pred.flatten()
 
