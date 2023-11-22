@@ -13,7 +13,7 @@ def normal_equation(X: torch.Tensor, y: torch.Tensor, use_SVD: bool = True):
     if use_SVD:
         # Use "sparse" SVD to handle matrices (X) without full rank low rank / linear in a memory efficient way
         # See https://www2.math.ethz.ch/education/bachelor/lectures/hs2014/other/linalg_INFK/svdneu.pdf
-        # or LSM Reloaded page 6.
+        # or LSM Reloaded page 6 and 43-44.
         U, S, Vh = torch.linalg.svd(X, full_matrices=False)
         w = Vh.T @ torch.linalg.pinv(torch.diag(S)) @ U.T @ y
     else:
