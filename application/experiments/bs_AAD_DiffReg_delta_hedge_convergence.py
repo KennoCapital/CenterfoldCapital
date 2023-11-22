@@ -14,6 +14,7 @@ if __name__ == '__main__':
     hedge_steps = torch.arange(start=1, end=251, step=1)
 
     use_analyic_delta = False
+    restrict_delta = False      # Force delta to be between 0 and 1
 
     use_av = True
     scale_training_range_each_step = True
@@ -125,9 +126,9 @@ if __name__ == '__main__':
                 if use_analyic_delta:
                     h_a = bs_delta(S[j, :], vol=sigma, rate=r, expiry=T-t, strike=K)
                 else:
-                    h_a = torch.minimum(torch.maximum(
-                        calc_delta(spot_vec=S[j, :], s_train_vec=s_train_vec, tau=T-t), torch.zeros_like(S[j, :])
-                    ), torch.ones_like(S[j, :]))
+                    h_a = calc_delta(spot_vec=S[j, :], s_train_vec=s_train_vec, tau=T-t)
+                    if restrict_delta:
+                        torch.minimum(torch.maximum(h_a, torch.ones_like(S[j, :])), torch.zeros_like(S[j, :]))
                 h_b = V - h_a * S[j, :]
 
         ST = S[-1, :]
