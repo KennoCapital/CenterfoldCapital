@@ -108,7 +108,7 @@ if __name__ == '__main__':
     """ Delta Hedge Experiment """
 
     # Setup Differential Regressor, and Scalar
-    degrees = [3, 5, 7, 9]
+    degrees = [7] #[3, 5, 7, 9]
 
 
     plt.figure()
@@ -157,7 +157,7 @@ if __name__ == '__main__':
                                                diff_reg=diff_reg, use_av=use_av)[1].flatten()
                     h_b = V - h_a * swap
 
-            hedge_error.append(torch.std(V - max0(swap)))
+            hedge_error.append(torch.std((V - max0(swap)/swpt)))
         plt.plot(np.log(hedge_times), np.log(hedge_error), 'o-', label=f'Deg={deg}')
 
 
