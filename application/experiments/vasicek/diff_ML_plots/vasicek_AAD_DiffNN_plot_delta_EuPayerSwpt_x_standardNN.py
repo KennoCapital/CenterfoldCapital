@@ -6,6 +6,7 @@ from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek
 from application.engine.products import EuropeanPayerSwaption
 from application.engine.mcBase import mcSim, RNG
+from application.utils.path_config import get_plot_path
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
@@ -14,13 +15,13 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 256
+    N_train = 1024
 
     # Differential Neural Network Settings
     seed_weights = 1234
     epochs = 50
     batches_per_epoch = 16
-    min_batch_size = 128 #256 * 4
+    min_batch_size = 512*2 #256 * 4
     lam = 1.0
     hidden_units = 20
     hidden_layers = 4
@@ -142,21 +143,25 @@ if __name__ == '__main__':
     diff_nn.train(epochs=epochs, batches_per_epoch=batches_per_epoch, min_batch_size=min_batch_size)
     y_pred, z_pred = diff_nn.predict_values_and_derivs(X_test)
 
+    #RMSE_price = torch.sqrt(torch.mean((y_pred - swpt_grid) ** 2))
+    #MAE_delta = torch.mean(torch.abs(z_pred[1:] - dswpt_dswap))
 
     """ Plot results """
-    fig, ax = plt.subplots(2, 2, figsize=(8, 6))
+    fig, ax = plt.subplots(2, 2, sharey='row', sharex='col', figsize=(8, 6))
     # Plot price function
     ax[0, 1].plot(X_train.flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25, label='Pathwise samples')
     ax[0, 1].plot(X_test.flatten(), y_pred.flatten(), label='Predictions', color='orange')
     ax[0, 1].plot(swap_grid, swpt_grid, color='black', label='Analytical (Bump and reval)')
-    ax[0, 1].set_ylabel('Price')
+    #ax[0, 1].text(0.2, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0, 1].transAxes)
+    #ax[0, 1].set_ylabel('Price')
 
     # Plot delta function
     ax[1, 1].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
     ax[1, 1].plot(X_test, z_pred, label='Predictions', color='orange')
     ax[1, 1].plot(swap_grid[1:], dswpt_dswap, color='black', label='Analytical (Bump and reval)')
-    ax[1, 1].set_xlabel('P(0, T + delta)')
-    ax[1, 1].set_ylabel('Delta')
+    #ax[1, 1].text(0.2, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1, 1].transAxes)
+    ax[1, 1].set_xlabel('Swap(0)')
+    #ax[1, 1].set_ylabel('Delta')
 
     # Adjust size of subplots
     box0 = ax[0, 1].get_position()
@@ -182,18 +187,23 @@ if __name__ == '__main__':
     diff_nn.train(epochs=epochs, batches_per_epoch=batches_per_epoch, min_batch_size=min_batch_size)
     y_pred, z_pred = diff_nn.predict_values_and_derivs(X_test)
 
+    #RMSE_price = torch.sqrt(torch.mean((y_pred - swpt_grid) ** 2))
+    #MAE_delta = torch.mean(torch.abs(z_pred[1:] - dswpt_dswap))
+
     """ Plot results """
     # Plot price function
     ax[0, 0].plot(X_train.flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25, label='Pathwise samples')
     ax[0, 0].plot(X_test.flatten(), y_pred.flatten(), label='Predictions', color='orange')
     ax[0, 0].plot(swap_grid, swpt_grid, color='black', label='Analytical (Bump and reval)')
+    #ax[0, 0].text(0.2, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0, 0].transAxes)
     ax[0, 0].set_ylabel('Price')
 
     # Plot delta function
     ax[1, 0].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
     ax[1, 0].plot(X_test, z_pred, label='Predictions', color='orange')
     ax[1, 0].plot(swap_grid[1:], dswpt_dswap, color='black', label='Analytical (Bump and reval)')
-    ax[1, 0].set_xlabel('P(0, T + delta)')
+    #ax[1, 0].text(0.2, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1, 0].transAxes)
+    ax[1, 0].set_xlabel('Swap(0)')
     ax[1, 0].set_ylabel('Delta')
 
     # Adjust size of subplots
@@ -211,12 +221,14 @@ if __name__ == '__main__':
     # Legend
     handles, labels = fig.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
-    fig.legend(by_label.values(), by_label.keys(), draggable = True, ncol=3, fancybox=True, shadow=True,
-               bbox_to_anchor=(0.5, 0.90))
+    fig.legend(by_label.values(), by_label.keys(), loc="upper center", ncol=3, fancybox=True, shadow=True,
+               bbox_to_anchor=(0.5, 0.92))
 
     fig.suptitle(prd.name + f'\n {N_train} training samples ' + av_str)
 
+    #plt.savefig(get_plot_path('vasicek_AAD_DiffNN_plot_delta_EuPayerSwpt_x_standardNN.png'), dpi=400)
     plt.show()
+
 
 
 
