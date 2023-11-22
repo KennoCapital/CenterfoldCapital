@@ -1,4 +1,6 @@
 import torch
+import matplotlib.pyplot as plt
+import numpy as np
 from tqdm import tqdm
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek, choose_training_grid
@@ -6,7 +8,7 @@ from application.engine.products import EuropeanPayerSwaption
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.torch_utils import max0
-from application.experiments.vasicek.vasicek_hedge_tools import diff_reg_fit_predict, log_plotter
+from application.experiments.vasicek.vasicek_hedge_tools import diff_reg_fit_predict, log_plotter_without_conv
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
@@ -18,20 +20,17 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    r0_min = 0.02
-    r0_max = 0.12
+    r0_min = -0.02
+    r0_max = 0.15
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
-    # Setup Differential Regressor, and Scalar
-    deg = 15
-    alpha = 1.0
-    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
+
 
     # Model specification
-    r0 = torch.linspace(r0_min, r0_max, N_test)
+    r0 = torch.tensor(0.08) #torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = r0.median()
+    b = torch.tensor(0.09) #r0.median()
     sigma = torch.tensor(0.0148)
     measure = 'risk_neutral'
 
@@ -108,53 +107,63 @@ if __name__ == '__main__':
 
     """ Delta Hedge Experiment """
 
+    # Setup Differential Regressor, and Scalar
+    degrees = [3, 5, 7, 9]
 
-    # Simulate paths
-    hedge_times = [10, 25, 50, 100, 250, 500, 1000]
-    hedge_error = []
 
-    for steps in tqdm(hedge_times):
+    plt.figure()
+    for deg in tqdm(degrees):
+        alpha = 1.0
+        diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True, include_interactions=True)
 
-        dTL = torch.linspace(0.0, float(swapFirstFixingDate), steps + 1)
-        mcSimPaths(prd, mdl, rng, N_test, dTL)
-        r = mdl.x
-        # Get price of claim (we use 500k simulations to get an accurate estimate)
-        swpt = torch.empty_like(r[0, :])
-        for n in range(N_test):
-            mdl.r0 = r[0, n]
-            swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
+        # Simulate paths
+        hedge_times = [1, 2, 4, 12, 250//5, 250//2, 250, 250*2, 250*4]
+        hedge_error = []
 
-        # Initialize experiment
-        swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
+        for steps in hedge_times:
 
-        V = swpt
-        h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=0.0,
-                                   calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
-                                   diff_reg=diff_reg, use_av=use_av)[1].flatten()
-        h_b = V - h_a * swap
+            dTL = torch.linspace(0.0, float(swapFirstFixingDate), steps + 1)
+            mcSimPaths(prd, mdl, rng, N_test, dTL)
+            r = mdl.x
+            # Get price of claim (we use 500k simulations to get an accurate estimate)
+            swpt = torch.empty_like(r[0, :])
+            for n in range(N_test):
+                mdl.r0 = r[0, n]
+                swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
 
-        # Loop over time
-        for k in range(1, len(dTL)):
-            dt = dTL[k] - dTL[k-1]
-            t = dTL[k]
+            # Initialize experiment
+            swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
 
-            # Update market variables
-            swap = mdl.calc_swap(r[k, :], t_swap_fixings - t, delta, strike, notional)
+            V = swpt
+            h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=0.0,
+                                       calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
+                                       diff_reg=diff_reg, use_av=use_av)[1].flatten()
+            h_b = V - h_a * swap
 
-            # Update portfolio
-            V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
-            if k < len(dTL) - 1:
-                r0_vec = choose_training_grid(r[k, :], N_train)
-                h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=t,
-                                           calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
-                                           diff_reg=diff_reg, use_av=use_av)[1].flatten()
-                h_b = V - h_a * swap
+            # Loop over time
+            for k in range(1, len(dTL)):
+                dt = dTL[k] - dTL[k-1]
+                t = dTL[k]
 
-        hedge_error.append(torch.std(V - max0(swap)))
+                # Update market variables
+                swap = mdl.calc_swap(r[k, :], t_swap_fixings - t, delta, strike, notional)
 
-    """ Plot """
-    log_plotter(X=hedge_times,
-                Y=hedge_error,
-                title_add=prd.name + f'alpha = {alpha}, deg={deg}, {N_train} samples, notional = {notional}',
-                save=False,
-                file_name='vasicek_AAD_DiffReg_delta_hedge_EuPayerSwpt_convergence_hedgetimes')
+                # Update portfolio
+                V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
+                if k < len(dTL) - 1:
+                    r0_vec = choose_training_grid(r[k, :], N_train)
+                    h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=t,
+                                               calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
+                                               diff_reg=diff_reg, use_av=use_av)[1].flatten()
+                    h_b = V - h_a * swap
+
+            hedge_error.append(torch.std(V - max0(swap)))
+        plt.plot(np.log(hedge_times), np.log(hedge_error), 'o-', label=f'Deg={deg}')
+
+
+    plt.title(prd.name + f'alpha = {alpha}, Samples={N_train} , Notional = {int(notional)}')
+    plt.xlabel('Hedge Frequency')
+    plt.ylabel('Std. of Hedge Error')
+    plt.xticks(ticks=np.log(hedge_times), labels=hedge_times)
+    plt.legend()
+    plt.show()
