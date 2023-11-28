@@ -240,7 +240,7 @@ def train(description,
         callback(approximator, 0)
 
     # loop on epochs, with progress bar (tqdm)
-    for epoch in tqdm(range(epochs), desc=description):
+    for epoch in range(epochs):
 
         # interpolate learning rate in cycle
         learning_rate = np.interp(epoch / epochs, lr_schedule_epochs, lr_schedule_rates)

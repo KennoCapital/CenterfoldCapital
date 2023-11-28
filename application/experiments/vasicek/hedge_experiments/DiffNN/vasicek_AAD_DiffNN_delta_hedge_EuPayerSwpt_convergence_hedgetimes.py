@@ -1,12 +1,13 @@
 import torch
 import matplotlib.pyplot as plt
+import numpy as np
 from tqdm import tqdm
 from torch.autograd.functional import jvp
-from application.engine.vasicek import Vasicek
+from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import EuropeanPayerSwaption
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
-from application.utils.torch_utils import max0
 from application.utils.path_config import get_plot_path
+from application.utils.torch_utils import max0
 from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_nn
 
 torch.set_printoptions(4)
@@ -15,35 +16,24 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 4096 * 2
+    N_train = 1024 * 2
     N_test = 256
     use_av = True
 
     # Hedge experiment settings
-    hedge_times = 100
+    hedge_times = 10
 
     r0_min = -0.02
     r0_max = 0.15
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
-    # Differential Neural Network Settings
-    seed_weights = 1234
-    epochs = 100
-    batches_per_epoch = 16
-    min_batch_size = 256 * 4
-    lam = 1.0
-    hidden_units = 20
-    hidden_layers = 4
-    nn_params = {'N_train': N_train, 'seed_weights': seed_weights, 'epochs': epochs,
-                 'batches_per_epoch': batches_per_epoch, 'min_batch_size': min_batch_size,
-                 'lam': lam, 'hidden_units': hidden_units, 'hidden_layers': hidden_layers}
 
     # Model specification
+    r0 = torch.tensor(0.08) #torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
+    b = torch.tensor(0.09) #r0.median()
     sigma = torch.tensor(0.0148)
-    r0 = torch.linspace(r0_min, r0_max, N_test)
-    b = r0.median()
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -73,11 +63,6 @@ if __name__ == '__main__':
         swapLastFixingDate=swapLastFixingDate,
         notional=notional
     )
-
-    # Simulate paths
-    dTL = torch.linspace(0.0, float(swapFirstFixingDate), hedge_times + 1)
-    mcSimPaths(prd, mdl, rng, N_test, dTL)
-    r = mdl.x
 
     """ Helper functions for generating training data of pathwise payoffs and deltas """
     def calc_dswap_dr(r0_vec: torch.Tensor, t0: float):
@@ -123,65 +108,74 @@ if __name__ == '__main__':
         return res
 
     """ Delta Hedge Experiment """
+    # Differential Neural Network Settings
+    seed_weights = 1234
+    epochs = 50
+    batches_per_epoch = 16
+    min_batch_size = 256
+    hidden_units = 20
+    hidden_layers = 4
 
-    # Get price of claim (we use 500k simulations to get an accurate estimate)
-    swpt = torch.empty_like(r[0, :])
-    for n in range(N_test):
-        mdl.r0 = r[0, n]
-        swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
 
-    # Initialize experiment
-    swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
+    lams = [0.0, 0.5, 1.0]
 
-    V = swpt * torch.ones_like(r[0, :])
-    h_a = calc_delta_diff_nn(u_vec=swap, r0_vec=r0_vec, t0=0.0,
+
+    plt.figure()
+    for lam in tqdm(lams):
+        nn_params = {'N_train': N_train, 'seed_weights': seed_weights, 'epochs': epochs,
+                     'batches_per_epoch': batches_per_epoch, 'min_batch_size': min_batch_size,
+                     'lam': lam, 'hidden_units': hidden_units, 'hidden_layers': hidden_layers}
+
+        # Simulate paths
+        hedge_times = [1, 2, 4, 12, 250//5, 250//2, 250]
+        hedge_error = []
+
+        for steps in hedge_times:
+
+            dTL = torch.linspace(0.0, float(swapFirstFixingDate), steps + 1)
+            mcSimPaths(prd, mdl, rng, N_test, dTL)
+            r = mdl.x
+            # Get price of claim (we use 500k simulations to get an accurate estimate)
+            swpt = torch.empty_like(r[0, :])
+            for n in range(N_test):
+                mdl.r0 = r[0, n]
+                swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
+
+            # Initialize experiment
+            swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
+
+            V = swpt
+            h_a = calc_delta_diff_nn(u_vec=swap, r0_vec=r0_vec, t0=0.0,
                              calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
                              nn_Params=nn_params, use_av=use_av)
-    h_b = V - h_a * swap
-
-    # Loop over time
-    for k in tqdm(range(1, len(dTL))):
-        dt = dTL[k] - dTL[k-1]
-        t = dTL[k]
-
-        # Update market variables
-        swap = mdl.calc_swap(r[k, :], t_swap_fixings - t, delta, strike, notional)
-
-        # Update portfolio
-        V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
-        if k < len(dTL) - 1:
-            h_a = calc_delta_diff_nn(u_vec=swap, r0_vec=r0_vec, t0=t,
-                                     calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
-                                     nn_Params=nn_params, use_av=use_av)
             h_b = V - h_a * swap
 
-    swapT = torch.linspace(float(swap.min()), float(swap.max()), 1001)
-    payoff_func = max0(swapT)
+            # Loop over time
+            for k in range(1, len(dTL)):
+                dt = dTL[k] - dTL[k-1]
+                t = dTL[k]
 
-    MAE_value = torch.mean(torch.abs(V - max0(swap)))
+                # Update market variables
+                swap = mdl.calc_swap(r[k, :], t_swap_fixings - t, delta, strike, notional)
 
-    """ Plot """
+                # Update portfolio
+                V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
+                if k < len(dTL) - 1:
+                    r0_vec = choose_training_grid(r[k, :], N_train)
+                    h_a = calc_delta_diff_nn(u_vec=swap, r0_vec=r0_vec, t0=t,
+                                     calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
+                                     nn_Params=nn_params, use_av=use_av)
+                    h_b = V - h_a * swap
+
+            hedge_error.append(torch.std((V - max0(swap))/swpt))
+        plt.plot(hedge_times, hedge_error, 'o-', label=f'λ={lam}')
+
     av_str = 'with AV' if use_av else 'without AV'
 
-    fig, ax = plt.subplots(1)
-    ax.plot(swapT, payoff_func, color='black', label='Payoff function')
-    ax.plot(swap, V, 'o', color='orange', label='Value of Hedge Portfolio', alpha=0.5)
-    ax.set_xlabel('Swap(T)')
-    ax.text(0.05, 0.8, f'MAE = {MAE_value:,.2f}', fontsize=8, transform=ax.transAxes)
-
-    # Adjust size of plot
-    box = ax.get_position()
-    ax.set_position([box.x0, box.y0, box.width, box.height * 0.9])
-
-    # Title
-    fig.suptitle(
-        prd.name + f'\nHedgeFreq={dTL[1]:.4g}, epochs = {100}, nw={hidden_layers}x{hidden_units}, {N_train} training samples ' + av_str)
-    # Legend
-    handles, labels = fig.gca().get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
-               bbox_to_anchor=(0.5, 0.90))
-
-    #plt.savefig(get_plot_path('vasicek_AAD_DiffNN_delta_hedge_EuPayerSwpt.png'), dpi=400)
+    plt.title(prd.name + f'epochs = {epochs}, min batch sz={min_batch_size}, Samples={N_train}, ' + av_str)
+    plt.xlabel('Hedge Frequency')
+    plt.ylabel('Std. of Price Adjusted Hedge Error')
+    plt.xticks(ticks=hedge_times, labels=hedge_times)
+    plt.legend().set_draggable(True)
+    plt.savefig(get_plot_path('vasicek_AAD_DiffNN_delta_hedge_EuPayerSwpt_convergence_hedgetimes.png'), dpi=400)
     plt.show()
-
