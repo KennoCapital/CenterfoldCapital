@@ -46,7 +46,6 @@ if __name__ == '__main__':
     notional = torch.tensor(1e6)
 
     strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
-
     prd = CapletAsPutOnZCB(
         strike=strike,
         exerciseDate=exerciseDate,
@@ -150,7 +149,7 @@ if __name__ == '__main__':
     ax[0,0].plot(X_test.flatten(), y_pred, label='DiffReg', color='orange')
     ax[0,0].plot(X_test, y_mdl, color='black', label='Analytical (Bump and reval)')
     ax[0,0].set_ylabel('Price')
-    ax[0,0].text(0.8, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0,0].transAxes)
+    ax[0,0].text(0.7, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0,0].transAxes)
 
     # Plot delta function
     ax[1,0].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
@@ -169,8 +168,7 @@ if __name__ == '__main__':
 
     # Title
     av_str = 'with AV' if use_av else 'without AV'
-    ax[0,0].set_title(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples, notional={int(notional)}, '
-                                 f'strike={np.round(float(strike), 3)} ' + av_str)
+    ax[0,0].set_title("1Y3M Caplet as Put on ZCB")
 
 
 
@@ -307,7 +305,6 @@ if __name__ == '__main__':
     ax[0,1].plot(X_train.flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25, label='Pathwise samples')
     ax[0,1].plot(X_test.flatten(), y_pred, label='DiffReg', color='orange')
     ax[0,1].plot(X_test, y_mdl, color='black', label='MC (Bump and reval)')
-    ax[0,1].set_ylabel('Price')
     ax[0,1].text(0.05, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0,1].transAxes)
 
     # Plot delta function
@@ -315,7 +312,6 @@ if __name__ == '__main__':
     ax[1,1].plot(X_test, z_pred, label='DiffReg', color='orange')
     ax[1,1].plot(X_test[1:], z_mdl, color='black', label='MC (Bump and reval)')
     ax[1,1].set_xlabel('Swap(0)')
-    ax[1,1].set_ylabel('Delta')
     ax[1,1].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1,1].transAxes)
 
     # Adjust size of subplots
@@ -328,13 +324,11 @@ if __name__ == '__main__':
     # Legend
     handles, labels = fig.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
-    fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=3, fancybox=True, shadow=True,
+    fig.legend(by_label.values(), by_label.keys(), draggable=True, ncol=3, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
 
     # Title
     av_str = 'with AV' if use_av else 'without AV'
-    ax[0, 1].set_title(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples, '
-                                  f'notional={int(notional)}, '
-                   f'strike={np.round(float(strike), 3)} ' + av_str)
+    ax[0, 1].set_title("1Y6Y3M European payer swaption")
     #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_plot_delta_capletzcb_x_eurswpt.png'), dpi=400)
     plt.show()

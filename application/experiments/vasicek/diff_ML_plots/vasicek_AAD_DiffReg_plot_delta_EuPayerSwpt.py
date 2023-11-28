@@ -21,10 +21,12 @@ if __name__ == '__main__':
     r0_min = -0.02
     r0_max = 0.15
 
-    r0_vec = torch.linspace(r0_min, r0_max, N_train)
+    #r0_vec = torch.linspace(r0_min, r0_max, N_train
+    r0_vec = torch.normal(0.08, 0.023*2, size=(N_train,))
+    r0_vec = torch.sort(r0_vec).values
 
     # Setup Differential Regressor, and Scalar
-    deg = 15
+    deg = 7
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
     scalar = DifferentialStandardScaler()
@@ -41,7 +43,7 @@ if __name__ == '__main__':
     rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
-    exerciseDate = torch.tensor(1.0)
+    exerciseDate = torch.tensor(0.01)
     delta = torch.tensor(0.25)
     swapFirstFixingDate = exerciseDate
     swapLastFixingDate = exerciseDate + torch.tensor(5.0)
@@ -53,7 +55,7 @@ if __name__ == '__main__':
         int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
     )
 
-    strike = mdl.calc_swap_rate(r0, t_swap_fixings, delta)
+    strike = torch.tensor(0.0871)  #mdl.calc_swap_rate(r0, t_swap_fixings, delta)
 
     prd = EuropeanPayerSwaption(
         strike=strike,
@@ -190,5 +192,5 @@ if __name__ == '__main__':
     av_str = 'with AV' if use_av else 'without AV'
     fig.suptitle(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
 
-    # plt.savefig(get_plot_path('vasicek_AAD_DiffReg_EuSwpt.png'), dpi=400)
+    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_EuSwpt_closetoT_Naive.png'), dpi=400)
     plt.show()

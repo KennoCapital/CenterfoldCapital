@@ -15,15 +15,17 @@ torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
 
+    """Testing with asymptotical choice of grid"""
     seed = 1234
+    seed2 = 80085
     N_train = 1024
     N_test = 256
     use_av = True
 
     hedge_times = 100
 
-    r0_min = -0.02
-    r0_max = 0.15
+    r0_min = 0.04
+    r0_max = 0.12
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -33,9 +35,9 @@ if __name__ == '__main__':
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 
     # Model specification
-    r0 = torch.linspace(r0_min, r0_max, N_test)
+    r0 = torch.linspace(r0_min, r0_max, N_test) #torch.tensor(0.08)
     a = torch.tensor(0.86)
-    b = r0.median()
+    b = torch.tensor(0.09) #r0.median()
     sigma = torch.tensor(0.0148)
     measure = 'risk_neutral'
 
@@ -56,7 +58,7 @@ if __name__ == '__main__':
         int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
     )
 
-    strike = mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
+    strike = torch.tensor(0.0871) #mdl.calc_swap_rate(r0, t_swap_fixings, delta)
 
     prd = EuropeanPayerSwaption(
         strike=strike,
@@ -69,6 +71,27 @@ if __name__ == '__main__':
 
     # Simulate paths
     dTL = torch.linspace(0.0, float(swapFirstFixingDate), hedge_times + 1)
+    mcSimPaths(prd, mdl, rng, N_test, dTL)
+    r = mdl.x
+
+    """Showing histogram of terminal state variable"""
+
+    fig, ax = plt.subplots(1, 2)
+
+    mean = torch.mean(r[-1, :])
+    std = torch.std(r[-1, :])
+
+    ax[0].hist(r[-1, :], bins=50, color='orange', edgecolor='black')  # Histogram with color and edge
+    title = "Fit results: mu = %.2f,  std = %.2f" % (mean, std)
+    ax[0].set_title(title)  # Title of the histogram
+    ax[0].set_xlabel('Pre-simulated short rate')  # X-axis label
+    ax[0].set_ylabel('Density')  # Y-axis label
+
+    r0_vec = torch.normal(mean, std, size=(N_train,))
+    r0_vec = torch.sort(r0_vec).values
+
+    mdl.r0 = torch.linspace(r0_min, r0_max, N_test)
+    rng.seed = seed2
     mcSimPaths(prd, mdl, rng, N_test, dTL)
     r = mdl.x
 
@@ -143,7 +166,7 @@ if __name__ == '__main__':
         # Update portfolio
         V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
         if k < len(dTL) - 1:
-            r0_vec = choose_training_grid(r[k, :], N_train)
+            #r0_vec = choose_training_grid(r[k, :], N_train)
             h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=t,
                                        calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
                                        diff_reg=diff_reg, use_av=use_av)[1].flatten()
@@ -157,15 +180,15 @@ if __name__ == '__main__':
     """ Plot """
     av_str = 'with AV' if use_av else 'without AV'
 
-    fig, ax = plt.subplots(1)
-    ax.plot(swapT, payoff_func, color='black', label='Payoff function')
-    ax.plot(swap, V, 'o', color='orange', label='Value of Hedge Portfolio', alpha=0.5)
-    ax.set_xlabel('Swap(T)')
-    ax.text(0.05, 0.8, f'MAE = {MAE_value:,.2f}', fontsize=8, transform=ax.transAxes)
+
+    ax[1].plot(swapT, payoff_func, color='black', label='Payoff function')
+    ax[1].plot(swap, V, 'o', color='orange', label='Value of Hedge Portfolio', alpha=0.5)
+    ax[1].set_xlabel('Swap(T)')
+    ax[1].text(0.05, 0.8, f'MAE = {MAE_value:,.2f}', fontsize=8, transform=ax[1].transAxes)
 
     # Adjust size of plot
-    box = ax.get_position()
-    ax.set_position([box.x0, box.y0, box.width, box.height * 0.9])
+    box = ax[1].get_position()
+    ax[1].set_position([box.x0, box.y0, box.width, box.height * 0.9])
 
     # Title
     fig.suptitle(prd.name + f'\nHedgeFreq={dTL[1]:.4g}, alpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
@@ -173,7 +196,7 @@ if __name__ == '__main__':
     # Legend
     handles, labels = fig.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
-    fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
+    fig.legend(by_label.values(), by_label.keys(), draggable=True, ncol=2, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
 
     #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_EuPayerSwpt.png'), dpi=400)
