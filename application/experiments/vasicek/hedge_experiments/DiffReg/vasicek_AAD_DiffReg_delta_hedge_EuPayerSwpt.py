@@ -24,8 +24,8 @@ if __name__ == '__main__':
 
     hedge_times = 100
 
-    r0_min = 0.04
-    r0_max = 0.12
+    r0_min = -0.02
+    r0_max = 0.15
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -75,17 +75,16 @@ if __name__ == '__main__':
     r = mdl.x
 
     """Showing histogram of terminal state variable"""
-
-    fig, ax = plt.subplots(1, 2)
-
+    """
     mean = torch.mean(r[-1, :])
     std = torch.std(r[-1, :])
-
-    ax[0].hist(r[-1, :], bins=50, color='orange', edgecolor='black')  # Histogram with color and edge
+    plt.figure()
+    plt.hist(r[-1, :], bins=50, color='orange', edgecolor='black')  # Histogram with color and edge
     title = "Fit results: mu = %.2f,  std = %.2f" % (mean, std)
-    ax[0].set_title(title)  # Title of the histogram
-    ax[0].set_xlabel('Pre-simulated short rate')  # X-axis label
-    ax[0].set_ylabel('Density')  # Y-axis label
+    plt.title(title)  # Title of the histogram
+    plt.xlabel('Pre-simulated short rate')  # X-axis label
+    plt.ylabel('Density')  # Y-axis label
+    plt.show()
 
     r0_vec = torch.normal(mean, std, size=(N_train,))
     r0_vec = torch.sort(r0_vec).values
@@ -94,6 +93,7 @@ if __name__ == '__main__':
     rng.seed = seed2
     mcSimPaths(prd, mdl, rng, N_test, dTL)
     r = mdl.x
+    """
 
     """ Helper functions for generating training data of pathwise payoffs and deltas """
     def calc_dswap_dr(r0_vec: torch.Tensor, t0: float):
@@ -180,15 +180,15 @@ if __name__ == '__main__':
     """ Plot """
     av_str = 'with AV' if use_av else 'without AV'
 
-
-    ax[1].plot(swapT, payoff_func, color='black', label='Payoff function')
-    ax[1].plot(swap, V, 'o', color='orange', label='Value of Hedge Portfolio', alpha=0.5)
-    ax[1].set_xlabel('Swap(T)')
-    ax[1].text(0.05, 0.8, f'MAE = {MAE_value:,.2f}', fontsize=8, transform=ax[1].transAxes)
+    fig, ax = plt.subplots()
+    ax.plot(swapT, payoff_func, color='black', label='Payoff function')
+    ax.plot(swap, V, 'o', color='orange', label='Value of Hedge Portfolio', alpha=0.5)
+    ax.set_xlabel('Swap(T)')
+    ax.text(0.05, 0.8, f'MAE = {MAE_value:,.2f}', fontsize=8, transform=ax.transAxes)
 
     # Adjust size of plot
-    box = ax[1].get_position()
-    ax[1].set_position([box.x0, box.y0, box.width, box.height * 0.9])
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0, box.width, box.height * 0.9])
 
     # Title
     fig.suptitle(prd.name + f'\nHedgeFreq={dTL[1]:.4g}, alpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
