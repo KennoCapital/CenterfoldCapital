@@ -733,3 +733,86 @@ class BermudanPayerSwaption(CallableProduct):
 
         # res = max0(irs[self.exercise_idx, torch.arange(N)]) * df[self.exercise_idx, torch.arange(N)]
         return res
+
+
+class BarrierPayerSwaption(Product):
+    def __init__(self,
+                 strike:                torch.Tensor,
+                 exerciseDate:          torch.Tensor,
+                 delta:                 torch.Tensor,
+                 barrier:               torch.Tensor,
+                 obsTL:                 torch.Tensor,
+                 swapFirstFixingDate:   torch.Tensor,
+                 swapLastFixingDate:    torch.Tensor,
+                 notional:              torch.Tensor = torch.tensor([1.0]),
+                 smooth:                torch.Tensor = torch.tensor([0.01])):
+        self.strike = strike
+        self.exerciseDate = exerciseDate
+        self.delta = delta
+        self.barrier = barrier
+        self.obsTL = obsTL
+        self.swapFirstFixingDate = swapFirstFixingDate
+        self.swapLastFixingDate = swapLastFixingDate
+        self.notional = notional
+        self.smooth = smooth
+
+
+        self._name = (f'{float_to_time_str(swapFirstFixingDate)}'
+                      f'{float_to_time_str(swapLastFixingDate)}'
+                      f'{float_to_time_str(delta)} '
+                      f'BarrierPayerSwpt @ {float(strike) * 100:.4g}% '
+                      f'w {float_to_notional_str(notional)} '
+                      f'x on {float_to_time_str(exerciseDate)}')
+
+        self._timeline = torch.unique(torch.concat([torch.tensor([0.0]), obsTL, exerciseDate.view(1)]))
+
+        swapFixingDates = torch.linspace(
+            float(self.swapFirstFixingDate),
+            float(self.swapLastFixingDate),
+            int((self.swapLastFixingDate - self.swapFirstFixingDate) / self.delta) + 1
+        )
+
+        self._defline = [
+            SampleDef(fwdRates=[], irs=[], discMats=torch.tensor([]), numeraire=True, stateVar=False)
+        ]
+        self._defline += [
+            SampleDef(fwdRates=[],
+                      irs=[InterestRateSwapDef(fixingDates=swapFixingDates, fixRate=self.strike, notional=self.notional)],
+                      discMats=torch.tensor([]),
+                      numeraire=(t == exerciseDate),
+                      stateVar=False)
+            for t in self.timeline[1:]
+        ]
+
+        self._payoffLabels = [f'max[swap({exerciseDate}) ; 0.0]']
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def payoffLabels(self):
+        return self._payoffLabels
+
+    def payoff(self, paths):
+        s = torch.vstack([p.irs[0] for p in paths[1:]])
+        sMax = torch.max(s, dim=0).values
+        lb = self.barrier * (1.0 - self.smooth)
+        ub = self.barrier * (1.0 + self.smooth)
+
+        # Smoothing with linear interpolation
+        alive = (sMax - lb) / (ub - lb)
+        alive = torch.maximum(torch.tensor(0.0), alive)
+        alive = torch.minimum(torch.tensor(1.0), alive)
+
+        res = max0(paths[-1].irs[0]) * paths[0].numeraire / paths[-1].numeraire
+        res *= alive
+        return res
