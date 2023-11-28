@@ -20,10 +20,9 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 1024
-    n_train = 1024  # TODO use this
-    N_test = 512
-    n = 25000
+    N_train = 1024  # TODO decide on this
+    N_test = 256
+    n = 5000
     use_av = True
 
     hedge_times = 500
@@ -203,45 +202,43 @@ if __name__ == '__main__':
                                        calc_dPrd_dr=calc_dPrd_dr, calc_dU_dr=calc_dswap_dr,
                                        diff_reg=diff_reg, use_av=use_av)[1]
             h_b = V - torch.sum(h_a * swap[:, mask], dim=1)
+        """
+        if k in (50, 150, 250, 350, 450):
+            if idx < 2:
+                fig, ax = plt.subplots(3 - idx)
+                for i in range(idx, 3):
+                    ax[i-idx].plot(swap[:, i], h_a[:, i-idx], 'o')
+                    ax[i-idx].set_ylabel(exerciseDates[i])
+                fig.suptitle(f't={t}')
+                plt.show()
+            else:
+                plt.plot(swap[:, idx], h_a.flatten(), 'o')
+                plt.title(f't={t}')
+                plt.show()
+        """
 
     """ Plot results """
+    MAE_value = torch.nanmean(torch.abs(vTe - max0(swapTe)))
+
     portPayoff = max0(swapTe)
     color = ['orange', 'blue', 'green']
     x = torch.linspace(float(torch.nansum(swapTe, dim=0).min()),
                        float(torch.nansum(swapTe, dim=0).max()),
                        1001)
-    plt.plot(x, max0(x), color='black')
+
+    fig, ax = plt.subplots(1, figsize=(6, 4))
+    ax.plot(x, max0(x), color='black', label='Payoff')
     for i, Te in enumerate(exerciseDates):
-        plt.plot(swapTe[i, :], vTe[i, :], 'o', color=color[i], alpha=0.5, label=float_to_time_str(Te))
+        ax.plot(swapTe[i, :], vTe[i, :], 'o', color=color[i], alpha=0.5, label=float_to_time_str(Te))
 
-    plt.legend()
-    plt.show()
-
-    """
-    MAE_value = torch.mean(torch.abs(V - max0(swap)))
-
-    av_str = 'with AV' if use_av else 'without AV'
-    
-    fig, ax = plt.subplots(1)
-    ax.plot(swapT, payoff_func, color='black', label='Payoff function')
-    ax.plot(swap, V, 'o', color='orange', label='Value of Hedge Portfolio', alpha=0.5)
-    ax.set_xlabel('Swap(T)')
     ax.text(0.05, 0.8, f'MAE = {MAE_value:,.2f}', fontsize=8, transform=ax.transAxes)
 
-    # Adjust size of plot
     box = ax.get_position()
-    ax.set_position([box.x0, box.y0, box.width, box.height * 0.9])
+    ax.set_position([box.x0, box.y0, box.width, box.height * 0.85])
+    ax.set_xlabel('Swap @ Exercise date')
 
-    # Title
-    fig.suptitle(prd.name + f'\nHedgeFreq={dTL[1]:.4g}, alpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
+    fig.suptitle('Replicating payoff of Bermudan Payer Swaption')
+    fig.legend(title='Exercise date', loc='upper center', ncol=4, fancybox=True, shadow=True, bbox_to_anchor=(0.5, 0.925))
 
-    # Legend
-    handles, labels = fig.gca().get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
-               bbox_to_anchor=(0.5, 0.90))
-
-    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_EuPayerSwpt.png'), dpi=400)
+    plt.savefig(get_plot_path('07_Diff_reg_bermudan_delta_hedge.png'), dpi=400)
     plt.show()
-    """
-

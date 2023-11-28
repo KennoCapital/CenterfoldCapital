@@ -22,7 +22,7 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    hedge_times = 100
+    hedge_times = 500
 
     r0_min = -0.02
     r0_max = 0.15
@@ -30,9 +30,10 @@ if __name__ == '__main__':
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Setup Differential Regressor, and Scalar
-    deg = 7
+    deg = 9
+
     alpha = 1.0
-    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
+    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True, include_interactions=True)
 
     # Model specification
     r0 = torch.linspace(r0_min, r0_max, N_test) #torch.tensor(0.08)
@@ -46,7 +47,7 @@ if __name__ == '__main__':
     rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
-    exerciseDate = torch.tensor(1.0)
+    exerciseDate = torch.tensor(5.0)
     delta = torch.tensor(0.25)
     swapFirstFixingDate = exerciseDate
     swapLastFixingDate = exerciseDate + torch.tensor(5.0)
