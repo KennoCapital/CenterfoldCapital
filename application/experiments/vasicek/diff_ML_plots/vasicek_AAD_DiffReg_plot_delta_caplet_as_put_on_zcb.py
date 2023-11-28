@@ -2,7 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek
-from application.engine.products import EuropeanPayerSwaption
+from application.engine.products import CapletAsPutOnZCB
 from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSim, RNG
@@ -12,14 +12,13 @@ torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
-
     seed = 1234
     N_train = 1024
     N_test = 256
     use_av = True
 
-    r0_min = -0.02
-    r0_max = 0.15
+    r0_min = 0.02
+    r0_max = 0.13
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -34,7 +33,7 @@ if __name__ == '__main__':
     b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     r0 = torch.tensor(0.08)
-    measure = 'terminal'
+    measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
 
@@ -43,63 +42,54 @@ if __name__ == '__main__':
     # Product specification
     exerciseDate = torch.tensor(1.0)
     delta = torch.tensor(0.25)
-    swapFirstFixingDate = exerciseDate
-    swapLastFixingDate = exerciseDate + torch.tensor(5.0)
     notional = torch.tensor(1e6)
 
-    t_swap_fixings = torch.linspace(
-        float(swapFirstFixingDate),
-        float(swapLastFixingDate),
-        int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
-    )
+    strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
 
-    strike = torch.tensor(0.0871)  #mdl.calc_swap_rate(r0, t_swap_fixings, delta)
-
-    prd = EuropeanPayerSwaption(
+    prd = CapletAsPutOnZCB(
         strike=strike,
         exerciseDate=exerciseDate,
         delta=delta,
-        swapFirstFixingDate=swapFirstFixingDate,
-        swapLastFixingDate=swapLastFixingDate,
         notional=notional
     )
 
-    """ Helper functions for generating training data of pathwise payoffs and deltas """
-    def calc_dswap_dr(r0_vec: torch.Tensor, t0: float):
+    """ Helper functions for calculating pathwise payoffs and deltas, and generating training data """
+
+    def calc_dzcb_dr(r0_vec, t0):
         """
-        :param  r0_vec: Current Short rate r0
-        :param  t0:     Current time
+        :param  r0_vec:    Current Short rate r0
+        :param  t0:        Current time
 
         returns:
-            tuple with: (Swap Prices, Swap Prices differentiated wrt. r0 evaluated at entries in r0_vec)
+            tuple with: (Forward Prices, Forward Prices differentiated wrt. r0 evaluated at x)
         """
-        def _swap_price(r0_vec):
-            tau = t_swap_fixings - t0
-            return mdl.calc_swap(r0_vec, tau, delta, strike, notional)
+
+        def _zcb(r0_vec):
+            zcb = mdl.calc_zcb(r0_vec, exerciseDate - t0 + delta)[0]
+            return zcb
 
         ones = torch.ones_like(r0_vec)
-        res = jvp(_swap_price, r0_vec, ones, create_graph=False)
+        res = jvp(_zcb, r0_vec, ones, create_graph=False)
         return res
 
-    def calc_dswpt_dr(r0_vec: torch.Tensor, t0: float):
+
+    def calc_dcpl_dr(r0_vec, t0):
         """
         :param  r0_vec: Current Short rate r0
         :param  t0:     Current time
 
         returns:
-            tuple with: (Pathwise payoffs, Pathwise differentials wrt. r0 evaluated at entries in r0_vec)
+            tuple with: (Pathwise payoffs, Pathwise differentials wrt. r0 evaluated at x)
         """
-        def _payoffs(r0_vec):
-            cMdl = Vasicek(a, b, sigma, r0_vec, use_ATS=True, use_euler=False, measure=measure)
-            cPrd = EuropeanPayerSwaption(
-                    strike=strike,
-                    exerciseDate=exerciseDate - t0,
-                    delta=delta,
-                    swapFirstFixingDate=swapFirstFixingDate - t0,
-                    swapLastFixingDate=swapLastFixingDate - t0,
-                    notional=notional
-            )
 
+        def _payoffs(r0_vec):
+            cMdl = Vasicek(a, b, sigma, r0_vec, use_ATS=True, use_euler=False, measure='risk_neutral')
+            cPrd = CapletAsPutOnZCB(
+                strike=strike,
+                exerciseDate=exerciseDate - t0,
+                delta=delta,
+                notional=notional
+            )
             payoffs = mcSim(cPrd, cMdl, rng, len(r0_vec))
             return payoffs
 
@@ -107,15 +97,16 @@ if __name__ == '__main__':
         res = jvp(_payoffs, r0_vec, ones, create_graph=False)
         return res
 
+
     def training_data(r0_vec: torch.Tensor, t0: float = 0.0, use_av: bool = True):
         if use_av:
             # X_train[i] = X_train[i + N_train],  for all i, when using AV
             r0_vec = torch.concat([r0_vec, r0_vec])
 
-        swap, dSdr = calc_dswap_dr(r0_vec, t0)
-        y, dydr = calc_dswpt_dr(r0_vec, t0)
+        fwd, dSdr = calc_dzcb_dr(r0_vec, t0)
+        y, dydr = calc_dcpl_dr(r0_vec, t0)
 
-        X_train = swap.reshape(-1, 1)
+        X_train = fwd.reshape(-1, 1)
         y_train = y.reshape(-1, 1)
         z_train = (dydr / dSdr).reshape(-1, 1)
 
@@ -127,17 +118,13 @@ if __name__ == '__main__':
 
         return X_train, y_train, z_train
 
-    """ Calculate `true` swaption price using Monte Carlo for comparison """
-    r0_test_vec = torch.linspace(r0_min, r0_max, N_test)
-    y_mdl = torch.full_like(r0_test_vec, torch.nan)
-    for j in range(len(r0_test_vec)):
-        tmp_mdl = Vasicek(a, b, sigma, r0_test_vec[j], use_ATS=True, use_euler=False, measure='terminal')
-        tmp_rng = RNG(seed=seed, use_av=True)
-        y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 50000)))
-    y_mdl = y_mdl.reshape(-1, 1)
 
-    X_test = tmp_mdl.calc_swap(r0_test_vec, t_swap_fixings, delta, strike, notional).reshape(-1, 1)
+    """ Calculate Analytical Caplet price """
+    r0_test_vec = torch.linspace(r0_min, r0_max, N_test)
+    X_test = mdl.calc_zcb(r0_test_vec, exerciseDate + delta)[0].reshape(-1, 1)
+    y_mdl = mdl.calc_cpl(r0_test_vec, exerciseDate, delta, strike, notional)[0].reshape(-1, 1)
     z_mdl = y_mdl.diff(dim=0) / X_test.diff(dim=0)
+
 
     """ Estimate Price and Delta using Differential Regression """
 
@@ -157,19 +144,20 @@ if __name__ == '__main__':
 
     """ Plot results """
 
+
     fig, ax = plt.subplots(2, sharex='col')
     # Plot price function
     ax[0].plot(X_train.flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25, label='Pathwise samples')
     ax[0].plot(X_test.flatten(), y_pred, label='DiffReg', color='orange')
-    ax[0].plot(X_test, y_mdl, color='black', label='MC (Bump and reval)')
+    ax[0].plot(X_test, y_mdl, color='black', label='Analytical (Bump and reval)')
     ax[0].set_ylabel('Price')
     ax[0].text(0.05, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0].transAxes)
 
     # Plot delta function
     ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
     ax[1].plot(X_test, z_pred, label='DiffReg', color='orange')
-    ax[1].plot(X_test[1:], z_mdl, color='black', label='MC (Bump and reval)')
-    ax[1].set_xlabel('Swap(0)')
+    ax[1].plot(X_test[1:], z_mdl, color='black', label='Analytical (Bump and reval)')
+    ax[1].set_xlabel('P(0, T + delta)')
     ax[1].set_ylabel('Delta')
     ax[1].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1].transAxes)
 
@@ -190,5 +178,5 @@ if __name__ == '__main__':
     av_str = 'with AV' if use_av else 'without AV'
     fig.suptitle(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
 
-    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_EuSwpt_closetoT_Naive.png'), dpi=400)
+    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_plot_delta_caplet_as_put_on_zcb.png'), dpi=400)
     plt.show()

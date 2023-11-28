@@ -22,13 +22,13 @@ if __name__ == '__main__':
 
     hedge_points = 250
 
-    r0_min = 0.02
-    r0_max = 0.12
+    r0_min = 0.00
+    r0_max = 0.16
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Setup Differential Regressor, and Scalar
-    deg = 9
+    deg = 7
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 

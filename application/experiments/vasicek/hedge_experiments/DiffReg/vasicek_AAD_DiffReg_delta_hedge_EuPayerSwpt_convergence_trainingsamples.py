@@ -1,4 +1,6 @@
 import torch
+import matplotlib.pyplot as plt
+import numpy as np
 from tqdm import tqdm
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek, choose_training_grid
@@ -20,10 +22,6 @@ if __name__ == '__main__':
     r0_min = 0.02
     r0_max = 0.12
 
-    # Setup Differential Regressor, and Scalar
-    deg = 15
-    alpha = 1.0
-    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 
     # Model specification
     r0 = torch.linspace(r0_min, r0_max, N_test)
@@ -104,57 +102,65 @@ if __name__ == '__main__':
         return res
 
     """ Delta Hedge Experiment """
-    steps = 100
+    steps = 100 #100
     dTL = torch.linspace(0.0, float(swapFirstFixingDate), steps + 1)
     mcSimPaths(prd, mdl, rng, N_test, dTL)
     r = mdl.x
 
-    # Simulate paths
-    N_train = [256 * i**2 for i in range(1, 10)]
-    hedge_error = []
+    # Setup Differential Regressor, and Scalar
+    degrees = [5, 7, 9, 15]
 
-    for N in tqdm(N_train):
+    plt.figure()
+    for deg in tqdm(degrees):
+        alpha = 1.0
+        diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 
-        r0_vec = torch.linspace(r0_min, r0_max, N)
+        # Simulate paths
+        N_train = [256, 1024, 4096, 8192] #[256 * 4*i for i in range(1, 5)]
+        hedge_error = []
 
-        # Get price of claim (we use 500k simulations to get an accurate estimate)
-        swpt = torch.empty_like(r[0, :])
-        for n in range(N_test):
-            mdl.r0 = r[0, n]
-            swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
+        for N in N_train:
 
-        # Initialize experiment
-        swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
+            r0_vec = torch.linspace(r0_min, r0_max, N)
 
-        V = swpt * torch.ones_like(r[0, :])
-        h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=0.0,
-                                   calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
-                                   diff_reg=diff_reg, use_av=use_av)[1].flatten()
-        h_b = V - h_a * swap
+            # Get price of claim (we use 500k simulations to get an accurate estimate)
+            swpt = torch.empty_like(r[0, :])
+            for n in range(N_test):
+                mdl.r0 = r[0, n]
+                swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
 
-        # Loop over time
-        for k in range(1, len(dTL)):
-            dt = dTL[k] - dTL[k-1]
-            t = dTL[k]
+            # Initialize experiment
+            swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
 
-            # Update market variables
-            swap = mdl.calc_swap(r[k, :], t_swap_fixings - t, delta, strike, notional)
+            V = swpt * torch.ones_like(r[0, :])
+            h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=0.0,
+                                       calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
+                                       diff_reg=diff_reg, use_av=use_av)[1].flatten()
+            h_b = V - h_a * swap
 
-            # Update portfolio
-            V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
-            if k < len(dTL) - 1:
-                r0_vec = choose_training_grid(r[k, :], N)
-                h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=t,
-                                           calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
-                                           diff_reg=diff_reg, use_av=use_av)[1].flatten()
-                h_b = V - h_a * swap
+            # Loop over time
+            for k in range(1, len(dTL)):
+                dt = dTL[k] - dTL[k-1]
+                t = dTL[k]
 
-        hedge_error.append(torch.std(V - max0(swap)))
+                # Update market variables
+                swap = mdl.calc_swap(r[k, :], t_swap_fixings - t, delta, strike, notional)
 
-    """ Plot """
-    log_plotter(X=N_train,
-                Y=hedge_error,
-                title_add=prd.name + f'alpha = {alpha}, deg={deg}, times hedging = {steps}, notional = {notional}',
-                save=False,
-                file_name='vasicek_AAD_DiffReg_delta_hedge_EuPayerSwpt_convergence_trainingsamples')
+                # Update portfolio
+                V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
+                if k < len(dTL) - 1:
+                    r0_vec = choose_training_grid(r[k, :], N)
+                    h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=t,
+                                               calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
+                                               diff_reg=diff_reg, use_av=use_av)[1].flatten()
+                    h_b = V - h_a * swap
 
+            hedge_error.append(torch.std(V - max0(swap)))
+        plt.plot(np.log(N_train), np.log(hedge_error), 'o-', label=f'Deg={deg}')
+
+    plt.title(prd.name + f'alpha = {alpha}, Hedge Times={steps} , Notional = {int(notional)}')
+    plt.xlabel('Training Sample')
+    plt.ylabel('Std. of Hedge Error')
+    plt.xticks(ticks=np.log(N_train), labels=N_train)
+    plt.legend()
+    plt.show()

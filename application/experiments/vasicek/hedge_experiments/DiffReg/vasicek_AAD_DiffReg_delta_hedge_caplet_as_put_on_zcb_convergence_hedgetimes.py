@@ -6,7 +6,7 @@ from application.engine.products import CapletAsPutOnZCB
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.torch_utils import max0
-from application.experiments.vasicek.vasicek_hedge_tools import diff_reg_fit_predict, log_plotter
+from application.experiments.vasicek.vasicek_hedge_tools import diff_reg_fit_predict, log_plotter_without_conv
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
@@ -18,13 +18,13 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    r0_min = 0.02
-    r0_max = 0.12
+    r0_min = 0.00
+    r0_max = 0.16
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Setup Differential Regressor, and Scalar
-    deg = 9
+    deg = 7
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 
@@ -152,10 +152,12 @@ if __name__ == '__main__':
         hedge_error.append(torch.std(V - payoff_func))
 
     """ Plot """
-    log_plotter(X=hedge_times,
+    log_plotter_without_conv(X=hedge_times,
                 Y=hedge_error,
-                title_add=prd.name + f'alpha = {alpha}, deg={deg}, {N_train} samples, notional = {notional}',
+                title_add=prd.name + f'alpha = {alpha}, Deg={deg}, {N_train} Samples, Notional = {notional}',
                 save=False,
-                file_name='vasicek_AAD_DiffReg_delta_hedge_caplet_as_put_on_zcb_convergence_hedgetimes')
+                file_name='vasicek_AAD_DiffReg_delta_hedge_caplet_as_put_on_zcb_convergence_hedgetimes',
+                xLabel='Hedge Frequency',
+                yLabel='Std. of Hedge Error')
 
 

@@ -171,3 +171,22 @@ def log_plotter(X, Y, title_add : str, save: bool, file_name: str = None):
     if save:
         plt.savefig(get_plot_path(f'{file_name}.png'), dpi=400)
     plt.show()
+
+def log_plotter_without_conv(X, Y, title_add : str, xLabel: str, yLabel: str, save: bool, file_name: str = None):
+    if not (xLabel and yLabel):
+        raise ValueError("Need to specify X and Y axis when plotting!")
+    x = np.log(X)
+    y = np.log(Y)
+
+    plt.figure()
+    plt.suptitle(title_add)
+    plt.plot(x, y, 'o-', color='orange')
+
+    plt.xlabel(xLabel)
+    plt.ylabel(yLabel)
+
+    plt.xticks(ticks=x, labels=X)
+
+    if save:
+        plt.savefig(get_plot_path(f'{file_name}.png'), dpi=400)
+    plt.show()
