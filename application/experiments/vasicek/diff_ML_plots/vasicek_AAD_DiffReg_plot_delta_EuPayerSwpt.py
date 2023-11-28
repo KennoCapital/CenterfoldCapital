@@ -21,9 +21,7 @@ if __name__ == '__main__':
     r0_min = -0.02
     r0_max = 0.15
 
-    #r0_vec = torch.linspace(r0_min, r0_max, N_train
-    r0_vec = torch.normal(0.08, 0.023*2, size=(N_train,))
-    r0_vec = torch.sort(r0_vec).values
+    r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Setup Differential Regressor, and Scalar
     deg = 7
@@ -43,7 +41,7 @@ if __name__ == '__main__':
     rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
-    exerciseDate = torch.tensor(0.01)
+    exerciseDate = torch.tensor(1.0)
     delta = torch.tensor(0.25)
     swapFirstFixingDate = exerciseDate
     swapLastFixingDate = exerciseDate + torch.tensor(5.0)
