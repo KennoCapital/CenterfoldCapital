@@ -1,7 +1,5 @@
-from application.engine.mcBase import lsmcDefaultSim, LSMC, RNG, mcSim
-from application.engine.products import BermudanPayerSwaption, EuropeanPayerSwaption
+from application.engine.mcBase import RNG, mcSim
 from application.engine.trolleSchwartz import trolleSchwartz
-from application.engine.regressor import PolynomialRegressor
 from application.engine.products import Caplet
 import torch
 import matplotlib.pyplot as plt
@@ -14,22 +12,23 @@ Testing implementation of MC simulation and engine.
 """
 
 if __name__ == '__main__':
+    N = 1024 * 10
     seed = 1234
 
     measure = 'risk_neutral'
 
     # Trolle-Schwartz model specification
-    kappa = torch.tensor(0.5509) #0553
-    sigma = torch.tensor(1.0497) #3325
-    alpha0 = torch.tensor(0.0001) #45
-    alpha1 = torch.tensor(0.0046) #0131
+    kappa = torch.tensor(0.5509)
+    sigma = torch.tensor(1.0497)
+    alpha0 = torch.tensor(0.0001)
+    alpha1 = torch.tensor(0.0046)
     gamma = torch.tensor(0.1777)
     rho = torch.tensor(0.327)
-    theta = torch.tensor(2.1070) #* torch.tensor(.1476)/ kappa
+    theta = torch.tensor(2.1070) * torch.tensor(.1476)/ kappa
     varphi = torch.tensor(0.068)
 
     # Product specification
-    start = torch.tensor(15.0)
+    start = torch.tensor(1.0)
     delta = torch.tensor(.25)
     strike = torch.tensor(0.084)
     notional = torch.tensor(1e6)
@@ -48,14 +47,22 @@ if __name__ == '__main__':
         notional=notional
     )
 
-    cashflows = mcSim(prd, model, rng, N, dTL)
-    payoff = torch.sum(cashflows, dim=0)
+    simulation = mcSim(prd, model, rng, N, dTL)
 
-    # mc
-    mc_price = torch.nanmean(payoff)
-    print('MC Price =', mc_price)
+    """ Plotting term structure """
+    maturities = torch.tensor([0.25, 1.0, 5.0, 10.0, 15.0, 20.0, 30.])
+    strikes = torch.full_like(maturities, 0.084)
+    state_vars = torch.concat(model.x)
+    zcb_term = torch.zeros_like(strikes)
+    for i, T in enumerate(maturities):
+        zcb_term[i] = model.calc_zcb(state_vars[:, 1, :], torch.tensor(0.02), torch.tensor(T)).mean()
+    plt.figure()
+    plt.plot(maturities, zcb_term, label = r'$T \rightarrow P(t,T)$')
+    plt.xlabel('Years')
+    plt.legend()
+    plt.show()
 
-    # plotting state vars
+    """ Plotting state variables """
     x,v,phi1,phi2,phi3,phi4,phi5,phi6 = [i.squeeze()[:,0] for i in model.x]
 
     fig1, axs1 = plt.subplots(1, 2, figsize=(8, 4))
@@ -82,6 +89,8 @@ if __name__ == '__main__':
     fig2.tight_layout()
     plt.show()
 
+    # plotting forward rate vol (hump shaped!)
     plt.figure()
-    plt.plot(dTL, model._fwd_rate_vol(0,dTL) )
+    plt.plot(dTL, model.fwd_rate_vol(0,dTL)[0] )
     plt.show()
+
