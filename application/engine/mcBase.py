@@ -131,11 +131,6 @@ class LSMC:
         self._eps = 1E-12
         self._min_itm = 2048
 
-    def _formatPathsX(self, paths):
-        return [p.x.reshape(p.x.shape[0], -1) if p.x is not None else None for p in paths]
-
-
-
     def backward(self,
                  prd:   CallableProduct,
                  paths: Scenario):
@@ -149,16 +144,12 @@ class LSMC:
         # Determine exercise values
         ev = prd.exercise_value(paths)
 
-        # Data preprocessing (arrange state variables column-wise)
-        xList = self._formatPathsX(paths)
-
         # Perform regression over backwards recursion and store coefficients
         w = []
         for k in range(self._M, 0, -1):
             itm = ev[k] > 0.0 + self._eps
             itm = itm if (self.use_only_itm and torch.sum(itm) >= self._min_itm) else torch.ones_like(ev[k], dtype=torch.bool)
-            #self.reg.fit(X=paths[k + idx_offset].x[itm], y=ev[k][itm])
-            self.reg.fit(X=xList[k + idx_offset][itm], y=ev[k][itm])
+            self.reg.fit(X=paths[k + idx_offset].x[itm], y=ev[k][itm])
             w.insert(0, self.reg.coef)
         self.coef = torch.vstack(w)
 
@@ -173,17 +164,13 @@ class LSMC:
         # depending on if time 0.0 is an exercise date
         idx_offset = 0 if (0.0 in prd.exercise_dates) else 1
 
-        # Data preprocessing (arrange state variables column-wise)
-        xList = self._formatPathsX(paths)
-
         alive = torch.ones(size=(self._N, ), dtype=torch.bool)
         stopping_idx = torch.full(size=(self._N, ), fill_value=self._M, dtype=torch.int)
         for k in range(self._M):
             self.reg.set_coef(coef=self.coef[k])
 
             # Continuation values
-            #cv = self.reg.predict(X=paths[k + idx_offset].x)
-            cv = self.reg.predict(X=xList[k + idx_offset])
+            cv = self.reg.predict(X=paths[k + idx_offset].x)
             exercise = ev[k] > max0(cv) + self._eps
             exercise = torch.logical_and(alive, exercise)
             alive = torch.logical_and(alive, ~exercise)
