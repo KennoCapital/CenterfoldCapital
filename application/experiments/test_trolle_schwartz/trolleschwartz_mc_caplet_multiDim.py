@@ -11,9 +11,9 @@ torch.set_default_dtype(torch.float64)
 
 if __name__ == "__main__":
 
-    plot_state_vars = False
-    strike_plot = True
-    euler_step_size = 100
+    plot_state_vars = True
+    strike_plot = False
+    euler_step_size = 500
 
     # Setup
     seed = 1234
@@ -105,46 +105,46 @@ if __name__ == "__main__":
 
     if plot_state_vars:
         """ Plotting state variables """
-        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i.squeeze()[:, :-1, 50] for i in model.x]
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i.squeeze()[:, :, 420] for i in model.x]
 
         fig1, axs1 = plt.subplots(1, 2, figsize=(8, 4))
-        axs1[0].plot(dTL, x[0,:], label=r'$x_1$', linestyle='-', color='C0')
-        axs1[0].plot(dTL, x[1, :], label=r'$x_2$', linestyle='-.', color='C0')
-        axs1[0].plot(dTL, x[2, :], label=r'$x_3$', linestyle=':', color='C0')
+        axs1[0].plot(dTL, x[0,:], label=r'$x_1$', linestyle='-', color='black')
+        axs1[0].plot(dTL, x[1, :], label=r'$x_2$', linestyle='-.', color='black')
+        axs1[0].plot(dTL, x[2, :], label=r'$x_3$', linestyle=':', color='black')
         axs1[0].legend(loc='upper left')
         axs1[0].set_xlabel('Years')
-        axs1[1].plot(dTL, v[0,:], label=r'$\nu_1$', linestyle='-',color='C0')
-        axs1[1].plot(dTL, v[1, :], label=r'$\nu_2$', linestyle='-.', color='C0')
-        axs1[1].plot(dTL, v[2, :], label=r'$\nu_3$', linestyle=':', color='C0')
+        axs1[1].plot(dTL, v[0,:], label=r'$\nu_1$', linestyle='-',color='black')
+        axs1[1].plot(dTL, v[1, :], label=r'$\nu_2$', linestyle='-.', color='black')
+        axs1[1].plot(dTL, v[2, :], label=r'$\nu_3$', linestyle=':', color='black')
         axs1[1].legend(loc='upper left')
         axs1[1].set_xlabel('Years')
 
 
         fig2, axs2 = plt.subplots(3, 2, figsize=(7, 8))
-        axs2[0, 0].plot(dTL, phi1[0, :], label=r'$\phi_{1,1}$', linestyle='-', color='C0')
-        axs2[0, 0].plot(dTL, phi1[1, :], label=r'$\phi_{1,2}$', linestyle='-.', color='C0')
-        axs2[0, 0].plot(dTL, phi1[2, :], label=r'$\phi_{1,3}$', linestyle=':', color='C0')
+        axs2[0, 0].plot(dTL, phi1[0, :], label=r'$\phi_{1,1}$', linestyle='-', color='black')
+        axs2[0, 0].plot(dTL, phi1[1, :], label=r'$\phi_{1,2}$', linestyle='-.', color='black')
+        axs2[0, 0].plot(dTL, phi1[2, :], label=r'$\phi_{1,3}$', linestyle=':', color='black')
         axs2[0, 0].legend(loc='upper left')
-        axs2[0, 1].plot(dTL, phi2[0, :], label=r'$\phi_{2,1}$', linestyle='-', color='C0')
-        axs2[0, 1].plot(dTL, phi2[1, :], label=r'$\phi_{2,2}$', linestyle='-.', color='C0')
-        axs2[0, 1].plot(dTL, phi2[2, :], label=r'$\phi_{2,3}$', linestyle=':', color='C0')
+        axs2[0, 1].plot(dTL, phi2[0, :], label=r'$\phi_{2,1}$', linestyle='-', color='black')
+        axs2[0, 1].plot(dTL, phi2[1, :], label=r'$\phi_{2,2}$', linestyle='-.', color='black')
+        axs2[0, 1].plot(dTL, phi2[2, :], label=r'$\phi_{2,3}$', linestyle=':', color='black')
         axs2[0, 1].legend(loc='upper left')
-        axs2[1, 0].plot(dTL, phi3[0, :], label=r'$\phi_{3,1}$', linestyle='-', color='C0')
-        axs2[1, 0].plot(dTL, phi3[1, :], label=r'$\phi_{3,2}$', linestyle='-.', color='C0')
-        axs2[1, 0].plot(dTL, phi3[2, :], label=r'$\phi_{3,3}$', linestyle=':', color='C0')
+        axs2[1, 0].plot(dTL, phi3[0, :], label=r'$\phi_{3,1}$', linestyle='-', color='black')
+        axs2[1, 0].plot(dTL, phi3[1, :], label=r'$\phi_{3,2}$', linestyle='-.', color='black')
+        axs2[1, 0].plot(dTL, phi3[2, :], label=r'$\phi_{3,3}$', linestyle=':', color='black')
         axs2[1, 0].legend(loc='upper left')
-        axs2[1, 1].plot(dTL, phi4[0, :], label=r'$\phi_{4,1}$', linestyle='-', color='C0')
-        axs2[1, 1].plot(dTL, phi4[1, :], label=r'$\phi_{4,2}$', linestyle='-.', color='C0')
-        axs2[1, 1].plot(dTL, phi4[2, :], label=r'$\phi_{4,3}$', linestyle=':', color='C0')
+        axs2[1, 1].plot(dTL, phi4[0, :], label=r'$\phi_{4,1}$', linestyle='-', color='black')
+        axs2[1, 1].plot(dTL, phi4[1, :], label=r'$\phi_{4,2}$', linestyle='-.', color='black')
+        axs2[1, 1].plot(dTL, phi4[2, :], label=r'$\phi_{4,3}$', linestyle=':', color='black')
         axs2[1, 1].legend(loc='upper left')
-        axs2[2, 0].plot(dTL, phi5[0, :], label=r'$\phi_{5,1}$', linestyle='-', color='C0')
-        axs2[2, 0].plot(dTL, phi5[1, :], label=r'$\phi_{5,2}$', linestyle='-.', color='C0')
-        axs2[2, 0].plot(dTL, phi5[2, :], label=r'$\phi_{5,3}$', linestyle=':', color='C0')
+        axs2[2, 0].plot(dTL, phi5[0, :], label=r'$\phi_{5,1}$', linestyle='-', color='black')
+        axs2[2, 0].plot(dTL, phi5[1, :], label=r'$\phi_{5,2}$', linestyle='-.', color='black')
+        axs2[2, 0].plot(dTL, phi5[2, :], label=r'$\phi_{5,3}$', linestyle=':', color='black')
         axs2[2, 0].legend(loc='upper left')
         axs2[2, 0].set_xlabel('Years')
-        axs2[2, 1].plot(dTL, phi6[0, :], label=r'$\phi_{6,1}$', linestyle='-', color='C0')
-        axs2[2, 1].plot(dTL, phi6[1, :], label=r'$\phi_{6,2}$', linestyle='-.', color='C0')
-        axs2[2, 1].plot(dTL, phi6[2, :], label=r'$\phi_{6,3}$', linestyle=':', color='C0')
+        axs2[2, 1].plot(dTL, phi6[0, :], label=r'$\phi_{6,1}$', linestyle='-', color='black')
+        axs2[2, 1].plot(dTL, phi6[1, :], label=r'$\phi_{6,2}$', linestyle='-.', color='black')
+        axs2[2, 1].plot(dTL, phi6[2, :], label=r'$\phi_{6,3}$', linestyle=':', color='black')
         axs2[2, 1].legend(loc='upper left')
         axs2[2, 1].set_xlabel('Years')
 
