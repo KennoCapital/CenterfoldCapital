@@ -761,7 +761,9 @@ class BarrierPayerSwaption(Product):
                       f'{float_to_time_str(swapLastFixingDate)}'
                       f'{float_to_time_str(delta)} '
                       f'BarrierPayerSwpt @ {float(strike) * 100:.4g}% '
-                      f'w {float_to_notional_str(notional)} '
+                      f'w barrier={barrier} '
+                      f'smoothing={smooth}% '
+                      f'and {float_to_notional_str(notional)} '
                       f'x on {float_to_time_str(exerciseDate)}')
 
         self._timeline = torch.unique(torch.concat([torch.tensor([0.0]), obsTL, exerciseDate.view(1)]))
@@ -803,15 +805,14 @@ class BarrierPayerSwaption(Product):
         return self._payoffLabels
 
     def payoff(self, paths):
-        s = torch.vstack([p.irs[0] for p in paths[1:]])
-        sMax = torch.max(s, dim=0).values
         lb = self.barrier * (1.0 - self.smooth)
         ub = self.barrier * (1.0 + self.smooth)
+        alive = torch.ones_like(paths[1].irs[0])
+        for sample in paths[1:]:
+            swaps = sample.irs[0]
+            alive *= torch.where(swaps > lb, (ub - swaps)/(ub - lb), alive)
+            alive = torch.where(swaps > ub, 0.0, alive)
 
-        # Smoothing with linear interpolation
-        alive = (sMax - lb) / (ub - lb)
-        alive = torch.maximum(torch.tensor(0.0), alive)
-        alive = torch.minimum(torch.tensor(1.0), alive)
 
         res = max0(paths[-1].irs[0]) * paths[0].numeraire / paths[-1].numeraire
         res *= alive
