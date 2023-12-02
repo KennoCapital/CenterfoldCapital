@@ -1,7 +1,7 @@
 import torch
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
-from application.utils.torch_utils import max0
+from application.utils.torch_utils import max0, smoothing
 from application.utils.prd_name_conventions import float_to_time_str, float_to_notional_str
 from application.engine.linearProducts import forward_rate_agreement
 
@@ -745,7 +745,8 @@ class BarrierPayerSwaption(Product):
                  swapFirstFixingDate:   torch.Tensor,
                  swapLastFixingDate:    torch.Tensor,
                  notional:              torch.Tensor = torch.tensor([1.0]),
-                 smooth:                torch.Tensor = torch.tensor([0.01])):
+                 smooth:                torch.Tensor = torch.tensor([0.01]),
+                 smoothing:             str = None):
         self.strike = strike
         self.exerciseDate = exerciseDate
         self.delta = delta
@@ -755,6 +756,7 @@ class BarrierPayerSwaption(Product):
         self.swapLastFixingDate = swapLastFixingDate
         self.notional = notional
         self.smooth = smooth
+        self.smoothing = smoothing
 
 
         self._name = (f'{float_to_time_str(swapFirstFixingDate)}'
@@ -762,7 +764,7 @@ class BarrierPayerSwaption(Product):
                       f'{float_to_time_str(delta)} '
                       f'BarrierPayerSwpt @ {float(strike) * 100:.4g}% '
                       f'w barrier={barrier} '
-                      f'smoothing={smooth}% '
+                      f'smoothing={smooth * 100}% '
                       f'and {float_to_notional_str(notional)} '
                       f'x on {float_to_time_str(exerciseDate)}')
 
@@ -810,9 +812,8 @@ class BarrierPayerSwaption(Product):
         alive = torch.ones_like(paths[1].irs[0])
         for sample in paths[1:]:
             swaps = sample.irs[0]
-            alive *= torch.where(swaps > lb, (ub - swaps)/(ub - lb), alive)
+            alive *= torch.where((swaps > lb), smoothing(type=self.smoothing, x=swaps, barrier=self.barrier, lb=lb, ub=ub), alive)
             alive = torch.where(swaps > ub, 0.0, alive)
-
 
         res = max0(paths[-1].irs[0]) * paths[0].numeraire / paths[-1].numeraire
         res *= alive
