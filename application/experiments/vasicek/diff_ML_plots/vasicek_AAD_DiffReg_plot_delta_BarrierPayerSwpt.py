@@ -1,4 +1,6 @@
 import torch
+import os
+import pickle
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
@@ -7,12 +9,15 @@ from application.engine.products import BarrierPayerSwaption
 from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSim, RNG
-from application.utils.path_config import get_plot_path
+from application.utils.path_config import get_plot_path, get_data_path
+from application.experiments.vasicek.vasicek_hedge_tools import training_data
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
+
+    file_path = get_data_path('vasicek_Barrier_test_set.pkl')
 
     seed = 1234
     N_train = 1024
@@ -56,7 +61,7 @@ if __name__ == '__main__':
 
     strike = torch.tensor(0.0871)  #mdl.calc_swap_rate(r0, t_swap_fixings, delta)
 
-    hedge_times = 50
+    hedge_times = 100
     dTL = torch.linspace(0.0, float(swapFirstFixingDate), hedge_times + 1)
     prd = BarrierPayerSwaption(
         strike=strike,
@@ -67,7 +72,8 @@ if __name__ == '__main__':
         swapFirstFixingDate=swapFirstFixingDate,
         swapLastFixingDate=swapLastFixingDate,
         notional=notional,
-        smooth=torch.tensor(0.10)
+        smooth=torch.tensor(0.05),
+        smoothing='sigmoid'
     )
 
 
@@ -107,51 +113,40 @@ if __name__ == '__main__':
                     swapFirstFixingDate=swapFirstFixingDate - t0,
                     swapLastFixingDate=swapLastFixingDate - t0,
                     notional=notional,
-                    smooth=prd.smooth
+                    smooth=prd.smooth,
+                    smoothing=prd.smoothing
             )
-
-            payoffs = mcSim(cPrd, cMdl, rng, len(r0_vec))
+            cRng = RNG(seed=seed, use_av=use_av)
+            payoffs = mcSim(cPrd, cMdl, cRng, len(r0_vec))
             return payoffs
 
         ones = torch.ones_like(r0_vec)
         res = jvp(_payoffs, r0_vec, ones, create_graph=False)
         return res
 
-    def training_data(r0_vec: torch.Tensor, t0: float = 0.0, use_av: bool = True):
-        if use_av:
-            # X_train[i] = X_train[i + N_train],  for all i, when using AV
-            r0_vec = torch.concat([r0_vec, r0_vec])
-
-        swap, dSdr = calc_dswap_dr(r0_vec, t0)
-        y, dydr = calc_dswpt_dr(r0_vec, t0)
-
-        X_train = swap.reshape(-1, 1)
-        y_train = y.reshape(-1, 1)
-        z_train = (dydr / dSdr).reshape(-1, 1)
-
-        if use_av:
-            idx_half = N_train
-            X_train = X_train[:idx_half]
-            y_train = 0.5 * (y_train[:idx_half] + y_train[idx_half:])
-            z_train = 0.5 * (z_train[:idx_half] + z_train[idx_half:])
-
-        return X_train, y_train, z_train
-
     """ Calculate `true` swaption price using Monte Carlo for comparison """
-    r0_test_vec = torch.linspace(r0_min, r0_max, N_test)
-    y_mdl = torch.full_like(r0_test_vec, torch.nan)
-    for j in tqdm(range(len(r0_test_vec))):
-        tmp_mdl = Vasicek(a, b, sigma, r0_test_vec[j], use_ATS=True, use_euler=False, measure='terminal')
-        tmp_rng = RNG(seed=seed, use_av=True)
-        y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 20000)))
-    y_mdl = y_mdl.reshape(-1, 1)
+    if os.path.isfile(file_path):
+        with open(file_path, 'rb') as file:
+            X_test, y_mdl, z_mdl = pickle.load(file)
+    else:
+        r0_test_vec = torch.linspace(r0_min, r0_max, N_test)
+        y_mdl = torch.full_like(r0_test_vec, torch.nan)
+        for j in tqdm(range(len(r0_test_vec))):
+            tmp_mdl = Vasicek(a, b, sigma, r0_test_vec[j], use_ATS=True, use_euler=False, measure='terminal')
+            tmp_rng = RNG(seed=seed, use_av=True)
+            y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 500000)))
+        y_mdl = y_mdl.reshape(-1, 1)
 
-    X_test = tmp_mdl.calc_swap(r0_test_vec, t_swap_fixings, delta, strike, notional).reshape(-1, 1)
-    z_mdl = y_mdl.diff(dim=0) / X_test.diff(dim=0)
+        X_test = tmp_mdl.calc_swap(r0_test_vec, t_swap_fixings, delta, strike, notional).reshape(-1, 1)
+        z_mdl = y_mdl.diff(dim=0) / X_test.diff(dim=0)
 
+        with open(file_path, 'wb') as file:
+            pickle.dump(tuple([X_test, y_mdl, z_mdl]), file, pickle.HIGHEST_PROTOCOL)
+    
+        
     """ Estimate Price and Delta using Differential Regression """
 
-    X_train, y_train, z_train = training_data(r0_vec=r0_vec, t0=0.0, use_av=use_av)
+    X_train, y_train, z_train = training_data(r0_vec = r0_vec, t0 = 0.0, calc_dU_dr = calc_dswap_dr, calc_dPrd_dr = calc_dswpt_dr, use_av = True)
 
     X_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(X_train, y_train, z_train)
 
