@@ -35,10 +35,7 @@ def polynomial_powers(deg: int, n_features: int, include_interactions: bool = Fa
             [torch.bincount(torch.tensor(c), minlength=n_features) for c in iter]
         )
     else:
-        powers = torch.tensor(
-            [[p for _ in range(n_features)] for p in range(1, deg + 1)]
-        )
-
+        powers = torch.vstack([torch.diag(torch.ones(size=(n_features, )) * p ) for p in range(1, deg + 1)])
     return powers
 
 

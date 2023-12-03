@@ -485,7 +485,6 @@ class Fraption(Product):
         return max0(fra) * paths[0].numeraire / paths[1].numeraire
 
 
-
 class EuropeanPayerSwaption(Product):
     def __init__(self,
                  strike:                torch.Tensor,
@@ -623,6 +622,89 @@ class EuropeanReceiverSwaption(Product):
         return res
 
 
+class BasketEuropeanPayerSwaptions(Product):
+    def __init__(self,
+                 exerciseDate:          torch.Tensor,
+                 fixRates:              torch.Tensor,
+                 deltas:                torch.Tensor,
+                 swapFirstFixingDates:  torch.Tensor,
+                 swapLastFixingDates:   torch.Tensor,
+                 weights:               torch.Tensor,
+                 notionals:             torch.Tensor,
+                 strike:                torch.Tensor = torch.tensor([0.0])):
+
+        if not (len(fixRates) == len(deltas) == len(swapFirstFixingDates) == len(swapLastFixingDates) == len(weights) == len(notionals)):
+            raise ValueError(f'Length must be equal for: '
+                             f'fixRates ({len(fixRates)}), '
+                             f'deltas ({len(deltas)}), '
+                             f'swapFirstFixingDates ({len(swapFirstFixingDates)}), '
+                             f'swapLastFixingDates ({len(swapLastFixingDates)}), '
+                             f'weights ({len(weights)}),'
+                             f'notionals ({len(notionals)}')
+
+        self.n = len(weights)
+        self.strike = strike
+        self.notionals = notionals
+        self.exerciseDate = exerciseDate
+
+        self.fixRates = fixRates
+        self.deltas = deltas
+        self.swapFirstFixingDates = swapFirstFixingDates
+        self.swapLastFixingDates = swapLastFixingDates
+        self.weights = weights
+
+        self._name = f'Basket of European Payer Swaptions with {self.n} underlying swaps'
+
+        self._timeline = torch.concat([torch.tensor([0.0]), self.exerciseDate.view(1)])
+
+        swapFixingDates = [torch.linspace(
+            float(exerciseDate),
+            float(swapLastFixingDates[i] + exerciseDate),
+            int((swapLastFixingDates[i]) / deltas[i] + 1)
+        ) for i in range(self.n)]
+
+        self._defline = [
+            SampleDef(fwdRates=[], irs=[], discMats=torch.tensor([]),
+                      numeraire=True,
+                      stateVar=False)
+        ]
+
+        self._defline += [
+            SampleDef(
+                fwdRates=[],
+                irs=[InterestRateSwapDef(fixingDates=swapFixingDates[i], fixRate=self.fixRates[i], notional=notionals[i])
+                     for i in range(self.n)],
+                discMats=torch.tensor([]),
+                numeraire=True,
+                stateVar=False
+            )
+        ]
+
+        self._payoffLabels = ['']
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def payoffLabels(self):
+        return self._payoffLabels
+
+    def payoff(self, paths):
+        irs = torch.vstack(paths[1].irs).T
+        u = irs @ self.weights.reshape(-1, 1)
+        res = max0(u.flatten() - self.strike) * paths[0].numeraire / paths[1].numeraire
+        return res
+
+
 class BermudanPayerSwaption(CallableProduct):
     def __init__(self,
                  strike:                torch.Tensor,
@@ -730,8 +812,6 @@ class BermudanPayerSwaption(CallableProduct):
         mask = torch.full(size=(M, N), fill_value=False)
         mask[self.exercise_idx.to(torch.int32), torch.arange(N, dtype=torch.int)] = True
         res = max0(irs * mask) * df
-
-        # res = max0(irs[self.exercise_idx, torch.arange(N)]) * df[self.exercise_idx, torch.arange(N)]
         return res
 
 
@@ -757,7 +837,6 @@ class BarrierPayerSwaption(Product):
         self.notional = notional
         self.smooth = smooth
         self.smoothing = smoothing
-
 
         self._name = (f'{float_to_time_str(swapFirstFixingDate)}'
                       f'{float_to_time_str(swapLastFixingDate)}'
