@@ -783,7 +783,7 @@ class BarrierPayerSwaption(Product):
             SampleDef(fwdRates=[],
                       irs=[InterestRateSwapDef(fixingDates=swapFixingDates, fixRate=self.strike, notional=self.notional)],
                       discMats=torch.tensor([]),
-                      numeraire=(t == exerciseDate),
+                      numeraire=(t == self.timeline[-1]),
                       stateVar=False)
             for t in self.timeline[1:]
         ]
@@ -814,6 +814,7 @@ class BarrierPayerSwaption(Product):
             swaps = sample.irs[0]
             alive *= torch.where((swaps > lb), smoothing(type=self.smoothing, x=swaps, barrier=self.barrier, lb=lb, ub=ub), alive)
             alive = torch.where(swaps > ub, 0.0, alive)
+
 
         res = max0(paths[-1].irs[0]) * paths[0].numeraire / paths[-1].numeraire
         res *= alive

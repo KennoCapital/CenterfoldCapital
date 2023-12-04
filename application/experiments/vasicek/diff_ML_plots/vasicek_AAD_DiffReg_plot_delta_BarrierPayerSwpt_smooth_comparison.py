@@ -17,7 +17,7 @@ torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
 
-    file_path = get_data_path('vasicek_Barrier_test_set.pkl')
+    file_path = get_data_path('vasicek_Barrier_test_set_T_1.pkl')
 
     seed = 1234
     N_train = 1024
