@@ -194,6 +194,7 @@ if __name__ == '__main__':
             cMdl = Vasicek(a, b, sigma, r, use_ATS=True, use_euler=False, measure='terminal')
             cRng = RNG(use_av=use_av, seed=seed)
             payoff = mcSim(prd, cMdl, cRng, N=50000)
+            g = torch.sum()
             y_test[i] = torch.mean(payoff)
 
         x_test = x_test.reshape(-1, n)

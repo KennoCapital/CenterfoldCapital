@@ -40,9 +40,11 @@ def training_data(r0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use
     if dydr.dim() == 1:
         dydr = dydr.reshape(-1, 1)
 
-    if x_train.shape[1] > 1:
+    num_features = x_train.shape[1]
+
+    if num_features > 1:
         # General (multi-dimensional) case
-        solve_rowwise = lambda dxdr_, dydr_: (torch.pinverse(dxdr_.T) @ dydr_.T).flatten()
+        solve_rowwise = lambda dxdr_, dydr_: (torch.pinverse(dxdr_.T) @ dydr_.T).reshape(-1, num_features).sum(dim=0)
         equations = (
             (dxdr[i, :].reshape(-1, 1), dydr[i, :].reshape(-1, 1)) for i in range(len(r0_vec))
         )
