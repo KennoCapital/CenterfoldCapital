@@ -48,3 +48,14 @@ if __name__ == '__main__':
     print(
         'Analytical price =', model.calc_cpl(r0, start, delta, swap_rate, notional)[0][0]
     )
+
+    # plotting forward rate movements
+    fwds = torch.empty(len(model.timeline))
+    for t in range(len(model.timeline)):
+        state = model.x[5,:]
+        fwds[t] = model.calc_fwd(state, torch.tensor(0.02), start+delta).mean(dim=1)
+
+    plt.figure()
+    plt.plot(model.timeline, fwds)
+    plt.show()
+

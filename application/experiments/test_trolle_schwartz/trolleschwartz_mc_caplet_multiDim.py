@@ -13,7 +13,7 @@ if __name__ == "__main__":
 
     plot_state_vars = True
     strike_plot = False
-    euler_step_size = 500
+    euler_step_size = 50
 
     # Setup
     seed = 1234
@@ -37,7 +37,7 @@ if __name__ == "__main__":
     varphi = torch.tensor(0.0668)
 
     # Product specification
-    start = torch.tensor(1.)
+    start = torch.tensor(5.)
     delta = torch.tensor(.25)
     strike = torch.tensor(0.07)
     notional = torch.tensor(1e6)
@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     if plot_state_vars:
         """ Plotting state variables """
-        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i.squeeze()[:, :, 420] for i in model.x]
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i.squeeze()[:, :-1, 420] for i in model.x]
 
         fig1, axs1 = plt.subplots(1, 2, figsize=(8, 4))
         axs1[0].plot(dTL, x[0,:], label=r'$x_1$', linestyle='-', color='black')
@@ -155,15 +155,16 @@ if __name__ == "__main__":
         # plotting forward rate vol (hump shaped!)
         fwdVol = model.fwd_rate_vol(0, dTL)
         plt.figure()
-        plt.plot(dTL, fwdVol[0], label=r'$\sigma_{f,1}(\tau)$', linestyle='-', color='C0')
-        plt.plot(dTL, fwdVol[1], label=r'$\sigma_{f,2}(\tau)$', linestyle='-.', color='C0')
-        plt.plot(dTL, fwdVol[2], label=r'$\sigma_{f,3}(\tau)$', linestyle=':', color='C0')
+        plt.plot(dTL, fwdVol[0], label=r'$\sigma_{f,1}(\tau)$', linestyle='-', color='black')
+        plt.plot(dTL, fwdVol[1], label=r'$\sigma_{f,2}(\tau)$', linestyle='-.', color='black')
+        plt.plot(dTL, fwdVol[2], label=r'$\sigma_{f,3}(\tau)$', linestyle=':', color='black')
         plt.legend()
         plt.xlabel('Years')
         plt.ylim(0, None)
         plt.xlim(0, None)
         plt.show()
 
+        """
         # plotting forward rate movements
         fwds = torch.empty(len(model.timeline))
         for t in range(len(model.timeline)):
@@ -174,3 +175,47 @@ if __name__ == "__main__":
         plt.figure()
         plt.plot(model.timeline, fwds)
         plt.show()
+        """
+
+        # plotting term structure
+        maturities = torch.linspace(0.25, 15.25, 100)
+        state_vars = torch.stack(model.x)
+        yields = torch.zeros_like(maturities)
+        zcbs = torch.zeros( (len(dTL), 4))
+
+        for i, T in enumerate(maturities):
+            zcb = model.calc_zcb(state_vars[:, :, 1, :], dTL[1], torch.tensor(T)).mean()
+            yields[i] = -torch.log(zcb) / T
+
+        for j, t in enumerate(dTL):
+            t = torch.tensor(t)
+            x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i.squeeze()[:, j, :] for i in model.x]
+            state = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
+            zcbs[j,:] = model.calc_zcb(state, t, start+delta)[0][:4]
+
+        fig, axs = plt.subplots(1, 2, figsize=(12, 4))  # 1 row, 2 columns
+        axs[0].plot(maturities, yields, color='black', label=r'$T \rightarrow R(t,T)$')
+        axs[0].set_xlabel('Years')
+        axs[0].legend(loc='lower left')  # Set legend position to bottom left
+        axs[1].plot(dTL, zcbs, color='black', linestyle='--')
+        axs[1].plot(dTL, zcbs[:, 0], color='black', linestyle='--', label=r'$t \rightarrow P(t,T)$')
+        axs[1].set_xlabel('Years')
+        axs[1].legend(loc='lower left')  # Set legend position to bottom left
+        plt.tight_layout()
+        plt.show()
+
+        ## IFR plot
+        ifr = torch.empty((len(maturities),4))
+        for j, t in enumerate(maturities):
+            t = torch.tensor(t)
+            x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i.squeeze()[:, 1, ] for i in model.x]
+            state = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
+            ifr[j,:] = model.calc_instant_fwd(state, dTL[1], t)[0:4]
+
+        plt.figure()
+        plt.plot(maturities, ifr, color='black', linestyle='--')
+        plt.plot(maturities, ifr[:,0], color='black',linestyle='--', label=r'$T\rightarrow f(t,T)$')
+        plt.xlabel('Years')
+        plt.legend()
+        plt.show()
+

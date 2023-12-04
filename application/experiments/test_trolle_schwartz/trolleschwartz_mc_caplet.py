@@ -9,10 +9,10 @@ torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == "__main__":
-    strike_plot = True
+    strike_plot = False
     # Setup
     seed = 1234
-    N = 1024*10
+    N = 1024
     measure = 'risk_neutral'
 
     # Trolle-Schwartz model specification
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     strike = torch.tensor(.09)
     notional = torch.tensor(1e6)
 
-    dTL = torch.linspace(0.0, start + delta, int(100 * (start + delta) + 1))
+    dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
 
     # instantiate model
     model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
