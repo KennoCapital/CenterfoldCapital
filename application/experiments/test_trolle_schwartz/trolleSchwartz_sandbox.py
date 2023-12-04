@@ -13,28 +13,28 @@ if __name__ == "__main__":
     seed = 1234
     N = 1024*10
     measure = 'risk_neutral'
-    produce_plots = False
+    payoff_plots = True
     perform_calibration = False
-    gradient_plot = True
+    gradient_plot = False
 
     # Trolle-Schwartz model specification
-    kappa = torch.tensor(0.0553) #0553
+    kappa = torch.tensor(0.0553)
     sigma = torch.tensor(0.3325)
-    alpha0 = torch.tensor(0.045) #045
-    alpha1 = torch.tensor(0.131) #131
+    alpha0 = torch.tensor(0.045)
+    alpha1 = torch.tensor(0.131)
     gamma = torch.tensor(0.3341)
     rho = torch.tensor(0.4615)
-    theta = torch.tensor(0.7542) #7542
+    theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476)
     #
     varphi = torch.tensor(0.0832)
 
     # Product specification
     start = torch.tensor(1.0)
     delta = torch.tensor(.25)
-    strike = torch.tensor(0.084)
-    notional = torch.tensor(1.0)
+    strike = torch.tensor(0.09)
+    notional = torch.tensor(1e6)
 
-    dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
+    dTL = torch.linspace(0.0, start + delta, int(250 * (start + delta) + 1))
 
     # instantiate model
     model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
@@ -56,8 +56,8 @@ if __name__ == "__main__":
     print('MC Price =', mc_price)
 
     # analytic
-    cpl = model.calc_cpl(0, prd.start, prd.delta, prd.strike, notional)
-    print('Semi-analytic Price =', cpl)
+    #cpl = model.calc_cpl(0, prd.start, prd.delta, prd.strike, notional)
+    #print('Semi-analytic Price =', cpl)
 
     import scipy
 
@@ -171,13 +171,13 @@ if __name__ == "__main__":
     state_vars = torch.concat(model.x)
     zcb_term = torch.zeros_like(strikes)
     for i,T in enumerate(maturities):
-        zcb_term[i] = model.calc_zcb_price(state_vars[:,1,:], torch.tensor(0.), torch.tensor(T)).mean()
+        zcb_term[i] = model.calc_zcb(state_vars[:,1,:], torch.tensor(0.), torch.tensor(T)).mean()
 
     plt.figure()
-    plt.plot(zcb_term)
+    plt.plot(maturities, zcb_term)
     plt.show()
 
-    if produce_plots:
+    if payoff_plots:
         # plot forward rates
         plt.figure()
         plt.plot(model.paths[1].fwd[0][0], color='blue', label='F')
@@ -191,25 +191,26 @@ if __name__ == "__main__":
         x,v,phi1,phi2,phi3,phi4,phi5,phi6 = [i for i in model.x]
 
         plt.figure()
-        plt.plot(x[0][:,0], color='blue', label='x')
-        plt.plot(v[0][:,0], color = 'red', label='v')
+        plt.plot(x[-1][:,0], color='blue', label='x')
+        plt.plot(v[-1][:,0], color = 'red', label='v')
         plt.legend()
         plt.title('state vars x & v')
         plt.show()
 
         plt.figure()
-        plt.plot(phi1[0][:,0], color='blue', label='phi1')
-        plt.plot(phi2[0][:,0], color = 'red', label='phi2')
-        plt.plot(phi3[0][:,0], color = 'green', label='phi3')
-        plt.plot(phi4[0][:,0], color = 'orange', label='phi4')
-        plt.plot(phi5[0][:,0], color = 'purple', label='phi5')
-        plt.plot(phi6[0][:,0], color = 'brown', label='phi6')
+        plt.plot(phi1[-1][:,0], color='blue', label='phi1')
+        plt.plot(phi2[-1][:,0], color = 'red', label='phi2')
+        plt.plot(phi3[-1][:,0], color = 'green', label='phi3')
+        plt.plot(phi4[-1][:,0], color = 'orange', label='phi4')
+        plt.plot(phi5[-1][:,0], color = 'purple', label='phi5')
+        plt.plot(phi6[-1][:,0], color = 'brown', label='phi6')
         plt.legend()
         plt.title('state vars phi1-6')
         plt.show()
 
         # plot f variance
-        sigma_fct = model._sigma(model.timeline, start + delta)
+        """
+        sigma_fct = model.fwd_rate_vol(model.timeline, start + delta)
         v_sqrt = v[0][:,0:5].sqrt()
         colors = ['b', 'r', 'y', 'g', 'c']
         plt.figure()
@@ -219,6 +220,7 @@ if __name__ == "__main__":
         plt.xlabel('time steps')
         plt.title('f volatility')
         plt.show()
+        """
 
     if gradient_plot:
 
@@ -246,15 +248,15 @@ if __name__ == "__main__":
 
 
         # Create a grid of N and t values
-        N_values = torch.linspace(0, 20, 20)
-        t_values = torch.linspace(0, 1, 20)
+        N_values = torch.linspace(0, 1, 20)
+        t_values = torch.linspace(0, 0.1, 20)
 
         # Calculate gradients at each point on the grid
         X, Y = torch.meshgrid(N_values, t_values)
         U = torch.zeros_like(X)
         V = torch.zeros_like(Y)
 
-        u = torch.tensor(1000.)
+        u = torch.tensor(2.)
 
         for i in range(len(N_values)):
             for j in range(len(t_values)):
