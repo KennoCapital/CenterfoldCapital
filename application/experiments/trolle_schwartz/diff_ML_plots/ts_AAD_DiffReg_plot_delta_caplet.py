@@ -19,13 +19,13 @@ torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
 
-    seed = 10
-    N_train = 256*4
+    seed = 1234
+    N_train = 256*8
     N_test = 256
-    use_av = False
+    use_av = True
 
     # Setup Differential Regressor, and Scalar
-    deg = 15
+    deg = 5
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True, include_interactions=False)
     scalar = DifferentialStandardScaler()
@@ -43,9 +43,9 @@ if __name__ == '__main__':
     varphi_min = 0.07
     varphi_max = 0.11
 
-    varphi = torch.empty(N_train)
-    varphi = varphi.fill_(0.0832)
-    #varphi = torch.linspace(varphi_min, varphi_max, N_train)
+    #varphi = torch.empty(N_train)
+    #varphi = varphi.fill_(0.0832)
+    varphi = torch.linspace(varphi_min, varphi_max, N_train)
 
     model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
 
@@ -163,7 +163,6 @@ if __name__ == '__main__':
             jac_sum = torch.stack([x.sum_to_size((1, x0_vec.shape[2])) for x in jac])
             tmp = jac_sum.permute(1, 2, 0).squeeze()
             dcpls = tmp.unsqueeze(dim=2)
-            #dcpls = jac_sum
 
         return cpls, dcpls
 

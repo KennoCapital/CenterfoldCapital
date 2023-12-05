@@ -28,7 +28,7 @@ def training_data(x0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use
     #x0_vec = x0_vec.squeeze(1)
 
     if use_av:
-        x0_vec = torch.hstack([x0_vec, x0_vec])
+        x0_vec = torch.cat([x0_vec, x0_vec], dim=2)
 
     x_train, dxdr = calc_dU_dr(x0_vec, t0)
     y_train, dydr = calc_dPrd_dr(x0_vec, t0)
