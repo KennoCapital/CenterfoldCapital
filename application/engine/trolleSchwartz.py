@@ -51,7 +51,7 @@ class trolleSchwartz(Model):
                  varphi,
                  simDim:    int = 1,
                  measure:   str = 'risk_neutral',
-                 disc_method: str = 'milstein'):
+                 disc_method: str = 'euler'):
         """
         :param gamma:           Parameter originating from HJM  volatility structure
 
@@ -71,6 +71,15 @@ class trolleSchwartz(Model):
         :param disc_method:     Discretization scheme of the evolution of the state variables.
                                 Supports currently Euler (first order), Milstein (second order)
         """
+        self.gamma = gamma.reshape(-1,1)
+        self.kappa = kappa.reshape(-1,1)
+        self.theta = theta.reshape(-1,1)
+        self.rho = rho.reshape(-1,1)
+        self.sigma = sigma.reshape(-1,1)
+        self.alpha0 = alpha0.reshape(-1,1)
+        self.alpha1 = alpha1.reshape(-1,1)
+
+        """
         self.gamma = gamma.unsqueeze(0) if gamma.dim() == 0 else gamma
         self.kappa = kappa.unsqueeze(0) if kappa.dim() == 0 else kappa
         self.theta = theta.unsqueeze(0) if theta.dim() == 0 else theta
@@ -78,6 +87,7 @@ class trolleSchwartz(Model):
         self.sigma = sigma.unsqueeze(0) if sigma.dim() == 0 else sigma
         self.alpha0 = alpha0.unsqueeze(0) if alpha0.dim() == 0 else alpha0
         self.alpha1 = alpha1.unsqueeze(0) if alpha1.dim() == 0 else alpha1
+        """
 
         self._x0 = torch.zeros(size=(simDim, 1))
         self._v0 = torch.zeros(size=(simDim, 1))
@@ -226,19 +236,19 @@ class trolleSchwartz(Model):
         v = torch.abs(v)
         #v[v < 0] = v.nanmean() #imputing
 
-        dx = -self.gamma @ x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
+        dx = -self.gamma * x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
         #dx = -self.gamma * x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
 
         # Note: using abs(v)
-        dv = self.kappa @ (self.theta.reshape(self.simDim,1) - v) * dt + self.sigma @ torch.sqrt(v) * Wv * torch.sqrt(dt)
+        dv = self.kappa * (self.theta.reshape(self.simDim,1) - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
         #dv = self.kappa * (self.theta - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
 
-        dphi1 = (x - self.gamma @ phi1) * dt
-        dphi2 = (v - self.gamma @ phi2) * dt
-        dphi3 = (v - 2 * self.gamma @ phi3) * dt
-        dphi4 = (phi2 - self.gamma @ phi4) * dt
-        dphi5 = (phi3 - 2 * self.gamma @ phi5) * dt
-        dphi6 = (2 * phi5 - 2 * self.gamma @ phi6) * dt
+        dphi1 = (x - self.gamma * phi1) * dt
+        dphi2 = (v - self.gamma * phi2) * dt
+        dphi3 = (v - 2 * self.gamma * phi3) * dt
+        dphi4 = (phi2 - self.gamma * phi4) * dt
+        dphi5 = (phi3 - 2 * self.gamma * phi5) * dt
+        dphi6 = (2 * phi5 - 2 * self.gamma * phi6) * dt
 
         x += dx
         v += dv
@@ -365,11 +375,11 @@ class trolleSchwartz(Model):
                 xk = [self._x[:,k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :], \
                         self._phi3[:,k, :], self._phi4[:,k, :], self._phi5[:,k, :], self._phi6[:,k, :]]
                 # calc short rates
-                rt1 = self.calc_short_rate(X=xk1, t=self.timeline[k+1])
+                rt1 = self.calc_short_rate(X=xk1, t=self.timeline[k]+dt[k])
                 rt = self.calc_short_rate(X=xk, t=self.timeline[k])
 
                 # apply trapz rule
-                sum_x += 0.5 * (rt1 + rt) * dt[k]
+                sum_x += 0.5 * (rt1 + rt).flatten() * dt[k]
 
             # Samples (market variables)
             if self._tl_idx_mkt[k + 1]:
@@ -429,9 +439,9 @@ class trolleSchwartz(Model):
         # eq. (20) term 1: P(0,T) / P(0,t)
         zcbT_by_zcbt = torch.exp(-self.varphi * (T - t))
         # eg. (20) term 2: sum_i(Bx_i(T-t)x_i(t))
-        Bx_sum = torch.sum(Bx @ x, dim=0)
+        Bx_sum = Bx.T @ x
         # eq. (20) term 3: sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))
-        Bphi_sum = torch.sum(Bphi1 @ phi1 + Bphi2 @ phi2 + Bphi3 @ phi3 + Bphi4 @ phi4 + Bphi5 @ phi5 + Bphi6 @ phi6, dim=0)
+        Bphi_sum = Bphi1.T @ phi1 + Bphi2.T @ phi2 + Bphi3.T @ phi3 + Bphi4.T @ phi4 + Bphi5.T @ phi5 + Bphi6.T @ phi6
 
         return zcbT_by_zcbt * torch.exp(Bx_sum + Bphi_sum)
 
@@ -473,9 +483,10 @@ class trolleSchwartz(Model):
         # eq. (5) term 1: f(0,T)
         f0T = self.varphi
         # eq. (5) term 2: sum_i(Bx_i(T-t)x_i(t))
-        Bx_sum = torch.sum(Bx @ x, dim=0)
+        Bx_sum = Bx.T @ x
         # eq. (5) term 3: sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))
-        Bphi_sum = torch.sum(Bphi1 @ phi1 + Bphi2 @ phi2 + Bphi3 @ phi3 + Bphi4 @ phi4 + Bphi5 @ phi5 + Bphi6 @ phi6, dim=0)
+        Bphi_sum = Bphi1.T @ phi1 + Bphi2.T @ phi2 + Bphi3.T @ phi3 + Bphi4.T @ phi4 + Bphi5.T @ phi5 + Bphi6.T @ phi6
+        #Bphi_sum = torch.sum(Bphi1 @ phi1 + Bphi2 @ phi2 + Bphi3 @ phi3 + Bphi4 @ phi4 + Bphi5 @ phi5 + Bphi6 @ phi6, dim=0)
 
         return f0T + Bx_sum + Bphi_sum
 
@@ -587,7 +598,7 @@ class trolleSchwartz(Model):
         sol = solve_ivp(_compute_dN, t_span=[t, T0], y0=torch.tensor([N0]), method='RK45')
         N = torch.tensor([sol.y[0][-1]])
 
-        M = torch.trapz(torch.tensor(sol.y[0])*self.kappa*self.theta, torch.tensor(sol.t), dim=0)
+        M = torch.trapz( (torch.tensor(sol.y[0])*self.kappa*self.theta).flatten(), torch.tensor(sol.t), dim=0)
 
         zcb0 = self.calc_zcb([i[:, t, :].mean(dim=1) for i in self.x], t, T0)
         zcb1 = self.calc_zcb([i[:, t, :].mean(dim=1) for i in self.x], t, T1)
@@ -644,7 +655,7 @@ class trolleSchwartz(Model):
         T1 = T0 + delta
         term1 = K_bar * self.Gfunc(0.0, 1.0, t, T0, T1, torch.log(K_bar))
         term2 = self.Gfunc(1.0, 1.0, t, T0, T1, torch.log(K_bar))
-        return N / K_bar * ( term1 - term2)
+        return N / K_bar * (term1 - term2)
 
     def calc_cap(self, x, t, delta, K):
         """Cp(0, t, t+delta) = sum_{i=1}^n Cpl(t; Ti_1, Ti) """

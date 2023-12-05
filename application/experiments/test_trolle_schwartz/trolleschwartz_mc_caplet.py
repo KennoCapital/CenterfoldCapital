@@ -3,14 +3,17 @@ from application.engine.trolleSchwartz import trolleSchwartz
 import torch
 from application.engine.mcBase import mcSim, RNG
 from tqdm.contrib import itertools
+from application.utils.path_config import get_plot_path
 import matplotlib.pyplot as plt
 
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == "__main__":
-    strike_plot = False
     # Setup
+    strike_plot = True
+    save_fig = False
+
     seed = 1234
     N = 1024*10
     measure = 'risk_neutral'
@@ -23,13 +26,13 @@ if __name__ == "__main__":
     gamma = torch.tensor(0.3341)
     rho = torch.tensor(0.4615)
     theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476)
-    #
+    # initialize IFR
     varphi = torch.tensor(0.0832)
 
     # Product specification
     start = torch.tensor(1.0)
     delta = torch.tensor(.25)
-    strike = torch.tensor(.09)
+    strike = torch.tensor(.07)
     notional = torch.tensor(1e6)
 
     dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
@@ -54,13 +57,13 @@ if __name__ == "__main__":
     print('MC Price =', mc_price)
 
     # analytic
-    #cpl = model.calc_cpl(0, prd.start, prd.delta, prd.strike, notional)
-    #print('Semi-analytic Price =', cpl)
+    cpl = model.calc_cpl(0, prd.start, prd.delta, prd.strike, notional)
+    print('Semi-analytic Price =', cpl)
 
 
     if strike_plot:
         strikes = torch.linspace(0.025, 0.14, 10)
-        times = torch.tensor([1., 2.5, 5.])
+        times = torch.tensor([1., 2., 5.])
 
         prices = torch.empty(len(strikes) * len(times))
         mc_prices = torch.empty(len(strikes) * len(times))
@@ -95,23 +98,21 @@ if __name__ == "__main__":
         mcprices3 = mc_prices[20:31]
 
         plt.figure()
-        plt.plot(strikes, prices1, label='1')
-        plt.plot(strikes, prices2, label='2.5')
-        plt.plot(strikes, prices3, label='5.')
-        plt.xlabel('strike')
-        plt.ylabel('price')
-        plt.legend()
-        plt.title('TS cpl price' + f' N = {notional} with delta = {delta}')
+        plt.plot(strikes, prices1,  label=r'$1Y$', color='orange')
+        plt.plot(strikes, prices2, label=r'$2Y$', color='blue')
+        plt.plot(strikes, prices3, label=r'$5Y$', color='green')
+
+        plt.plot(strikes, mcprices1, color='orange', label=r'$1Y$ MC', linestyle='--')
+        plt.plot(strikes, mcprices2, color='blue', label=r'$2Y$ MC', linestyle='--')
+        plt.plot(strikes, mcprices3, color='green', label=r'$5Y$ MC',linestyle='--')
+        plt.xlabel('K')
+        plt.ylabel('Price')
+
+        plt.legend(title='Reset date', loc='upper right', ncol=2, fancybox=True)
+        plt.title(f'3M Caplet Monte-Carlo vs. Analytical with N = {notional}')
+        if save_fig:
+            plt.savefig(get_plot_path('trolle_schwartz/ts_cpl_strikes.png'), dpi=400)
         plt.show()
 
-        plt.figure()
-        plt.plot(strikes, mcprices1, label='1')
-        plt.plot(strikes, mcprices2, label='2.5')
-        plt.plot(strikes, mcprices3, label='5.')
-        plt.xlabel('strike')
-        plt.ylabel('price')
-        plt.legend()
-        plt.title('TS cpl MC price' + f' N = {notional} with delta = {delta}')
-        plt.show()
 
 
