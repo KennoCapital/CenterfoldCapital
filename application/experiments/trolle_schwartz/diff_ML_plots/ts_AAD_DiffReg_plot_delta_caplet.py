@@ -29,20 +29,20 @@ if __name__ == '__main__':
     scalar = DifferentialStandardScaler()
 
     # Trolle-Schwartz model specification
-    kappa = torch.tensor(0.0553)
-    sigma = torch.tensor(0.3325)
-    alpha0 = torch.tensor(0.045)
-    alpha1 = torch.tensor(0.131)
-    gamma = torch.tensor(0.3341)
-    rho = torch.tensor(0.4615)
-    theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476)
+    kappa = torch.tensor(0.0553) * torch.ones(size=(3,))
+    sigma = torch.tensor(0.3325) * torch.ones(size=(3,))
+    alpha0 = torch.tensor(0.045) * torch.ones(size=(3,))
+    alpha1 = torch.tensor(0.131) * torch.ones(size=(3,))
+    gamma = torch.tensor(0.3341) * torch.ones(size=(3,))
+    rho = torch.tensor(0.4615) * torch.ones(size=(3,))
+    theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476) * torch.ones(size=(3,))
 
     # initializer
-    #varphi_min = 0.07
+    varphi_min = 0.07
     varphi_max = 0.11
     varphi = torch.linspace(varphi_min, varphi_max, N_train)
-    varphi = torch.empty(N_train) #torch.tensor(0.0832)
-    varphi = varphi.fill_(0.0832)
+    # varphi = torch.empty(N_train) #torch.tensor(0.0832)
+    # varphi = varphi.fill_(0.0832)
 
     # only chosen for time-0
     """
@@ -50,7 +50,7 @@ if __name__ == '__main__':
     init = init.fill_(varphi)
     """
 
-    model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
+    model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=3)
 
     rng = RNG(seed=seed, use_av=use_av)
 
