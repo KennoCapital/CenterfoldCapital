@@ -899,7 +899,7 @@ class BarrierPayerSwaption(Product):
         return res
 
 
-class PortfolioEuropeanPayerSwaption(Product):
+class PortfolioEuropeanSwaption(Product):
     def __init__(self,
                  exerciseDates:          torch.Tensor,
                  fixRates:               list[torch.Tensor],
@@ -907,7 +907,8 @@ class PortfolioEuropeanPayerSwaption(Product):
                  swapFirstFixingDates:   list[torch.Tensor],
                  swapLastFixingDates:    list[torch.Tensor],
                  notionals:              list[torch.Tensor],
-                 weights:                list[torch.Tensor]):
+                 weights:                list[torch.Tensor],
+                 flag_payer_receiver:    list[torch.Tensor]):
         """
         Portfolio of European Payer Swaptions.
         We consider
@@ -915,7 +916,7 @@ class PortfolioEuropeanPayerSwaption(Product):
             - a vector of vectors for all other parameters.
         """
 
-        if not (len(fixRates) == len(exerciseDates) == len(deltas) == len(swapFirstFixingDates) == len(swapLastFixingDates) == len(notionals) == len(weights)):
+        if not (len(fixRates) == len(exerciseDates) == len(deltas) == len(swapFirstFixingDates) == len(swapLastFixingDates) == len(notionals) == len(weights) == len(flag_payer_receiver)):
             raise ValueError(f'All arguments must have the same lengths, got:'
                              f'exerciseDates ({len(exerciseDates)}),'
                              f'strikes ({len(fixRates)}),'
@@ -934,6 +935,7 @@ class PortfolioEuropeanPayerSwaption(Product):
         self.swapLastFixingDates = swapLastFixingDates
         self.notionals = notionals
         self.weights = weights
+        self.flag_payer_receiver = flag_payer_receiver
 
         self._name = f'Portfolio of European Payer Swaptions with {self.numT} trades'
 
@@ -966,7 +968,7 @@ class PortfolioEuropeanPayerSwaption(Product):
             ) for i in range(self.numT)]
 
         self._payoffLabels = [
-            f'{weights[i][j]} * max[swap({float_to_time_str(exerciseDates[i])}, '
+            f'{weights[i][j]} * max[{flag_payer_receiver[i][j]} * swap({float_to_time_str(exerciseDates[i])}, '
             f'{float_to_time_str(swapFirstFixingDates[i][j])}, '
             f'{float_to_time_str(swapLastFixingDates[i][j])}, '
             f'{float_to_time_str(deltas[i][j])})) ; 0.0]'
@@ -992,8 +994,8 @@ class PortfolioEuropeanPayerSwaption(Product):
         res = []
         for i in range(self.numT):
             res.append(
-                    [self.weights[i][j] * max0(paths[i+1].irs[j]) * paths[0].numeraire / paths[i+1].numeraire
-                     for j in range(len(self.fixRates[i]))]
+                [self.weights[i][j] * max0(self.flag_payer_receiver[i][j] * paths[i+1].irs[j]) * paths[0].numeraire / paths[i+1].numeraire
+                for j in range(len(self.fixRates[i]))]
             )
 
         res = torch.vstack([item for sublist in res for item in sublist])
