@@ -10,7 +10,7 @@ from application.engine.differential_NN import Neural_Approximator
 from application.utils.path_config import get_plot_path
 
 
-def training_data(r0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use_av: bool = True):
+def training_data(x0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use_av: bool = True):
     """
     param x0_vec:           8xN-D vector of state vars to generate training data from
     param t0:               Current market time, effects time to expiry and fixings in the training
@@ -23,20 +23,20 @@ def training_data(r0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use
 
     returns:                tuple of (x_train, y_train, z_train)
     """
-    idx_half = len(r0_vec)
+    idx_half = len(x0_vec)
 
     #r0_vec = r0_vec.squeeze(1)
 
     if use_av:
-        r0_vec = torch.hstack([r0_vec, r0_vec])
+        x0_vec = torch.hstack([x0_vec, x0_vec])
 
-    x_train, dxdr = calc_dU_dr(r0_vec, t0)
-    y_train, dydr = calc_dPrd_dr(r0_vec, t0)
+    x_train, dxdr = calc_dU_dr(x0_vec, t0)
+    y_train, dydr = calc_dPrd_dr(x0_vec, t0)
 
-    x_train = x_train.squeeze(1)
-    x_train = x_train.permute(1,0)
-    dxdr = dxdr.squeeze(2)
-    dydr = dydr.squeeze(2)
+    #x_train = x_train.squeeze(1)
+    #x_train = x_train.permute(1,0)
+    #dxdr = dxdr.squeeze(2)
+    #dydr = dydr.squeeze(2)
 
     # Ensure that 1d cases are formatted as column vectors
 
@@ -50,8 +50,7 @@ def training_data(r0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use
         dydr = dydr.reshape(-1, 1)
 
 
-    z_train = dydr / (dxdr + 1E-8)
-    #z_train = z_train.nan_to_num(0.0)
+    z_train = (torch.pinverse(dxdr) @ dydr).reshape(-1, 1) #dydr / (dxdr + 1E-8)
     """
     if x_train.shape[1] > 1:
         # General (multi-dimensional) case
