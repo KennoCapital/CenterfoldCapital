@@ -66,7 +66,6 @@ if __name__ == '__main__':
         strike=strike,
         exerciseDates=exerciseDates,
         delta=delta,
-        swapFirstFixingDate=swapFirstFixingDate,
         swapLastFixingDate=swapLastFixingDate,
         notional=notional
     )

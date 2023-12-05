@@ -55,7 +55,7 @@ if __name__ == '__main__':
     state_vars = torch.concat(model.x)
     zcb_term = torch.zeros_like(strikes)
     for i, T in enumerate(maturities):
-        zcb_term[i] = model.calc_zcb(state_vars[:, 1, :], torch.tensor(0.02), torch.tensor(T)).mean()
+        zcb_term[i] = model.calc_zcb(state_vars[:, 1, :], model.timeline[1], torch.tensor(T)).mean()
     plt.figure()
     plt.plot(maturities, zcb_term, label = r'$T \rightarrow P(t,T)$')
     plt.xlabel('Years')
@@ -93,4 +93,7 @@ if __name__ == '__main__':
     plt.figure()
     plt.plot(dTL, model.fwd_rate_vol(0,dTL)[0] )
     plt.show()
+
+    # plot ifr
+
 
