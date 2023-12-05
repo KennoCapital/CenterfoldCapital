@@ -119,12 +119,12 @@ if __name__ == '__main__':
     )
 
     products = {
-        #'Bull Spread': bull_spread,
-        #'Bear Spread': bear_spread,
-        #'Straddle': straddle,
-        #'Strangle': strangle,
+        'Bull Spread': bull_spread,
+        'Bear Spread': bear_spread,
+        'Straddle': straddle,
+        'Strangle': strangle,
         'Butterfly Spread': butterfly_spread,
-        #'Box Spread': box_spread
+        'Box Spread': box_spread
     }
 
     for k, (name, prd) in enumerate(products.items()):
@@ -350,7 +350,7 @@ if __name__ == '__main__':
 
         fig.suptitle(f'{name}')
         fig_name = f'vasicek_option_strategies/vasicek_{name.lower().replace(" ", "_")}_swap.png'
-        plt.savefig(get_plot_path(fig_name))
+        # fig(get_plot_path(fig_name))
         plt.show()
 
         """ Value and sensitivity of portfolio wrt. swap rate """
@@ -392,7 +392,7 @@ if __name__ == '__main__':
 
         fig.suptitle(f'{name}')
         fig_name = f'vasicek_option_strategies/vasicek_{name.lower().replace(" ", "_")}_swaprate.png'
-        plt.savefig(get_plot_path(fig_name))
+        # plt.savefig(get_plot_path(fig_name))
         plt.show()
 
         """ Value and sensitivity of each swaption wrt. underlying swap """
@@ -449,7 +449,7 @@ if __name__ == '__main__':
 
         fig.suptitle(f'Decomposition of {name}')
         fig_name = f'vasicek_option_strategies/vasicek_{name.lower().replace(" ", "_")}_swap_decomp.png'
-        plt.savefig(get_plot_path(fig_name))
+        # plt.savefig(get_plot_path(fig_name))
         plt.show()
 
         """ Value and sensitivity of each swaption wrt. swap rate """
@@ -503,5 +503,5 @@ if __name__ == '__main__':
 
         fig.suptitle(f'Decomposition of {name}')
         fig_name = f'vasicek_option_strategies/vasicek_{name.lower().replace(" ", "_")}_swaprate_decomp.png'
-        plt.savefig(get_plot_path(fig_name))
+        # plt.savefig(get_plot_path(fig_name))
         plt.show()
