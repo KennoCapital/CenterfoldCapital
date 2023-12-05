@@ -188,7 +188,7 @@ class trolleSchwartz(Model):
         # Covariance matrix
         #if self.simDim > 1:
         # we would need a cov matrix for each simulation dimension
-        covMat = torch.ones( (self.simDim, 2, 2))
+        covMat = torch.ones((self.simDim, 2, 2))
 
         # but we only have two sources of randomness
         for i in range(self.simDim):
@@ -202,15 +202,14 @@ class trolleSchwartz(Model):
 
         # Cholesky decomposition: covMat = L x L^T
         L = torch.linalg.cholesky(covMat)
-        # Correlated BMs: W = Z x L^T
-        #W = Z.reshape(-1, self._numRV) @ L.t()
-        W = Z.reshape(self.simDim, -1,2) @ L.permute(0, 2, 1)
-        W = W.reshape(-1, self._numRV )
-        Wf = W[:,:self._numRV//2]
-        Wv = W[:,self._numRV//2:]
 
-        Wf = Wf.reshape((self._numRV//2, len(self.timeline)-1,-1))
-        Wv = Wv.reshape((self._numRV//2, len(self.timeline)-1,-1))
+        # (Pairwise) Correlated BMs: W = Z x L^T
+        W = torch.full_like(Z, torch.nan)
+        for i in range(self.simDim):
+            W[[2*i, 2*i+1], :, :] = (Z[[2*i, 2*i+1], :, :].T @ L[i].T).T
+
+        Wf = W[0::2, :, :]
+        Wv = W[1::2, :, :]
 
         return Wf, Wv
 

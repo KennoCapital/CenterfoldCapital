@@ -232,5 +232,5 @@ if __name__ == '__main__':
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=3, fancybox=True, shadow=True,
                bbox_to_anchor=(0.5, 0.90))
 
-    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_BerPayerSwpt.png'), dpi=400)
+    # plt.savefig(get_plot_path('vasicek_AAD_DiffReg_BerPayerSwpt.png'), dpi=400)
     plt.show()
