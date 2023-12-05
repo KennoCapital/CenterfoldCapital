@@ -20,7 +20,7 @@ if __name__ == '__main__':
     seed = 1234
     N_train = 1024
     N_test = 256
-    use_av = False
+    use_av = True
 
     # Setup Differential Regressor, and Scalar
     deg = 9
@@ -38,11 +38,12 @@ if __name__ == '__main__':
     theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476)
 
     # initializer
-    varphi_min = 0.07
+    #varphi_min = 0.07
     varphi_max = 0.11
-
-    varphi = torch.empty(N_train) #torch.linspace(varphi_min, varphi_max, N_test) #torch.tensor(0.0832)
+    varphi = torch.linspace(varphi_min, varphi_max, N_train)
+    varphi = torch.empty(N_train) #torch.tensor(0.0832)
     varphi = varphi.fill_(0.0832)
+
     # only chosen for time-0
     """
     init = torch.empty(N_train)
@@ -50,7 +51,6 @@ if __name__ == '__main__':
     """
 
     model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
-    #mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
 
     rng = RNG(seed=seed, use_av=use_av)
 
@@ -70,7 +70,7 @@ if __name__ == '__main__':
     )
 
     """ Helper functions for generating training data of pathwise payoffs and deltas """
-    def calc_dzcb_dx(x0_vec, t0):
+    def calc_dzcb_dx(x0_vec, t0, way=1):
         """
         :param  x0_vec:    Possible state variables of state space
         :param  t0:        Current time
@@ -79,21 +79,41 @@ if __name__ == '__main__':
             tuple with: (Forward Prices, Forward Prices differentiated wrt. r0 evaluated at x)
         """
         t0 = torch.tensor(t0)
-        def _zcb(x0_vec):
-            zcb = model.calc_zcb(x0_vec, t0, exerciseDate + delta)[0]
-            return zcb
 
-        res = []
+        if way == 0:
+            def _zcb(x0_vec):
+                zcb = model.calc_zcb(x0_vec, t0, exerciseDate + delta)[0]
+                return zcb
 
-        for x in [x0_vec[:,:,i] for i in range(len(x0_vec[0,0,:]))]:
-            jac = jacrev(_zcb, argnums=0)(x)
+            res = []
+
+            for x in [x0_vec[:, :, i] for i in range(len(x0_vec[0, 0, :]))]:
+                jac = jacrev(_zcb, argnums=0)(x)
             res.append(jac[0])
 
-        #ones = torch.ones(8)
-        #res = (jvp(_fwd, x, ones, create_graph=False)))
-        return (_zcb(x0_vec), torch.stack(res))
+            zcbs = _zcb(x0_vec)
+            dzcbs = torch.stack(res)
 
-    def calc_dcpl_dx(x0_vec, t0):
+        else:
+            x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [x.reshape(1, -1) for x in x0_vec]
+
+            def _zcb(x, v, phi1, phi2, phi3, phi4, phi5, phi6):
+                state = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
+                zcb = model.calc_zcb(state, t0, exerciseDate + delta)[0]
+                return zcb
+
+            zcbs = _zcb(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+
+            # fast
+            jac = jacrev(_zcb, argnums=(0, 1, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+            jac_sum = torch.stack([x.sum_to_size((1, x0_vec.shape[2])) for x in jac])
+            tmp = jac_sum.permute(1, 2, 0).squeeze()
+            dzcbs = tmp.unsqueeze(dim=2)
+
+        return zcbs, dzcbs
+
+
+    def calc_dcpl_dx(x0_vec, t0, way=1):
         """
         :param  r0_vec: Current Short rate r0
         :param  t0:     Current time
@@ -102,38 +122,68 @@ if __name__ == '__main__':
             tuple with: (Pathwise payoffs, Pathwise differentials wrt. r0 evaluated at x)
         """
         t0 = torch.tensor(t0)
-        def _payoffs(x0_vec):
-            f0T = model.calc_instant_fwd(x0_vec,t0,exerciseDate+delta - t0)
-            cMdl = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, f0T)
-            cPrd = CapletAsPutOnZCB(
-                strike=strike,
-                exerciseDate=exerciseDate - t0,
-                delta=delta,
-                notional=notional
-            )
-            cTL = dTL[dTL <= exerciseDate - t0]
 
-            payoffs = mcSim(cPrd, cMdl, rng, len(f0T), cTL)
-            return payoffs[0,:]
+        if way == 0:
+            def _payoffs(x0_vec):
+                f0T = model.calc_instant_fwd(x0_vec, t0, exerciseDate + delta - t0)
+                cMdl = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, f0T)
+                cPrd = CapletAsPutOnZCB(
+                    strike=strike,
+                    exerciseDate=exerciseDate - t0,
+                    delta=delta,
+                    notional=notional
+                )
+                cTL = dTL[dTL <= exerciseDate - t0]
+                payoffs = mcSim(cPrd, cMdl, rng, len(f0T), cTL)
+                return payoffs[0, :]
 
-        res = []
-        for x in tqdm([x0_vec[:, :, i] for i in range(len(x0_vec[0, 0, :]))]):
-            jac = jacrev(_payoffs, argnums=0)(x)
+            cpls = _payoffs(x0_vec)
+            res = []
+            for x in tqdm([x0_vec[:, :, i] for i in range(len(x0_vec[0, 0, :]))]):
+                jac = jacrev(_payoffs, argnums=0)(x)
             res.append(jac[0])
+            dcpls = torch.stack(res)
 
-        #ones = torch.ones_like(x0_vec)
-        #res = jvp(_payoffs, x0_vec, ones, create_graph=False)
-        return (_payoffs(x0_vec), torch.stack(res))
+        if way == 1:
+            x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [x.reshape(1, -1) for x in x0_vec]
 
+            def _payoffs(x, v, phi1, phi2, phi3, phi4, phi5, phi6):
+                state = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
+                f0T = model.calc_instant_fwd(state, t0, exerciseDate + delta - t0)
+                cMdl = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, f0T)
+                cPrd = CapletAsPutOnZCB(
+                    strike=strike,
+                    exerciseDate=exerciseDate - t0,
+                    delta=delta,
+                    notional=notional
+                )
+                cTL = dTL[dTL <= exerciseDate - t0]
+                payoffs = mcSim(cPrd, cMdl, rng, len(f0T), cTL)
+                return payoffs[0, :]
+
+            cpls = _payoffs(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+
+            # fast
+            jac = jacrev(_payoffs, argnums=(0, 1, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+            jac_sum = torch.stack([x.sum_to_size((1, x0_vec.shape[2])) for x in jac])
+            tmp = jac_sum.permute(1, 2, 0).squeeze()
+            dcpls = tmp.unsqueeze(dim=2)
+
+        return cpls, dcpls
 
     """ Calculate `true` caplet price using Monte Carlo for comparison """
-    X_test = torch.exp(-varphi * exerciseDate).reshape(-1, 1)
+    #X_test = torch.exp(-varphi * exerciseDate).reshape(-1, 1)
 
-    hedge_points = 10
+    hedge_points = 50
     dTL = torch.linspace(0.0, float(exerciseDate), hedge_points + 1)
 
     mcSim(prd, model, rng, N_train, dTL).reshape(-1, 1)
-    x0_vec = torch.stack(model.x)[:,:,-1,:]
+    x0_vec = torch.stack(model.x)[:, :, -1, :]
+
+    # Required when using AV to concat the initial forward rates
+    if use_av:
+        varphi = torch.concat([varphi, varphi], dim=0)
+        model.varphi = varphi
 
     """ Estimate Price and Delta using Differential Regression """
 
@@ -143,14 +193,19 @@ if __name__ == '__main__':
                                               calc_dU_dr=calc_dzcb_dx,
                                               use_av=use_av)
 
+    plt.figure()
+    plt.plot(X_train, y_train, 'o')
+    plt.show()
+
+
     #X_test = model.calc_zcb(x0_vec, torch.tensor(0.0), exerciseDate + delta).reshape(-1, 1)
     X_test = torch.linspace(X_train.min(), X_train.max(), N_test).reshape(-1, 1)
 
-    varphi = torch.linspace(varphi_min, varphi_max, N_test)  # torch.tensor(0.0832)
+    varphi = -torch.log(X_test)/(exerciseDate + delta)  # torch.tensor(0.0832)
     y_mdl = torch.full_like(X_test, torch.nan)
     for j in tqdm(range(len(X_test))):
         tmp_mdl = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi[j])
-        tmp_rng = RNG(seed=seed, use_av=False)
+        tmp_rng = RNG(seed=seed, use_av=use_av)
         y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 10000, dTL)))
     y_mdl = y_mdl.reshape(-1, 1)
     z_mdl = y_mdl.diff(dim=0) / X_test.diff(dim=0)
@@ -183,7 +238,6 @@ if __name__ == '__main__':
     ax[1].plot(X_test[1:], z_mdl, color='black', label='MC (Bump and reval)')
     ax[1].set_xlabel('Swap(0)')
     ax[1].set_ylabel('Delta')
-    ax[1].set_ylim(-1.2, 1.2)
     ax[1].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1].transAxes)
 
     # Adjust size of subplots
