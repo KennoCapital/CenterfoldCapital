@@ -898,3 +898,107 @@ class BarrierPayerSwaption(Product):
         res = max0(paths[-1].irs[0]) * paths[0].numeraire / paths[-1].numeraire
         res *= alive
         return res
+
+
+class PortfolioEuropeanSwaption(Product):
+    def __init__(self,
+                 exerciseDates:          torch.Tensor,
+                 fixRates:               list[torch.Tensor],
+                 deltas:                 list[torch.Tensor],
+                 swapFirstFixingDates:   list[torch.Tensor],
+                 swapLastFixingDates:    list[torch.Tensor],
+                 notionals:              list[torch.Tensor],
+                 weights:                list[torch.Tensor],
+                 flag_payer_receiver:    list[torch.Tensor]):
+        """
+        Portfolio of European Payer Swaptions.
+        We consider
+            - a vector of exercise dates and
+            - a vector of vectors for all other parameters.
+        """
+
+        if not (len(fixRates) == len(exerciseDates) == len(deltas) == len(swapFirstFixingDates) == len(swapLastFixingDates) == len(notionals) == len(weights) == len(flag_payer_receiver)):
+            raise ValueError(f'All arguments must have the same lengths, got:'
+                             f'exerciseDates ({len(exerciseDates)}),'
+                             f'strikes ({len(fixRates)}),'
+                             f'deltas ({len(deltas)}),'
+                             f'swapFirstFixingDates ({len(swapFirstFixingDates)}),'
+                             f'swapLastFixingDates ({len(swapLastFixingDates)}),'
+                             f'weights (len{weights}')
+
+        self.numT = len(exerciseDates)
+        self.numTrades = sum(len(fixRates[i]) for i in range(self.numT))
+
+        self.fixRates = fixRates
+        self.exerciseDates = exerciseDates
+        self.deltas = deltas
+        self.swapFirstFixingDates = swapFirstFixingDates
+        self.swapLastFixingDates = swapLastFixingDates
+        self.notionals = notionals
+        self.weights = weights
+        self.flag_payer_receiver = flag_payer_receiver
+
+        self._name = f'Portfolio of European Payer Swaptions with {self.numT} trades'
+
+        self._timeline = torch.unique(
+            torch.concat([torch.tensor([0.0]), self.exerciseDates]), sorted=True
+        )
+
+        self.swapFixingDates = [[torch.linspace(
+            float(self.swapFirstFixingDates[i][j]),
+            float(self.swapLastFixingDates[i][j]),
+            int((self.swapLastFixingDates[i][j] - self.swapFirstFixingDates[i][j]) / self.deltas[i][j]) + 1
+        ) for j in range(len(fixRates[i]))] for i in range(self.numT)]
+
+        self._defline = [
+            SampleDef(fwdRates=[], irs=[], discMats=torch.tensor([]),
+                      numeraire=True,
+                      stateVar=False)
+        ]
+
+        self._defline += [
+            SampleDef(
+                fwdRates=[],
+                irs=[InterestRateSwapDef(fixingDates=self.swapFixingDates[i][j],
+                                         fixRate=self.fixRates[i][j],
+                                         notional=self.notionals[i][j])
+                     for j in range(len(fixRates[i]))],
+                discMats=torch.tensor([]),
+                numeraire=True,
+                stateVar=False
+            ) for i in range(self.numT)]
+
+        self._payoffLabels = [
+            f'{weights[i][j]} * max[{flag_payer_receiver[i][j]} * swap({float_to_time_str(exerciseDates[i])}, '
+            f'{float_to_time_str(swapFirstFixingDates[i][j])}, '
+            f'{float_to_time_str(swapLastFixingDates[i][j])}, '
+            f'{float_to_time_str(deltas[i][j])})) ; 0.0]'
+            for i in range(self.numT) for j in range(len(fixRates[i]))]
+
+    @property
+    def timeline(self):
+        return self._timeline
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def defline(self):
+        return self._defline
+
+    @property
+    def payoffLabels(self):
+        return self._payoffLabels
+
+    def payoff(self, paths):
+        res = []
+        for i in range(self.numT):
+            res.append(
+                [self.weights[i][j] * max0(self.flag_payer_receiver[i][j] * paths[i+1].irs[j]) * paths[0].numeraire / paths[i+1].numeraire
+                for j in range(len(self.fixRates[i]))]
+            )
+
+        res = torch.vstack([item for sublist in res for item in sublist])
+
+        return res
