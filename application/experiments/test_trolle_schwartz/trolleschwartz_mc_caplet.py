@@ -12,7 +12,7 @@ if __name__ == "__main__":
     strike_plot = False
     # Setup
     seed = 1234
-    N = 1024
+    N = 1024*10
     measure = 'risk_neutral'
 
     # Trolle-Schwartz model specification
