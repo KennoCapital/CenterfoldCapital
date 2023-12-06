@@ -22,7 +22,7 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 1024
+    N_train = 256
     N_test = 256
     use_av = False
 
@@ -143,7 +143,7 @@ if __name__ == '__main__':
             )
             cTL = dTL[dTL <= exerciseDate - t0]
 
-            payoffs = mcSim(cPrd, cMdl, rng, size, cTL)
+            payoffs = mcSim(cPrd, cMdl, rng, N_test, cTL)
             return payoffs[0,]
 
         res = []
@@ -171,7 +171,7 @@ if __name__ == '__main__':
 
     V = cpl * torch.ones_like(x[0,0,0,:])
 
-    h_a = diff_reg_fit_predict(u_vec=fwd, r0_vec=x0_vec, t0=0.0,
+    h_a = diff_reg_fit_predict(u_vec=fwd, x0_vec=x0_vec, t0=0.0,
                                calc_dPrd_dr=calc_dcpl_dx, calc_dU_dr=calc_dfwd_dx,
                                diff_reg=diff_reg, use_av=use_av)[1].flatten()
 
