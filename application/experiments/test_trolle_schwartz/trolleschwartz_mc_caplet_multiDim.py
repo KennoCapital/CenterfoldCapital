@@ -11,9 +11,9 @@ torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == "__main__":
-    strike_plot = True
+    strike_plot = False
     save_fig = False
-    euler_step_size = 100
+    euler_step_size = 100*5
 
     # Setup
     seed = 1234
@@ -63,6 +63,10 @@ if __name__ == "__main__":
     # mc
     mc_price = torch.nanmean(payoff)
     print('MC Price =', mc_price)
+
+    # analytic
+    cpl = model.calc_cpl(torch.tensor(0.), prd.start, prd.delta, prd.strike, notional)
+    print('Semi-analytic Price =', cpl)
 
 
     if strike_plot:

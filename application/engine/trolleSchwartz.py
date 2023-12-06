@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from application.engine.mcBase import Model, MEASURES
 from application.engine.products import Product, Sample
 from application.engine.linearProducts import forward, swap, swap_rate
@@ -88,9 +89,9 @@ class trolleSchwartz(Model):
         self.alpha0 = alpha0.unsqueeze(0) if alpha0.dim() == 0 else alpha0
         self.alpha1 = alpha1.unsqueeze(0) if alpha1.dim() == 0 else alpha1
         """
-
+        v = [2.0, 0.5, 0.5]  # TODO make this an argument
         self._x0 = torch.zeros(size=(simDim, 1))
-        self._v0 = torch.zeros(size=(simDim, 1))
+        self._v0 = torch.tensor(v[:simDim]).reshape(-1, 1)
         self._phi1_0 = torch.clone(self._x0)
         self._phi2_0 = torch.clone(self._x0)
         self._phi3_0 = torch.clone(self._x0)
@@ -233,7 +234,7 @@ class trolleSchwartz(Model):
         Euler's discretisation of the state variables:
         x, v, phi1, phi2, phi3, phi4, phi5, phi6
         """
-        v = torch.abs(v)
+        #v = torch.abs(v)
         #v[v < 0] = v.nanmean() #imputing
 
         dx = -self.gamma * x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
@@ -561,13 +562,18 @@ class trolleSchwartz(Model):
                     tau * torch.exp(-self.gamma * tau))
             return Bx
 
-        def _compute_dN(N, t):
+        def _compute_dN(t,N):
             """ dynamics of N """
-            dNdt =  N * (-self.kappa + self.sigma * self.rho * (u * Bx(T1-T0+t) + (1-u) * Bx(t))) + \
-                0.5 * N**2 * self.sigma**2 + 0.5 * (u**2-u) * Bx(T1-T0+t)**2 + 0.5 * ((1-u)**2 - (1-u))* Bx(t)**2 +\
-                u*(1-u) * Bx(T1-T0+t) * Bx(t)
-
-            return dNdt
+            ode_system = [
+                N[i] * (-self.kappa[i] + self.sigma[i] * self.rho[i] * (u * Bx(T1-T0+t)[i] + (1-u) * Bx(t)[i])) + \
+                0.5 * N[i]**2 * self.sigma[i]**2 + 0.5 * (u**2-u) * Bx(T1-T0+t)[i]**2 + 0.5 * ((1-u)**2 - (1-u))* Bx(t)[i]**2 +\
+                u*(1-u) * Bx(T1-T0+t)[i] * Bx(t)[i]
+            for i in range(self.simDim)]
+            #dNdt =  N * (-self.kappa + self.sigma * self.rho * (u * Bx(T1-T0+t) + (1-u) * Bx(t))) + \
+            #    0.5 * N**2 * self.sigma**2 + 0.5 * (u**2-u) * Bx(T1-T0+t)**2 + 0.5 * ((1-u)**2 - (1-u))* Bx(t)**2 +\
+            #    u*(1-u) * Bx(T1-T0+t) * Bx(t)
+            #return dNdt
+            return np.array(ode_system)
 
         def _compute_dM(N):
             """ dynamics of M """
@@ -595,16 +601,21 @@ class trolleSchwartz(Model):
             return N, M
         """
         # currently relying on SciPy's Runge-Kutta implementation 'RK45'
-        sol = solve_ivp(_compute_dN, t_span=[t, T0], y0=torch.tensor([N0]), method='RK45')
-        N = torch.tensor([sol.y[0][-1]])
+        y0 = torch.tensor(N0).flatten().numpy()
+        sol = solve_ivp(_compute_dN, t_span=[t, T0], y0=y0,
+                        t_eval=np.linspace(float(t), float(T0), 101), # TODO consider changing this
+                        method='RK45')
+        Nmat = torch.tensor(sol.y)
+        N = Nmat[:, -1].reshape(self.simDim, 1)
+        M = torch.sum(N * self.kappa * self.theta)
+        #M = torch.trapz((torch.tensor(sol.y[0])*self.kappa*self.theta).flatten(), torch.tensor(sol.t), dim=0)
 
-        M = torch.trapz( (torch.tensor(sol.y[0])*self.kappa*self.theta).flatten(), torch.tensor(sol.t), dim=0)
-
-        zcb0 = self.calc_zcb([i[:, t, :].mean(dim=1) for i in self.x], t, T0)
-        zcb1 = self.calc_zcb([i[:, t, :].mean(dim=1) for i in self.x], t, T1)
+        t_idx = list(self.timeline).index(t)
+        zcb0 = self.calc_zcb([i[:, t_idx, :].mean(dim=1) for i in self.x], t, T0)
+        zcb1 = self.calc_zcb([i[:, t_idx, :].mean(dim=1) for i in self.x], t, T1)
 
         term1 = M
-        term2 = torch.sum(N * self.x[1][:,t,:].mean(dim=1), dim=0)
+        term2 = torch.sum(N * self._v0, dim=0)
         term3 = u * torch.log(zcb1) + (1-u)*torch.log(zcb0)
 
         return torch.exp(term1 + term2 + term3)
@@ -626,7 +637,7 @@ class trolleSchwartz(Model):
 
                 return integrand
 
-            du = torch.linspace(1e-6, MyInf, steps=20) # this disc. rate is recommended from paper
+            du = torch.linspace(1e-6, MyInf, steps=100) # this disc. rate is recommended from paper
 
             lst = torch.stack([integrand(u).reshape(-1) for u in du])
             integral = torch.trapz(lst, du, dim=0)
