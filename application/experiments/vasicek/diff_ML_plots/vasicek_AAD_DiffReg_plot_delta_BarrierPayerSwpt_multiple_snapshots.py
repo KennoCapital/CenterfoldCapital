@@ -144,7 +144,7 @@ if __name__ == '__main__':
             for j in tqdm(range(len(r0_test_vec))):
                 tmp_mdl = Vasicek(a, b, sigma, r0_test_vec[j], use_ATS=True, use_euler=False, measure='terminal')
                 tmp_rng = RNG(seed=seed, use_av=True)
-                y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 20000)))
+                y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 200000)))
             y_mdl = y_mdl.reshape(-1, 1)
 
             X_test = tmp_mdl.calc_swap(r0_test_vec, t_swap_fixings, delta, strike, notional).reshape(-1, 1)
