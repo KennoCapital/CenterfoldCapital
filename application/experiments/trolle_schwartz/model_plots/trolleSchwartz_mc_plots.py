@@ -94,6 +94,5 @@ if __name__ == '__main__':
     plt.plot(dTL, model.fwd_rate_vol(0,dTL)[0] )
     plt.show()
 
-    # plot ifr
 
 

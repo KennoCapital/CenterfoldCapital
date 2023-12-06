@@ -25,19 +25,11 @@ def training_data(x0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use
     """
     idx_half = len(x0_vec[0, 0, :])
 
-    #r0_vec = r0_vec.squeeze(1)
-
     if use_av:
         x0_vec = torch.cat([x0_vec, x0_vec], dim=2)
 
-
     x_train, dxdr = calc_dU_dr(x0_vec, t0)
     y_train, dydr = calc_dPrd_dr(x0_vec, t0)
-
-    #x_train = x_train.squeeze(1)
-    #x_train = x_train.permute(1,0)
-    #dxdr = dxdr.squeeze(2)
-    #dydr = dydr.squeeze(2)
 
     # Ensure that 1d cases are formatted as column vectors
 
@@ -50,8 +42,7 @@ def training_data(x0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use
     if dydr.dim() == 1:
         dydr = dydr.reshape(-1, 1)
 
-
-    z_train = (torch.pinverse(dxdr) @ dydr).reshape(-1, 1) #dydr / (dxdr + 1E-8)
+    z_train = (torch.pinverse(dxdr + 1E-8) @ dydr).reshape(-1, 1)
     """
     if x_train.shape[1] > 1:
         # General (multi-dimensional) case
@@ -64,16 +55,7 @@ def training_data(x0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use
     else:
         # 1d case can be computed all at once
         z_train = dydr / dxdr
-    if dxdr.shape[1] > 1:
-        # General (multi-dimensional) case
-        solve_colwise = lambda dxdr_, dydr_: (torch.pinverse(dxdr_) @ dydr_)#.flatten()
-        equations = (
-            (dxdr[:,i, :], dydr[:,i, :]) for i in range(len(r0_vec))
-        )
-        solutions = itertools.starmap(solve_colwise, equations)
-        z_train = torch.vstack(list(solutions))
     """
-
 
     if use_av:
         x_train = x_train[:idx_half]
@@ -83,7 +65,7 @@ def training_data(x0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use
 
 
 def diff_reg_fit_predict(u_vec: torch.Tensor,
-                         r0_vec: torch.Tensor,
+                         x0_vec: torch.Tensor,
                          t0: float,
                          calc_dU_dr,
                          calc_dPrd_dr,
@@ -91,7 +73,7 @@ def diff_reg_fit_predict(u_vec: torch.Tensor,
                          use_av: bool) -> tuple[torch.Tensor, torch.Tensor]:
     """
     param u_vec:            Underlying market variables
-    param r0_vec:           1D vector of short rates to generate training data from
+    param x0_vec:           1D vector of short rates to generate training data from
     param t0:               Current market time, effects time to expiry and fixings in the training
     param calc_dU_dr:       Function for calculating the derivative of the underlying wrt. to r
     param calc_dPrd_dr:     Function for calculating the derivative of the product wrt. to r
@@ -108,7 +90,7 @@ def diff_reg_fit_predict(u_vec: torch.Tensor,
         raise ValueError
 
     x_train, y_train, z_train = training_data(
-        r0_vec=r0_vec, t0=t0, calc_dU_dr=calc_dU_dr, calc_dPrd_dr=calc_dPrd_dr, use_av=use_av
+        x0_vec=x0_vec, t0=t0, calc_dU_dr=calc_dU_dr, calc_dPrd_dr=calc_dPrd_dr, use_av=use_av
     )
 
     x_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(x_train, y_train, z_train)
@@ -125,7 +107,7 @@ def diff_reg_fit_predict(u_vec: torch.Tensor,
 
 
 def calc_delta_diff_nn(u_vec: torch.Tensor,
-                        r0_vec: torch.Tensor,
+                        x0_vec: torch.Tensor,
                         t0: float,
                         calc_dU_dr,
                         calc_dPrd_dr,
@@ -133,7 +115,7 @@ def calc_delta_diff_nn(u_vec: torch.Tensor,
                         use_av: bool) -> torch.Tensor:
     """
     param u_vec:            1D vector of the underlying market variable
-    param r0_vec:           1D vector of short rates to generate training data from
+    param x0_vec:           1D vector of short rates to generate training data from
     param t0:               Current market time, effects time to expiry and fixings in the training
     param calc_dU_dr:       Function for calculating the derivative of the underlying wrt. to r
     param calc_dPrd_dr:     Function for calculating the derivative of the product wrt. to r
@@ -156,7 +138,7 @@ def calc_delta_diff_nn(u_vec: torch.Tensor,
 
     X_test = u_vec.reshape(-1, 1)
 
-    X_train, y_train, z_train = training_data(r0_vec=r0_vec, t0=t0,
+    X_train, y_train, z_train = training_data(x0_vec=x0_vec, t0=t0,
                                                  calc_dU_dr=calc_dU_dr,
                                                  calc_dPrd_dr=calc_dPrd_dr,
                                                  use_av=use_av
