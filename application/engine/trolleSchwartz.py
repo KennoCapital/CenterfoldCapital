@@ -89,9 +89,10 @@ class trolleSchwartz(Model):
         self.alpha0 = alpha0.unsqueeze(0) if alpha0.dim() == 0 else alpha0
         self.alpha1 = alpha1.unsqueeze(0) if alpha1.dim() == 0 else alpha1
         """
-        v = [2.0, 0.5, 0.5]  # TODO make this an argument
+        v = [2.0, 1., 1.]  # TODO make this an argument
         self._x0 = torch.zeros(size=(simDim, 1))
-        self._v0 = torch.tensor(v[:simDim]).reshape(-1, 1)
+        self._v0 = self.theta
+        #self._v0 = torch.tensor(v[:simDim]).reshape(-1, 1)
         self._phi1_0 = torch.clone(self._x0)
         self._phi2_0 = torch.clone(self._x0)
         self._phi3_0 = torch.clone(self._x0)
@@ -234,14 +235,16 @@ class trolleSchwartz(Model):
         Euler's discretisation of the state variables:
         x, v, phi1, phi2, phi3, phi4, phi5, phi6
         """
-        #v = torch.abs(v)
+        v = torch.abs(v)
         #v[v < 0] = v.nanmean() #imputing
 
         dx = -self.gamma * x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
         #dx = -self.gamma * x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
 
         # Note: using abs(v)
-        dv = self.kappa * (self.theta.reshape(self.simDim,1) - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
+        dv = self.kappa * (self.theta.reshape(self.simDim, 1) - v) * dt + self.sigma * torch.sqrt(v) * (self.rho * Wf * torch.sqrt(
+            dt) + torch.sqrt(1.- self.rho**2) * Wv * torch.sqrt(dt))
+        #dv = self.kappa * (self.theta.reshape(self.simDim,1) - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
         #dv = self.kappa * (self.theta - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
 
         dphi1 = (x - self.gamma * phi1) * dt
@@ -304,7 +307,8 @@ class trolleSchwartz(Model):
         dt = self.timeline[1:] - self.timeline[:-1]
 
         # Compute correlated Brownian motions
-        Wf, Wv = self._correlatedBrownians(Z)
+        Wf, Wv = Z[:self.simDim,:,:], Z[self.simDim:,:,:]
+        #Wf, Wv = self._correlatedBrownians(Z)
 
         # Initialize state variables
         # set initial values to same for all paths
@@ -326,19 +330,19 @@ class trolleSchwartz(Model):
             nonlocal idx, s, sum_x
             if self.measure == 'risk_neutral':
                 for j in range(len(self.paths[idx].fwd)):
-                    self._paths[idx].fwd[j] = self.calc_fwd(X=x,
+                    self._paths[idx].fwd[j][:] = self.calc_fwd(X=x,
                                                             t=self.defline[idx].fwdRates[j].startDate - s,
                                                             delta=self.defline[idx].fwdRates[j].delta)
 
                 for j in range(len(self.paths[idx].irs)):
-                    self._paths[idx].irs[j] = self.calc_swap(X=x,
+                    self._paths[idx].irs[j][:] = self.calc_swap(X=x,
                                                              t=self.defline[idx].irs[j].t - s,
                                                              delta=self.defline[idx].irs[j].delta,
                                                              K=self.defline[idx].irs[j].fixRate,
                                                              N=self.defline[idx].irs[j].notional)
 
                 for j in range(len(self.paths[idx].disc)):
-                    self._paths[idx].disc[j] = self.calc_zcb(X=x,
+                    self._paths[idx].disc[j][:] = self.calc_zcb(X=x,
                                                              t=torch.tensor(0.0),
                                                              T=self.defline[idx].discMats[j] - s)
 
@@ -607,12 +611,16 @@ class trolleSchwartz(Model):
                         method='RK45')
         Nmat = torch.tensor(sol.y)
         N = Nmat[:, -1].reshape(self.simDim, 1)
-        M = torch.sum(N * self.kappa * self.theta)
+        #M = torch.sum(N * self.kappa * self.theta)
+        M = torch.trapz( torch.sum(Nmat*self.kappa*self.theta,dim=0), torch.tensor(sol.t), dim=0)
+        #M = torch.trapz((N * self.kappa * self.theta).flatten(), torch.tensor(sol.t), dim=0)
         #M = torch.trapz((torch.tensor(sol.y[0])*self.kappa*self.theta).flatten(), torch.tensor(sol.t), dim=0)
 
         t_idx = list(self.timeline).index(t)
-        zcb0 = self.calc_zcb([i[:, t_idx, :].mean(dim=1) for i in self.x], t, T0)
-        zcb1 = self.calc_zcb([i[:, t_idx, :].mean(dim=1) for i in self.x], t, T1)
+        zcb0 = self.calc_zcb(self.x0, t, T0)
+        zcb1 = self.calc_zcb(self.x0, t, T1)
+        #zcb0 = self.calc_zcb([i[:, t_idx, :].mean(dim=1) for i in self.x], t, T0)
+        #zcb1 = self.calc_zcb([i[:, t_idx, :].mean(dim=1) for i in self.x], t, T1)
 
         term1 = M
         term2 = torch.sum(N * self._v0, dim=0)
@@ -633,7 +641,7 @@ class trolleSchwartz(Model):
                 c = torch.complex(real=a, imag=u * b)
                 term1 = self.calc_characteristic_func(c,t,T0,T1)
                 term2 = torch.exp(-torch.complex(real=torch.tensor(0.0), imag=u*y))
-                integrand = torch.imag( term1 * term2 ) / u
+                integrand = torch.imag( term1 * term2 ) / (u)
 
                 return integrand
 

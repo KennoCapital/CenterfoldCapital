@@ -11,9 +11,9 @@ torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == "__main__":
-    strike_plot = False
-    save_fig = False
-    euler_step_size = 100*5
+    strike_plot = True
+    save_fig = True
+    euler_step_size = 100
 
     # Setup
     seed = 1234
@@ -65,8 +65,8 @@ if __name__ == "__main__":
     print('MC Price =', mc_price)
 
     # analytic
-    cpl = model.calc_cpl(torch.tensor(0.), prd.start, prd.delta, prd.strike, notional)
-    print('Semi-analytic Price =', cpl)
+    #cpl = model.calc_cpl(torch.tensor(0.), prd.start, prd.delta, prd.strike, notional)
+    #print('Semi-analytic Price =', cpl)
 
 
     if strike_plot:
@@ -108,4 +108,3 @@ if __name__ == "__main__":
         if save_fig:
             plt.savefig(get_plot_path('trolle_schwartz/ts_3D_cpl_strikes.png'), dpi=400)
         plt.show()
-
