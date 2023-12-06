@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 from application.engine.mcBase import Model, MEASURES
 from application.engine.products import Product, Sample
 from application.engine.linearProducts import forward, swap, swap_rate
@@ -15,6 +14,7 @@ def _format_dim_X(X):
         X = X.unsqueeze(0)
     return X
 
+
 def _format_dim_t(t):
     """Helper function ensuring that t is formatted as column-vector"""
     if t.dim() > 2:
@@ -24,6 +24,7 @@ def _format_dim_t(t):
     if t.dim() == 1:
         t = t.reshape(-1, 1)
     return t
+
 
 class trolleSchwartz(Model):
     """
@@ -42,6 +43,7 @@ class trolleSchwartz(Model):
         - Semi-analytical pricing of coupon bond options (swaptions).
     """
     def __init__(self,
+                 v0,
                  gamma,
                  kappa,
                  theta,
@@ -52,7 +54,8 @@ class trolleSchwartz(Model):
                  varphi,
                  simDim:    int = 1,
                  measure:   str = 'risk_neutral',
-                 disc_method: str = 'euler'):
+                 disc_method: str = 'euler',
+                 numSettings: dict = None):
         """
         :param gamma:           Parameter originating from HJM  volatility structure
 
@@ -72,26 +75,16 @@ class trolleSchwartz(Model):
         :param disc_method:     Discretization scheme of the evolution of the state variables.
                                 Supports currently Euler (first order), Milstein (second order)
         """
-        self.gamma = gamma.reshape(-1,1)
-        self.kappa = kappa.reshape(-1,1)
-        self.theta = theta.reshape(-1,1)
-        self.rho = rho.reshape(-1,1)
-        self.sigma = sigma.reshape(-1,1)
-        self.alpha0 = alpha0.reshape(-1,1)
-        self.alpha1 = alpha1.reshape(-1,1)
+        self._v0 = v0.reshape(-1, 1)
+        self.gamma = gamma.reshape(-1 ,1)
+        self.kappa = kappa.reshape(-1, 1)
+        self.theta = theta.reshape(-1, 1)
+        self.rho = rho.reshape(-1, 1)
+        self.sigma = sigma.reshape(-1, 1)
+        self.alpha0 = alpha0.reshape(-1, 1)
+        self.alpha1 = alpha1.reshape(-1, 1)
 
-        """
-        self.gamma = gamma.unsqueeze(0) if gamma.dim() == 0 else gamma
-        self.kappa = kappa.unsqueeze(0) if kappa.dim() == 0 else kappa
-        self.theta = theta.unsqueeze(0) if theta.dim() == 0 else theta
-        self.rho = rho.unsqueeze(0) if rho.dim() == 0 else rho
-        self.sigma = sigma.unsqueeze(0) if sigma.dim() == 0 else sigma
-        self.alpha0 = alpha0.unsqueeze(0) if alpha0.dim() == 0 else alpha0
-        self.alpha1 = alpha1.unsqueeze(0) if alpha1.dim() == 0 else alpha1
-        """
-        v = [2.0, 0.5, 0.5]  # TODO make this an argument
         self._x0 = torch.zeros(size=(simDim, 1))
-        self._v0 = torch.tensor(v[:simDim]).reshape(-1, 1)
         self._phi1_0 = torch.clone(self._x0)
         self._phi2_0 = torch.clone(self._x0)
         self._phi3_0 = torch.clone(self._x0)
@@ -115,6 +108,9 @@ class trolleSchwartz(Model):
             raise NotImplementedError(f'The discretization scheme "{disc_method}" is not implemented.'
                                       f'Use one of the following schemes: {["euler", "milstein"]}')
 
+        if disc_method == 'milstein' and simDim > 1:
+            raise NotImplementedError('Milstein discretization scheme is not supported for simDim > 1!')
+
         # Attributes for Monte Carlo
         self._timeline = None
         self._defline = None
@@ -123,6 +119,17 @@ class trolleSchwartz(Model):
         self._dTimeline = None
         self._tl_idx_mkt = None
         self._Tn = None
+
+        # Settings for numerical procedures
+        self.numSettings = {
+            'fourierLower': 1e-12,
+            'fourierUpper': 8000.0,
+            'fourierNumSteps': 50,
+            'rungeKuttaNumStepsPerYear': 20,
+
+        }
+        if numSettings is not None:
+            self.numSettings.update(numSettings)
 
     @property
     def timeline(self):
@@ -167,6 +174,7 @@ class trolleSchwartz(Model):
 
         # Allocate space for state and paths (market variables)
         self._Tn = prd.Tn
+
         # 8 state vars: x, v, phi1, phi2, phi3, phi4, phi5, phi6
         self._x = torch.full(size=(self.simDim, len(self.timeline), N), fill_value=torch.nan)
         self._v = torch.clone(self._x)
@@ -196,20 +204,12 @@ class trolleSchwartz(Model):
         """ Generate correlated Brownian motions
             Note: RV's Z is generated outside class
         """
+        '''
         # Covariance matrix
-        #if self.simDim > 1:
-        # we would need a cov matrix for each simulation dimension
         covMat = torch.ones((self.simDim, 2, 2))
-
-        # but we only have two sources of randomness
         for i in range(self.simDim):
             covMat[i, 0, 1] = self.rho[i]
             covMat[i, 1, 0] = self.rho[i]
-        #else:
-        """
-            covMat = torch.tensor([[1.0, self.rho],
-                                   [self.rho, 1.0]])
-        """
 
         # Cholesky decomposition: covMat = L x L^T
         L = torch.linalg.cholesky(covMat)
@@ -218,6 +218,12 @@ class trolleSchwartz(Model):
         W = torch.full_like(Z, torch.nan)
         for i in range(self.simDim):
             W[[2*i, 2*i+1], :, :] = (Z[[2*i, 2*i+1], :, :].T @ L[i].T).T
+
+        '''
+
+        W = Z.clone()
+        for i in range(self.simDim):
+            W[[2*i+1], :, :] = self.rho[i] * Z[[2*i], :, :] * torch.sqrt(1.0 - self.rho[i] ** 2.0) * Z[[2*i+1], :, :]
 
         Wf = W[0::2, :, :]
         Wv = W[1::2, :, :]
@@ -234,15 +240,10 @@ class trolleSchwartz(Model):
         Euler's discretisation of the state variables:
         x, v, phi1, phi2, phi3, phi4, phi5, phi6
         """
-        #v = torch.abs(v)
-        #v[v < 0] = v.nanmean() #imputing
 
         dx = -self.gamma * x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
-        #dx = -self.gamma * x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
 
-        # Note: using abs(v)
-        dv = self.kappa * (self.theta.reshape(self.simDim,1) - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
-        #dv = self.kappa * (self.theta - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
+        dv = self.kappa * (self.theta.reshape(self.simDim, 1) - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
 
         dphi1 = (x - self.gamma * phi1) * dt
         dphi2 = (v - self.gamma * phi2) * dt
@@ -260,20 +261,19 @@ class trolleSchwartz(Model):
         phi5 += dphi5
         phi6 += dphi6
 
-        return x,v,phi1,phi2,phi3,phi4,phi5,phi6
+        return x, v, phi1, phi2, phi3, phi4, phi5, phi6
 
     def _milstein_step(self, x, v, phi1, phi2, phi3, phi4, phi5, phi6, dt, Wf, Wv):
         """
         Milstein's discretisation of the state variables:
         x, v, phi1, phi2, phi3, phi4, phi5, phi6
         """
-        # note using abs(v)
-        v = torch.abs(v)
+        dx = -self.gamma @ x * dt + \
+             torch.sqrt(v) * Wf * torch.sqrt(dt) + 0.5 * v * (torch.pow(Wf * torch.sqrt(dt), 2.0) - dt)
 
-        dx = -self.gamma @ x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt) + 0.5 * v *( torch.pow( Wf * torch.sqrt(dt),2) - dt)
-
-        dv = self.kappa @ (self.theta.reshape(self.simDim, 1) - v) * dt + self.sigma @ torch.sqrt(v) * Wv * torch.sqrt(dt) + \
-            0.5 * torch.pow(self.sigma @ torch.sqrt(v),2) * ( torch.pow( Wf * torch.sqrt(dt),2) - dt)
+        dv = self.kappa @ (self.theta.reshape(self.simDim, 1) - v) * dt + \
+             self.sigma @ torch.sqrt(v) * Wv * torch.sqrt(dt) + \
+             0.5 * torch.pow(self.sigma @ torch.sqrt(v), 2) * (torch.pow(Wf * torch.sqrt(dt), 2.0) - dt)
 
         dphi1 = (x - self.gamma @ phi1) * dt
         dphi2 = (v - self.gamma @ phi2) * dt
@@ -317,36 +317,38 @@ class trolleSchwartz(Model):
         self._phi5[:, 0, :] = self._phi5_0
         self._phi6[:, 0, :] = self._phi6_0
 
-        # and set auxiliary index
+        # Set auxiliary index
         idx = 0
         s = 0.0
-        sum_x = torch.zeros_like(self._x[0, 0, :]) # this is used in numéraire under risk neutral measure
+
+        # Integratant in numéraire under risk neutral measure
+        sum_x = torch.zeros((Z.shape[2], ))
 
         def _fillSample(x):
             nonlocal idx, s, sum_x
             if self.measure == 'risk_neutral':
                 for j in range(len(self.paths[idx].fwd)):
-                    self._paths[idx].fwd[j] = self.calc_fwd(X=x,
-                                                            t=self.defline[idx].fwdRates[j].startDate - s,
-                                                            delta=self.defline[idx].fwdRates[j].delta)
+                    self._paths[idx].fwd[j][:] = self.calc_fwd(X=x,
+                                                               t=self.defline[idx].fwdRates[j].startDate - s,
+                                                               delta=self.defline[idx].fwdRates[j].delta)
 
                 for j in range(len(self.paths[idx].irs)):
-                    self._paths[idx].irs[j] = self.calc_swap(X=x,
-                                                             t=self.defline[idx].irs[j].t - s,
-                                                             delta=self.defline[idx].irs[j].delta,
-                                                             K=self.defline[idx].irs[j].fixRate,
-                                                             N=self.defline[idx].irs[j].notional)
+                    self._paths[idx].irs[j][:] = self.calc_swap(X=x,
+                                                                t=self.defline[idx].irs[j].t - s,
+                                                                delta=self.defline[idx].irs[j].delta,
+                                                                K=self.defline[idx].irs[j].fixRate,
+                                                                N=self.defline[idx].irs[j].notional)
 
                 for j in range(len(self.paths[idx].disc)):
-                    self._paths[idx].disc[j] = self.calc_zcb(X=x,
-                                                             t=torch.tensor(0.0),
-                                                             T=self.defline[idx].discMats[j] - s)
+                    self._paths[idx].disc[j][:] = self.calc_zcb(X=x,
+                                                                t=torch.tensor(0.0),
+                                                                T=self.defline[idx].discMats[j] - s)
 
                 if self.paths[idx].numeraire is not None:
                     self._paths[idx].numeraire[:] = torch.exp(sum_x)
 
                 if self.paths[idx].x is not None:
-                    self._paths[idx].x[:,:,:] = torch.stack(x).reshape(-1, 8, self.simDim)
+                    self._paths[idx].x[:, :, :] = torch.stack(x).reshape(-1, 8, self.simDim)
 
             idx += 1
 
@@ -361,36 +363,37 @@ class trolleSchwartz(Model):
         for k, s in enumerate(self.timeline[1:]):
 
             # State variables using step function
-            self._x[:,k+1, :], self._v[:,k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
-            self._phi3[:,k+1, :], self._phi4[:,k+1, :], self._phi5[:,k+1, :], self._phi6[:,k+1, :] = \
-                step_func(self._x[:,k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :],
+            self._x[:, k+1, :], self._v[:,k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
+            self._phi3[:, k+1, :], self._phi4[:,k+1, :], self._phi5[:,k+1, :], self._phi6[:,k+1, :] = \
+                step_func(self._x[:, k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :],
                           self._phi3[:,k, :], self._phi4[:,k, :], self._phi5[:,k, :], self._phi6[:,k, :],
                           dt[k], Wf[:,k,:], Wv[:,k, :])
 
             # Numeraire
             if self.measure == 'risk_neutral':
                 # Trapezoidal rule: B(t) = exp{ int_0^t r(s) ds } ~ exp{sum[ r(t) * dt ]}
-                # first we need state vars
-                xk1 = [self._x[:,k+1, :], self._v[:,k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
-                        self._phi3[:,k+1, :], self._phi4[:,k+1, :], self._phi5[:,k+1, :], self._phi6[:,k+1, :]]
-                xk = [self._x[:,k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :], \
-                        self._phi3[:,k, :], self._phi4[:,k, :], self._phi5[:,k, :], self._phi6[:,k, :]]
-                # calc short rates
-                rt1 = self.calc_short_rate(X=xk1, t=self.timeline[k]+dt[k])
+                # Get state variables
+                xk1 = [self._x[:, k+1, :], self._v[:, k+1, :], self._phi1[:, k+1, :], self._phi2[:, k+1, :], \
+                        self._phi3[:, k+1, :], self._phi4[:, k+1, :], self._phi5[:, k+1, :], self._phi6[:, k+1, :]]
+                xk = [self._x[:, k, :], self._v[:, k, :], self._phi1[:, k, :], self._phi2[:, k, :], \
+                        self._phi3[:, k, :], self._phi4[:, k, :], self._phi5[:, k, :], self._phi6[:, k, :]]
+
+                # Calc short rates
+                rt1 = self.calc_short_rate(X=xk1, t=self.timeline[k] + dt[k])
                 rt = self.calc_short_rate(X=xk, t=self.timeline[k])
 
-                # apply trapz rule
+                # Apply trapezoidal rule
                 sum_x += 0.5 * (rt1 + rt).flatten() * dt[k]
 
             # Samples (market variables)
             if self._tl_idx_mkt[k + 1]:
-                _fillSample(x=[self._x[:, k+1, :], self._v[:, k+1, :],
+                _fillSample(x=[
+                    self._x[:, k+1, :], self._v[:, k+1, :],
                     self._phi1[:, k+1, :], self._phi2[:, k+1, :],
                     self._phi3[:, k+1, :], self._phi4[:, k+1, :],
                     self._phi5[:, k+1, :], self._phi6[:, k+1, :]]
-                            )
+                )
         return self.paths
-
 
     def calc_zcb(self, X, t, T):
         """
@@ -408,40 +411,38 @@ class trolleSchwartz(Model):
             T = T.view(1)
         T = T.reshape(-1, 1)
 
-        # extract state vars
+        # Extract
         x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [x.reshape(self.simDim, -1) for x in X]
 
-        # eq. (20)
+        # eq. (20) - (26)
         Bx = self.alpha1 / self.gamma * (
                     (1 / self.gamma + self.alpha0 / self.alpha1) * (torch.exp(-self.gamma * (T - t)) - 1) + \
                     (T - t) * torch.exp(-self.gamma * (T - t)))
-        # eq. (21)
+
         Bphi1 = self.alpha1 / self.gamma * (torch.exp(-self.gamma * (T - t)) - 1)
-        # eq. (22)
+
         Bphi2 = torch.pow(self.alpha1 / self.gamma, 2) * (1 / self.gamma + self.alpha0 / self.alpha1) * \
                 ((1 / self.gamma + self.alpha0 / self.alpha1) * (torch.exp(-self.gamma * (T - t)) - 1) + \
                  (T - t) * torch.exp(-self.gamma * (T - t)))
-        # eq. (23)
+
         Bphi3 = - self.alpha1 / torch.pow(self.gamma, 2) * (
                     (self.alpha1 / (2 * torch.pow(self.gamma, 2)) + self.alpha0 / self.gamma + \
                      torch.pow(self.alpha0, 2) / (2 * self.alpha1)) * (torch.exp(-2 * self.gamma * (T - t)) - 1) + \
                     (self.alpha1 / self.gamma + self.alpha0) * (T - t) * torch.exp(-2 * self.gamma * (T - t)) + \
                     self.alpha1 / 2 * (T - t) ** 2 * torch.exp(-2 * self.gamma * (T - t)))
-        # eq. (24)
+
         Bphi4 = torch.pow(self.alpha1 / self.gamma, 2) * (1 / self.gamma + self.alpha0 / self.alpha1) * (
                     torch.exp(-self.gamma * (T - t)) - 1)
-        # eq. (25)
+
         Bphi5 = - self.alpha1 / torch.pow(self.gamma, 2) * ((self.alpha1 / self.gamma + self.alpha0) * \
                                                             (torch.exp(-2 * self.gamma * (T - t)) - 1) + self.alpha1 * (
                                                                         T - t) * torch.exp(-2 * self.gamma * (T - t)))
-        # eq. (26)
+
         Bphi6 = - 0.5 * torch.pow(self.alpha1 / self.gamma, 2) * (torch.exp(-2 * self.gamma * (T - t)) - 1)
 
-        # eq. (20) term 1: P(0,T) / P(0,t)
+        # eq. (20) by each term
         zcbT_by_zcbt = torch.exp(-self.varphi * (T - t))
-        # eg. (20) term 2: sum_i(Bx_i(T-t)x_i(t))
         Bx_sum = Bx.T @ x
-        # eq. (20) term 3: sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))
         Bphi_sum = Bphi1.T @ phi1 + Bphi2.T @ phi2 + Bphi3.T @ phi3 + Bphi4.T @ phi4 + Bphi5.T @ phi5 + Bphi6.T @ phi6
 
         return zcbT_by_zcbt * torch.exp(Bx_sum + Bphi_sum)
@@ -463,31 +464,28 @@ class trolleSchwartz(Model):
             T = T.view(1)
         T = T.reshape(-1, 1)
 
-        # eq. (6)
+        # eq. (6) - (12)
         Bx = (self.alpha0 + self.alpha1 * (T - t)) * torch.exp(-self.gamma * (T - t))
-        # eq. (7)
+
         Bphi1 = self.alpha1 * torch.exp(-self.gamma * (T - t))
-        # eq. (8)
+
         Bphi2 = self.alpha1 / self.gamma * (1/self.gamma + self.alpha0/self.alpha1) * \
                 (self.alpha0 + self.alpha1*(T-t)) * torch.exp(-self.gamma * (T - t))
-        # eq. (9)
+
         Bphi3 = - ( self.alpha0 * self.alpha1 / self.gamma * (1/self.gamma + self.alpha0/self.alpha1) + \
                     self.alpha1/self.gamma * (self.alpha1 / self.gamma + 2 * self.alpha0)*(T-t) + \
                     torch.pow(self.alpha1,2) /self.gamma * (T-t)**2 ) * torch.exp(-2 * self.gamma * (T - t))
-        # eq. (10)
-        Bphi4 = torch.pow(self.alpha1,2) / self.gamma * (1/self.gamma + self.alpha0/self.alpha1) * torch.exp(-self.gamma * (T - t))
-        # eq. (11)
-        Bphi5 = - self.alpha1 / self.gamma * (self.alpha1 / self.gamma + 2*self.alpha0 + 2* self.alpha1*(T-t)) * torch.exp(-2 * self.gamma * (T - t))
-        # eq. (12)
-        Bphi6 = - torch.pow(self.alpha1,2) / self.gamma * torch.exp(-2 * self.gamma * (T - t))
 
-        # eq. (5) term 1: f(0,T)
+        Bphi4 = torch.pow(self.alpha1,2) / self.gamma * (1/self.gamma + self.alpha0/self.alpha1) * torch.exp(-self.gamma * (T - t))
+
+        Bphi5 = - self.alpha1 / self.gamma * (self.alpha1 / self.gamma + 2*self.alpha0 + 2* self.alpha1*(T-t)) * torch.exp(-2 * self.gamma * (T - t))
+
+        Bphi6 = - torch.pow(self.alpha1, 2) / self.gamma * torch.exp(-2 * self.gamma * (T - t))
+
+        # eq. (5) by each term
         f0T = self.varphi
-        # eq. (5) term 2: sum_i(Bx_i(T-t)x_i(t))
         Bx_sum = Bx.T @ x
-        # eq. (5) term 3: sum_i(sum_j(B_phi_{j,i}(T-t) * phi_{j,i}(t)))
         Bphi_sum = Bphi1.T @ phi1 + Bphi2.T @ phi2 + Bphi3.T @ phi3 + Bphi4.T @ phi4 + Bphi5.T @ phi5 + Bphi6.T @ phi6
-        #Bphi_sum = torch.sum(Bphi1 @ phi1 + Bphi2 @ phi2 + Bphi3 @ phi3 + Bphi4 @ phi4 + Bphi5 @ phi5 + Bphi6 @ phi6, dim=0)
 
         return f0T + Bx_sum + Bphi_sum
 
@@ -509,24 +507,18 @@ class trolleSchwartz(Model):
         return self.calc_instant_fwd(X, t, t)
 
     def calc_fwd(self, X, t, delta):
-        #zcb_t = self.calc_zcb_price(X, t, t)
-        #zcb_tdt = self.calc_zcb_price(X, t, t+delta)
         zcb_t = self.calc_zcb(X, t, t)
         zcb_tdt = self.calc_zcb(X, t, t + delta)
 
         return forward(zcb_t, zcb_tdt, delta)
 
     def calc_swap(self, X, t, delta, K=None, N=torch.tensor(1.0)):
-        """t = T_0, ..., T_n (future dates)"""
-        #zcb = self.calc_zcb_price(X=X, t=0, T=t)
-        #return swap(zcb, delta, K, N)
         """t = T_0, ..., T_{n-1} (fixing dates)"""
         if not (delta.dim() == 0 or (delta.dim() == 1 and max(delta.size()) == 1)):
             raise NotImplementedError(f'delta must be a scalar when calculating the swaps. Got {delta.shape}')
         if delta.dim() == 0:
             delta = delta.unsqueeze(0)
 
-        #X = _format_dim_X(X)
         t = _format_dim_t(t)
 
         zcb = self.calc_zcb(X=X, t=torch.tensor(0.0), T=t)
@@ -534,7 +526,7 @@ class trolleSchwartz(Model):
 
         swaps = swap(torch.concat([zcb, zcb_tdt], dim=0), delta, K, N)
 
-        return  swaps.nan_to_num(float(swaps.nanmean())) #swap(torch.concat([zcb, zcb_tdt], dim=0), delta, K, N)
+        return swaps.nan_to_num(float(swaps.nanmean()))
 
     def calc_swap_rate(self, X, t, delta):
         """t = T_0, ..., T_n (future dates)"""
@@ -563,60 +555,30 @@ class trolleSchwartz(Model):
             return Bx
 
         def _compute_dN(t,N):
-            """ dynamics of N """
-            ode_system = [
+            dN = [
                 N[i] * (-self.kappa[i] + self.sigma[i] * self.rho[i] * (u * Bx(T1-T0+t)[i] + (1-u) * Bx(t)[i])) + \
                 0.5 * N[i]**2 * self.sigma[i]**2 + 0.5 * (u**2-u) * Bx(T1-T0+t)[i]**2 + 0.5 * ((1-u)**2 - (1-u))* Bx(t)[i]**2 +\
                 u*(1-u) * Bx(T1-T0+t)[i] * Bx(t)[i]
-            for i in range(self.simDim)]
-            #dNdt =  N * (-self.kappa + self.sigma * self.rho * (u * Bx(T1-T0+t) + (1-u) * Bx(t))) + \
-            #    0.5 * N**2 * self.sigma**2 + 0.5 * (u**2-u) * Bx(T1-T0+t)**2 + 0.5 * ((1-u)**2 - (1-u))* Bx(t)**2 +\
-            #    u*(1-u) * Bx(T1-T0+t) * Bx(t)
-            #return dNdt
-            return np.array(ode_system)
+                for i in range(self.simDim)
+            ]
+            return torch.hstack(dN)
 
-        def _compute_dM(N):
-            """ dynamics of M """
-            return  torch.sum(N * self.kappa * self.theta)
-
-        """ This solver is unstable. For some reason.
-        def _RK4(N0, M0):
-           
-            N, M = N0, M0
-            dTau = torch.linspace(T0, t, discSteps)
-            # step size
-            h = dTau[1] - dTau[0]
-            # start time
-            _t = t
-            for i in range(discSteps):
-                k1N = _compute_dN(N, _t)
-                k2N = _compute_dN(N + 0.5 * h * k1N, _t + 0.5 * h)
-                k3N = _compute_dN(N + 0.5 * h * k2N, _t + 0.5 * h)
-                k4N = _compute_dN(N + h * k3N, _t + h)
-
-                N = (h / 6) * (k1N + k2N + k3N + k4N)
-                _t += h
-
-            M = _compute_dM(N)
-            return N, M
-        """
-        # currently relying on SciPy's Runge-Kutta implementation 'RK45'
-        y0 = torch.tensor(N0).flatten().numpy()
-        sol = solve_ivp(_compute_dN, t_span=[t, T0], y0=y0,
-                        t_eval=np.linspace(float(t), float(T0), 101), # TODO consider changing this
-                        method='RK45')
+        # Solve system of ODEs with Runge-Kutta (RK45)
+        numSteps = int(self.numSettings['rungeKuttaNumStepsPerYear'] * float(T0) + 1)
+        dTau = torch.linspace(float(t), float(T0), numSteps)
+        sol = solve_ivp(_compute_dN, t_span=[t, T0], y0=N0.flatten(), t_eval=dTau, method='RK45')
         Nmat = torch.tensor(sol.y)
-        N = Nmat[:, -1].reshape(self.simDim, 1)
-        M = torch.sum(N * self.kappa * self.theta)
-        #M = torch.trapz((torch.tensor(sol.y[0])*self.kappa*self.theta).flatten(), torch.tensor(sol.t), dim=0)
 
-        t_idx = list(self.timeline).index(t)
-        zcb0 = self.calc_zcb([i[:, t_idx, :].mean(dim=1) for i in self.x], t, T0)
-        zcb1 = self.calc_zcb([i[:, t_idx, :].mean(dim=1) for i in self.x], t, T1)
+        # Solutions to ODEs
+        M = torch.trapz(torch.sum(Nmat * self.kappa * self.theta, dim=0), dTau, dim=0)
+        N = Nmat[:, -1].reshape(self.simDim, 1)
+
+        zcb0 = self.calc_zcb(self.x0, t, T0)
+        zcb1 = self.calc_zcb(self.x0, t, T1)
 
         term1 = M
         term2 = torch.sum(N * self._v0, dim=0)
-        term3 = u * torch.log(zcb1) + (1-u)*torch.log(zcb0)
+        term3 = u * torch.log(zcb1) + (1.0 - u) * torch.log(zcb0)
 
         return torch.exp(term1 + term2 + term3)
 
@@ -628,28 +590,29 @@ class trolleSchwartz(Model):
         a = torch.tensor(a)
         b = torch.tensor(b)
 
-        def integral(MyInf=8000.0): # this level is recommended from the paper
+        def integral():
             def integrand(u):
                 c = torch.complex(real=a, imag=u * b)
-                term1 = self.calc_characteristic_func(c,t,T0,T1)
+                term1 = self.calc_characteristic_func(c, t, T0, T1)
                 term2 = torch.exp(-torch.complex(real=torch.tensor(0.0), imag=u*y))
-                integrand = torch.imag( term1 * term2 ) / u
+                integrand = torch.imag(term1 * term2) / u
 
                 return integrand
 
-            du = torch.linspace(1e-6, MyInf, steps=100) # this disc. rate is recommended from paper
+            # Integration steps
+            du = torch.linspace(
+                start=self.numSettings['fourierLower'],
+                end=self.numSettings['fourierUpper'],
+                steps=self.numSettings['fourierNumSteps']
+            )
 
-            lst = torch.stack([integrand(u).reshape(-1) for u in du])
-            integral = torch.trapz(lst, du, dim=0)
+            # Function values
+            fu = torch.stack([integrand(u).reshape(-1) for u in du])
+            return torch.trapz(fu, du, dim=0)
 
-            return integral
+        return self.calc_characteristic_func(a, t, T0, T1) / 2 - 1.0 / torch.pi * integral()
 
-        term1 = 0.5 * self.calc_characteristic_func(a, t, T0, T1)
-        term2 = 1.0 / torch.pi * integral()
-
-        return term1 - term2
-
-    def calc_cpl(self, t, T0, delta, K, N = torch.tensor(1.0)):
+    def calc_cpl(self, t, T0, delta, K, N=torch.tensor(1.0)):
         """
             Calculate the time-t price of a caplet with maturity T0 and tenor delta,
             as European put option on ZCB, eq. (33):
@@ -661,7 +624,6 @@ class trolleSchwartz(Model):
                 Cpl(t,T0,delta, K) = 1/X * Put(t, T0, T1, X)
         """
 
-        t = torch.tensor(t)
         K_bar = 1.0 / (1.0 + delta * K)
         T1 = T0 + delta
         term1 = K_bar * self.Gfunc(0.0, 1.0, t, T0, T1, torch.log(K_bar))
