@@ -20,7 +20,7 @@ if __name__ == '__main__':
     seed = 1234
     N_train = 1024
     N_test = 256
-    use_av = True
+    use_av = False
 
     # Setup Differential Regressor, and Scalar
     deg = 9
@@ -91,13 +91,14 @@ if __name__ == '__main__':
             zcb = model.calc_zcb(state, t0, exerciseDate + delta)[0]
             return zcb
 
-        zcbs = _zcb(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+        zcbs = _zcb(x, v, phi1, phi2, phi3, phi4, phi5, phi6) # size N
 
         jac = jacrev(_zcb, argnums=(0, 1, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
         jac_sum = torch.stack([x.sum_to_size((model.simDim, x0_vec.shape[2])) for x in jac])
         tmp = jac_sum.permute(1, 2, 0).squeeze()
-        dzcbs = tmp.unsqueeze(dim=2)
-
+        dzcbs = tmp.unsqueeze(dim=2)  # size N x 8 x simDim
+        if model.simDim > 1:
+            dzcbs = dzcbs.permute(1, 3, 0, 2).squeeze()
         return zcbs, dzcbs
 
 
@@ -126,12 +127,15 @@ if __name__ == '__main__':
             payoffs = mcSim(cPrd, cMdl, rng, len(f0T), cTL)
             return payoffs
 
-        cpls = _payoffs(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+        cpls = _payoffs(x, v, phi1, phi2, phi3, phi4, phi5, phi6) # size N
 
         jac = jacrev(_payoffs, argnums=(0, 1, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
-        jac_sum = torch.stack([x.sum_to_size((1, x0_vec.shape[2])) for x in jac])
+        jac_sum = torch.stack([x.sum_to_size((model.simDim, x0_vec.shape[2])) for x in jac])
         tmp = jac_sum.permute(1, 2, 0).squeeze()
-        dcpls = tmp.unsqueeze(dim=2)
+        dcpls = tmp.unsqueeze(dim=2) # size N x 8 x simDim
+
+        if model.simDim > 1:
+            dcpls = dcpls.permute(1, 3, 0, 2).squeeze()
 
         return cpls, dcpls
 
@@ -159,7 +163,7 @@ if __name__ == '__main__':
                                               use_av=use_av)
 
     plt.figure()
-    plt.plot(X_train, z_train, 'o')
+    plt.plot(X_train, z_train[:len(X_train)], 'o')
     plt.show()
 
 
