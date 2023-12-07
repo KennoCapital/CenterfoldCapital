@@ -15,12 +15,12 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 4096 * 2
+    N_train = 1024*4
     N_test = 256
     use_av = True
 
     # Hedge experiment settings
-    hedge_times = 100
+    hedge_times = 10
 
     r0_min = -0.02
     r0_max = 0.15
@@ -29,9 +29,9 @@ if __name__ == '__main__':
 
     # Differential Neural Network Settings
     seed_weights = 1234
-    epochs = 100
+    epochs = 250
     batches_per_epoch = 16
-    min_batch_size = 256 * 4
+    min_batch_size = 256 * 10
     lam = 1.0
     hidden_units = 20
     hidden_layers = 4
@@ -43,7 +43,7 @@ if __name__ == '__main__':
     a = torch.tensor(0.86)
     sigma = torch.tensor(0.0148)
     r0 = torch.linspace(r0_min, r0_max, N_test)
-    b = r0.median()
+    b = torch.tensor(0.09)
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -63,7 +63,7 @@ if __name__ == '__main__':
         int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
     )
 
-    strike = mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
+    strike = torch.tensor(0.0871) #mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
 
     prd = EuropeanPayerSwaption(
         strike=strike,
@@ -126,7 +126,8 @@ if __name__ == '__main__':
 
     # Get price of claim (we use 500k simulations to get an accurate estimate)
     swpt = torch.empty_like(r[0, :])
-    for n in range(N_test):
+    print("Generating MC prices")
+    for n in tqdm(range(N_test)):
         mdl.r0 = r[0, n]
         swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
 
@@ -175,7 +176,7 @@ if __name__ == '__main__':
 
     # Title
     fig.suptitle(
-        prd.name + f'\nHedgeFreq={dTL[1]:.4g}, epochs = {100}, nw={hidden_layers}x{hidden_units}, {N_train} training samples ' + av_str)
+        prd.name + f'\nHedgeFreq={dTL[1]:.4g}, epochs = {epochs}, nw={hidden_layers}x{hidden_units}, {N_train} training samples ' + av_str)
     # Legend
     handles, labels = fig.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))

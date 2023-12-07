@@ -3,8 +3,7 @@ import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek
 from application.engine.products import CapletAsPutOnZCB
-from application.engine.standard_scalar import DifferentialStandardScaler
-from application.engine.differential_Regression import DifferentialPolynomialRegressor
+from application.engine.differential_NN import Neural_Approximator
 from application.engine.mcBase import mcSim, RNG
 from application.utils.path_config import get_plot_path
 
@@ -13,20 +12,25 @@ torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
     seed = 1234
-    N_train = 1024
+    N_train = 1024 * 4
     N_test = 256
     use_av = True
+    save_plot = False
 
-    r0_min = 0.02
-    r0_max = 0.13
+    r0_min = -0.02
+    r0_max = 0.15
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
-    # Setup Differential Regressor, and Scalar
-    deg = 7
-    alpha = 1.0
-    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
-    scalar = DifferentialStandardScaler()
+    # Differential Neural Network Settings
+    seed_weights = 1234
+    epochs = 250
+    batches_per_epoch = 16
+    min_batch_size = 256 * 10
+    lam = 1.0
+    hidden_units = 20
+    hidden_layers = 4
+
 
     # Model specification
     a = torch.tensor(0.86)
@@ -35,16 +39,17 @@ if __name__ == '__main__':
     r0 = torch.tensor(0.08)
     measure = 'risk_neutral'
 
-    mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
+    mdl = Vasicek(a, b, sigma, r0_vec, use_ATS=True, use_euler=False, measure=measure)
 
     rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
-    exerciseDate = torch.tensor(0.05)
+    exerciseDate = torch.tensor(1.0)
     delta = torch.tensor(0.25)
     notional = torch.tensor(1e6)
 
-    strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
+    strike = torch.tensor(0.0871) #mdl.calc_swap_rate(r0, exerciseDate, delta)
+
 
     prd = CapletAsPutOnZCB(
         strike=strike,
@@ -54,7 +59,6 @@ if __name__ == '__main__':
     )
 
     """ Helper functions for calculating pathwise payoffs and deltas, and generating training data """
-
     def calc_dzcb_dr(r0_vec, t0):
         """
         :param  r0_vec:    Current Short rate r0
@@ -64,12 +68,12 @@ if __name__ == '__main__':
             tuple with: (Forward Prices, Forward Prices differentiated wrt. r0 evaluated at x)
         """
 
-        def _zcb(r0_vec):
-            zcb = mdl.calc_zcb(r0_vec, exerciseDate - t0 + delta)[0]
-            return zcb
+        def _cpl(r0_vec):
+            fwd = mdl.calc_zcb(r0_vec, exerciseDate - t0 + delta)[0]
+            return fwd
 
         ones = torch.ones_like(r0_vec)
-        res = jvp(_zcb, r0_vec, ones, create_graph=False)
+        res = jvp(_cpl, r0_vec, ones, create_graph=False)
         return res
 
 
@@ -83,7 +87,7 @@ if __name__ == '__main__':
         """
 
         def _payoffs(r0_vec):
-            cMdl = Vasicek(a, b, sigma, r0_vec, use_ATS=True, use_euler=False, measure='risk_neutral')
+            cMdl = Vasicek(a, b, sigma, r0_vec, use_ATS=True, use_euler=False, measure='terminal')
             cPrd = CapletAsPutOnZCB(
                 strike=strike,
                 exerciseDate=exerciseDate - t0,
@@ -118,46 +122,49 @@ if __name__ == '__main__':
 
         return X_train, y_train, z_train
 
-
     """ Calculate Analytical Caplet price """
     r0_test_vec = torch.linspace(r0_min, r0_max, N_test)
     X_test = mdl.calc_zcb(r0_test_vec, exerciseDate + delta)[0].reshape(-1, 1)
     y_mdl = mdl.calc_cpl(r0_test_vec, exerciseDate, delta, strike, notional)[0].reshape(-1, 1)
     z_mdl = y_mdl.diff(dim=0) / X_test.diff(dim=0)
-
+    #z_mdl /= notional
 
     """ Estimate Price and Delta using Differential Regression """
 
     X_train, y_train, z_train = training_data(r0_vec=r0_vec, t0=0.0, use_av=use_av)
+    #z_train /= notional
 
-    X_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(X_train, y_train, z_train)
+    # Setup Differential Neutral Network
+    diff_nn = Neural_Approximator(X_train, y_train, z_train)
+    diff_nn.prepare(N_train, True, weight_seed=seed_weights, lam=lam, hidden_units=hidden_units,
+                    hidden_layers=hidden_layers)
+    diff_nn.train(epochs=epochs, batches_per_epoch=batches_per_epoch, min_batch_size=min_batch_size)
+    y_pred, z_pred = diff_nn.predict_values_and_derivs(X_test)
+    #z_pred /= notional
 
-    diff_reg.fit(X_train_scaled, y_train_scaled, z_train_scaled)
+    z_mdl /= notional
+    z_train /= notional
+    z_pred /= notional
 
-    X_test_scaled, _, _ = scalar.transform(X_test, None, None)
-    y_pred_scaled, z_pred_scaled = diff_reg.predict(X_test_scaled, predict_derivs=True)
-
-    _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
 
     RMSE_price = torch.sqrt(torch.mean((y_pred - y_mdl) ** 2))
     MAE_delta = torch.mean(torch.abs(z_pred[1:] - z_mdl))
 
     """ Plot results """
 
-
     fig, ax = plt.subplots(2, sharex='col')
     # Plot price function
     ax[0].plot(X_train.flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25, label='Pathwise samples')
-    ax[0].plot(X_test.flatten(), y_pred, label='DiffReg', color='orange')
+    ax[0].plot(X_test.flatten(), y_pred, label='DiffNN', color='orange')
     ax[0].plot(X_test, y_mdl, color='black', label='Analytical (Bump and reval)')
     ax[0].set_ylabel('Price')
     ax[0].text(0.05, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0].transAxes)
 
     # Plot delta function
     ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
-    ax[1].plot(X_test, z_pred, label='DiffReg', color='orange')
+    ax[1].plot(X_test, z_pred, label='DiffNN', color='orange')
     ax[1].plot(X_test[1:], z_mdl, color='black', label='Analytical (Bump and reval)')
-    ax[1].set_xlabel('P(0, T + delta)')
+    ax[1].set_xlabel('Fwd(0)')
     ax[1].set_ylabel('Delta')
     ax[1].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1].transAxes)
 
@@ -176,7 +183,9 @@ if __name__ == '__main__':
 
     # Title
     av_str = 'with AV' if use_av else 'without AV'
-    fig.suptitle(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
+    fig.suptitle(
+        prd.name + f'\nEpochs = {epochs}, nw={hidden_layers}x{hidden_units}, {N_train} training samples ' + av_str)
 
-    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_plot_delta_caplet_as_put_on_zcb.png'), dpi=400)
+    if save_plot:
+        plt.savefig(get_plot_path('vasicek_AAD_DiffNN_Caplet.png'), dpi=400)
     plt.show()
