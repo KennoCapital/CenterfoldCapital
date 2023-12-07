@@ -79,7 +79,7 @@ if __name__ == '__main__':
         fixRates=[torch.tensor([0.075, 0.075])],
         deltas=[torch.tensor([0.25, 0.25])],
         swapFirstFixingDates=[torch.tensor([1.0, 1.0])],
-        swapLastFixingDates=[torch.tensor([6.0, 6.0])],
+        swapLastFixingDates=[torch.tensor([6.0, 6.0 ])],
         notionals=[torch.tensor([1e6, 1e6])],
         weights=[torch.tensor([1.0, 1.0])],
         flag_payer_receiver=[torch.tensor([-1.0, 1.0])]
@@ -90,7 +90,7 @@ if __name__ == '__main__':
         fixRates=[torch.tensor([0.06, 0.09])],
         deltas=[torch.tensor([0.25, 0.25])],
         swapFirstFixingDates=[torch.tensor([1.0, 1.0])],
-        swapLastFixingDates=[torch.tensor([6.0, 6.0])],
+        swapLastFixingDates=[torch.tensor([6.0, 6.0 ])],
         notionals=[torch.tensor([1e6, 1e6])],
         weights=[torch.tensor([1.0, 1.0])],
         flag_payer_receiver=[torch.tensor([-1.0, 1.0])]
@@ -112,7 +112,7 @@ if __name__ == '__main__':
         fixRates=[torch.tensor([0.06, 0.09, 0.06, 0.09])],
         deltas=[torch.tensor([0.25, 0.25, 0.25, 0.25])],
         swapFirstFixingDates=[torch.tensor([1.0, 1.0, 1.0, 1.0])],
-        swapLastFixingDates=[torch.tensor([6.0, 6.0, 6.0, 6.0])],
+        swapLastFixingDates=[torch.tensor([6.0, 6.0 , 6.0, 6.0 ])],
         notionals=[torch.tensor([1e6, 1e6, 1e6, 1e6])],
         weights=[torch.tensor([1.0, -1.0, -1.0, 1.0])],
         flag_payer_receiver=[torch.tensor([1.0, 1.0, -1.0, -1.0])]
@@ -321,9 +321,9 @@ if __name__ == '__main__':
             ax[0, i].plot(x_test[:, i], y_pred[:, 0], color='orange', label='DiffReg')
             ax[0, i].plot(x_test[:, i], y_test[:, 0], color='black', label='MC (Bump and reval)')
 
-            ax[1, i].plot(x_train[:, i], z_train[:, i], 'o', color='gray', alpha=0.25)
-            ax[1, i].plot(x_test[:, i], z_pred[:, i], color='orange')
-            ax[1, i].plot(x_test[1:, i], z_test[:, i], color='black')
+            ax[1, i].plot(x_train[:, i], z_train[:, i], 'o', color='gray', alpha=0.25, label='Pathwise Samples')
+            ax[1, i].plot(x_test[:, i], z_pred[:, i], color='orange', label='DiffReg')
+            ax[1, i].plot(x_test[1:, i], z_test[:, i], color='black', label='MC (Bump and reval)')
 
             ax[0, i].axvline(x=0.0, color='gray', ls='--', alpha=0.25)
             ax[1, i].axvline(x=0.0, color='gray', ls='--', alpha=0.25)
@@ -332,7 +332,7 @@ if __name__ == '__main__':
             payer_receiver_flag = 'Payer' if prd.flag_payer_receiver[0][i] >= 0.0 else 'Receiver'
             ax[0, i].set_title(f'{long_short_flag} {prd.weights[0][i]:.2f} {payer_receiver_flag}')
 
-            ax[1, i].set_xlabel(f'swap(0, '
+            ax[1, i].set_xlabel(f'{payer_receiver_flag} swap(0, '
                                 f'{float_to_time_str(prd.swapFirstFixingDates[0][i])}, '
                                 f'{float_to_time_str(prd.swapLastFixingDates[0][i])}, '
                                 f'{float_to_time_str(prd.deltas[0][i])}) @ {prd.fixRates[0][i] * 100:.2f}%')
@@ -342,15 +342,23 @@ if __name__ == '__main__':
             ax[0, i].yaxis.set_major_formatter(matplotlib.ticker.EngFormatter())
             ax[1, i].xaxis.set_major_locator(matplotlib.ticker.MultipleLocator(1e5))
 
-            ax[0, i].text(0.05, 0.8, f'RMSE = {RMSE_value[0]:.2f}', fontsize=8, transform=ax[0, i].transAxes)
-            ax[1, i].text(0.05, 0.8, f'MAE = {MAE_delta[i]:.4f}', fontsize=8, transform=ax[1, i].transAxes)
+            ax[0, i].text(0.05, 0.8, f'RMSE = {RMSE_value[0]:.2f}', fontsize=10, transform=ax[0, i].transAxes)
+            ax[1, i].text(0.05, 0.8, f'MAE = {MAE_delta[i]:.4f}', fontsize=10, transform=ax[1, i].transAxes)
+
+            box = ax[0, i].get_position()
+            ax[0, i].set_position([box.x0, box.y0, box.width, box.height * 0.85])
+
+        handles, labels = fig.gca().get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=3, fancybox=True, shadow=True,
+                   bbox_to_anchor=(0.5, 0.95))
 
         ax[0, 0].set_ylabel('Swaption Price')
         ax[1, 0].set_ylabel('Delta')
 
         fig.suptitle(f'{name}')
         fig_name = f'vasicek_option_strategies/vasicek_{name.lower().replace(" ", "_")}_swap.png'
-        # fig(get_plot_path(fig_name))
+        # plt.savefig(get_plot_path(fig_name))
         plt.show()
 
         """ Value and sensitivity of portfolio wrt. swap rate """
@@ -366,9 +374,9 @@ if __name__ == '__main__':
         ax[0].plot(xr_test[:, 0].reshape(-1, 1), y_pred, color='orange', label='DiffReg')
         ax[0].plot(xr_test[:, 0].reshape(-1, 1), y_test, color='black', label='MC (Bump and reval)')
 
-        ax[1].plot(x_train[:, 0].reshape(-1, 1), z_train[:, 0].reshape(-1, 1) / 10000, 'o', color='gray', alpha=0.25)
-        ax[1].plot(xr_test[:, 0].reshape(-1, 1), z_pred[:, 0].reshape(-1, 1) / 10000, color='orange')
-        ax[1].plot(xr_test[:, 0].reshape(-1, 1)[1:], zr_test[:, 0].reshape(-1, 1) / 10000, color='black')
+        ax[1].plot(x_train[:, 0].reshape(-1, 1), z_train[:, 0].reshape(-1, 1) / 10000, 'o', color='gray', alpha=0.25, label='Pathwise Samples')
+        ax[1].plot(xr_test[:, 0].reshape(-1, 1), z_pred[:, 0].reshape(-1, 1) / 10000, color='orange', label='DiffReg')
+        ax[1].plot(xr_test[:, 0].reshape(-1, 1)[1:], zr_test[:, 0].reshape(-1, 1) / 10000, color='black', label='MC (Bump and reval)')
 
         tick_labels = [f'+{float(prd.weights[0][i]):.2f}' if prd.weights[0][i] > 0 else f'{float(prd.weights[0][i]):.2f}'
                        for i in range(prd.numTrades)]
@@ -384,8 +392,16 @@ if __name__ == '__main__':
 
         ax[0].yaxis.set_major_formatter(matplotlib.ticker.EngFormatter())
 
-        ax[0].text(0.05, 0.8, f'RMSE = {RMSE_value[0]:.2f}', fontsize=8, transform=ax[0].transAxes)
-        ax[1].text(0.05, 0.8, f'MAE = {MAE_delta[0] / 10000:.4f}', fontsize=8, transform=ax[1].transAxes)
+        ax[0].text(0.05, 0.8, f'RMSE = {RMSE_value[0]:.2f}', fontsize=10, transform=ax[0].transAxes)
+        ax[1].text(0.05, 0.8, f'MAE = {MAE_delta[0] / 10000:.4f}', fontsize=10, transform=ax[1].transAxes)
+
+        box = ax[0].get_position()
+        ax[0].set_position([box.x0, box.y0, box.width, box.height * 0.85])
+
+        handles, labels = fig.gca().get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=3, fancybox=True, shadow=True,
+                   bbox_to_anchor=(0.5, 0.95))
 
         ax[0].set_ylabel('Value')
         ax[1].set_ylabel('Delta (per bp)')
@@ -420,9 +436,9 @@ if __name__ == '__main__':
             ax[0, i].plot(x_test[:, i], y_pred[:, i], color='orange', label='DiffReg')
             ax[0, i].plot(x_test[:, i], cf_test[:, i], color='black', label='MC (Bump and reval)')
 
-            ax[1, i].plot(x_train[:, i], z_train[:, i], 'o', color='gray', alpha=0.25)
-            ax[1, i].plot(x_test[:, i], z_pred[:, i], color='orange')
-            ax[1, i].plot(x_test[1:, i], zcf_test[:, i], color='black')
+            ax[1, i].plot(x_train[:, i], z_train[:, i], 'o', color='gray', alpha=0.25, label='Pathwise Samples')
+            ax[1, i].plot(x_test[:, i], z_pred[:, i], color='orange', label='DiffReg')
+            ax[1, i].plot(x_test[1:, i], zcf_test[:, i], color='black', label='MC (Bump and reval)')
 
             ax[0, i].axvline(x=0.0, color='gray', ls='--', alpha=0.25)
             ax[1, i].axvline(x=0.0, color='gray', ls='--', alpha=0.25)
@@ -431,7 +447,7 @@ if __name__ == '__main__':
             payer_receiver_flag = 'Payer' if prd.flag_payer_receiver[0][i] >= 0.0 else 'Receiver'
             ax[0, i].set_title(f'{long_short_flag} {prd.weights[0][i]:.2f} {payer_receiver_flag}')
 
-            ax[1, i].set_xlabel(f'swap(0, '
+            ax[1, i].set_xlabel(f'{payer_receiver_flag} swap(0, '
                                 f'{float_to_time_str(prd.swapFirstFixingDates[0][i])}, '
                                 f'{float_to_time_str(prd.swapLastFixingDates[0][i])}, '
                                 f'{float_to_time_str(prd.deltas[0][i])}) @ {prd.fixRates[0][i] * 100:.2f}%')
@@ -441,8 +457,16 @@ if __name__ == '__main__':
             ax[0, i].yaxis.set_major_formatter(matplotlib.ticker.EngFormatter())
             ax[1, i].xaxis.set_major_locator(matplotlib.ticker.MultipleLocator(1e5))
 
-            ax[0, i].text(0.05, 0.8, f'RMSE = {RMSE_value[i]:.2f}', fontsize=8, transform=ax[0, i].transAxes)
-            ax[1, i].text(0.05, 0.8, f'MAE = {MAE_delta[i]:.4f}', fontsize=8, transform=ax[1, i].transAxes)
+            ax[0, i].text(0.05, 0.8, f'RMSE = {RMSE_value[i]:.2f}', fontsize=10, transform=ax[0, i].transAxes)
+            ax[1, i].text(0.05, 0.8, f'MAE = {MAE_delta[i]:.4f}', fontsize=10, transform=ax[1, i].transAxes)
+
+            box = ax[0, i].get_position()
+            ax[0, i].set_position([box.x0, box.y0, box.width, box.height * 0.85])
+
+        handles, labels = fig.gca().get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=3, fancybox=True, shadow=True,
+                   bbox_to_anchor=(0.5, 0.95))
 
         ax[0, 0].set_ylabel('Swaption Price')
         ax[1, 0].set_ylabel('Delta')
@@ -477,9 +501,9 @@ if __name__ == '__main__':
             ax[0, i].plot(xr_test[:, i], y_pred[:, i], color='orange', label='DiffReg')
             ax[0, i].plot(xr_test[:, i], cf_test[:, i], color='black', label='MC (Bump and reval)')
 
-            ax[1, i].plot(x_train[:, i], z_train[:, i] / 10000, 'o', color='gray', alpha=0.25)
-            ax[1, i].plot(xr_test[:, i], z_pred[:, i] / 10000, color='orange')
-            ax[1, i].plot(xr_test[1:, i], zcfr_test[:, i] / 10000, color='black')
+            ax[1, i].plot(x_train[:, i], z_train[:, i] / 10000, 'o', color='gray', alpha=0.25, label='Pathwise Samples')
+            ax[1, i].plot(xr_test[:, i], z_pred[:, i] / 10000, color='orange', label='DiffReg')
+            ax[1, i].plot(xr_test[1:, i], zcfr_test[:, i] / 10000, color='black', label='MC (Bump and reval)')
 
             ax[0, i].axvline(x=prd.fixRates[0][i], color='gray', ls='--', alpha=0.25)
             ax[1, i].axvline(x=prd.fixRates[0][i], color='gray', ls='--', alpha=0.25)
@@ -495,8 +519,16 @@ if __name__ == '__main__':
 
             ax[0, i].yaxis.set_major_formatter(matplotlib.ticker.EngFormatter())
 
-            ax[0, i].text(0.05, 0.8, f'RMSE = {RMSE_value[i]:.2f}', fontsize=8, transform=ax[0, i].transAxes)
-            ax[1, i].text(0.05, 0.8, f'MAE = {MAE_delta[i] / 10000:.4f}', fontsize=8, transform=ax[1, i].transAxes)
+            ax[0, i].text(0.05, 0.8, f'RMSE = {RMSE_value[i]:.2f}', fontsize=10, transform=ax[0, i].transAxes)
+            ax[1, i].text(0.05, 0.8, f'MAE = {MAE_delta[i] / 10000:.4f}', fontsize=10, transform=ax[1, i].transAxes)
+
+            box = ax[0, i].get_position()
+            ax[0, i].set_position([box.x0, box.y0, box.width, box.height * 0.85])
+
+        handles, labels = fig.gca().get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=3, fancybox=True, shadow=True,
+                   bbox_to_anchor=(0.5, 0.95))
 
         ax[0, 0].set_ylabel('Swaption Price')
         ax[1, 0].set_ylabel('Delta (per bp)')

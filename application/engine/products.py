@@ -597,10 +597,10 @@ class BasketEuropeanPayerSwaptions(Product):
 
         self._timeline = torch.concat([torch.tensor([0.0]), self.exerciseDate.view(1)])
 
-        swapFixingDates = [torch.linspace(
+        self.swapFixingDates = [torch.linspace(
             float(exerciseDate),
-            float(swapLastFixingDates[i] + exerciseDate),
-            int((swapLastFixingDates[i]) / deltas[i] + 1)
+            float(swapLastFixingDates[i]),
+            int((swapLastFixingDates[i] - exerciseDate) / deltas[i] + 1)
         ) for i in range(self.n)]
 
         self._defline = [
@@ -612,7 +612,7 @@ class BasketEuropeanPayerSwaptions(Product):
         self._defline += [
             SampleDef(
                 fwdRates=[],
-                irs=[InterestRateSwapDef(fixingDates=swapFixingDates[i], fixRate=self.fixRates[i], notional=notionals[i])
+                irs=[InterestRateSwapDef(fixingDates=self.swapFixingDates[i], fixRate=self.fixRates[i], notional=notionals[i])
                      for i in range(self.n)],
                 discMats=torch.tensor([]),
                 numeraire=True,
