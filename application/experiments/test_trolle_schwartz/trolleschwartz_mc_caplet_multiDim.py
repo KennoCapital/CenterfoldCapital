@@ -2,17 +2,22 @@ from application.engine.products import CapletAsPutOnZCB
 from application.engine.trolleSchwartz import trolleSchwartz
 import torch
 from application.engine.mcBase import mcSim, RNG
+import matplotlib.pyplot as plt
+from tqdm.contrib import itertools
+from application.utils.path_config import get_plot_path
 
 
 torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == "__main__":
-    euler_step_size = 100
+    strike_plot = False
+    save_fig = False
+    euler_step_size = 100*5
 
     # Setup
     seed = 1234
-    N = 50000
+    N = 1024*10
     measure = 'risk_neutral'
 
     # Trolle-Schwartz model specification
@@ -62,4 +67,43 @@ if __name__ == "__main__":
     print('MC Price =', mc_price)
 
 
+    if strike_plot:
+        strikes = torch.linspace(0.025, 0.14, 10)
+        times = torch.tensor([1., 2., 5.])
+        mc_prices = torch.empty(len(strikes) * len(times))
+        i = 0
+
+        for t, s in itertools.product(times, strikes):
+            prd = Caplet(
+                strike=s,
+                start=t,
+                delta=delta,
+                notional=notional
+            )
+            dTL = torch.linspace(0.0, float(t + delta), int(50 * (t + delta) + 1))
+            cashflows = mcSim(prd, model, rng, N, dTL)
+            payoff = torch.sum(cashflows, dim=0)
+            # mc
+            mc_price = torch.nanmean(payoff)
+            mc_prices[i] = mc_price
+
+            i += 1
+
+
+        mcprices1 = mc_prices[:10]
+        mcprices2 = mc_prices[10:20]
+        mcprices3 = mc_prices[20:31]
+
+        plt.figure()
+        plt.plot(strikes, mcprices1, color='orange', label=r'$1Y$ MC', linestyle='--')
+        plt.plot(strikes, mcprices2, color='blue', label=r'$2Y$ MC', linestyle='--')
+        plt.plot(strikes, mcprices3, color='green', label=r'$5Y$ MC', linestyle='--')
+        plt.xlabel('K')
+        plt.ylabel('Price')
+
+        plt.legend(title='Reset date', loc='upper right', fancybox=True)
+        plt.title(f'3M Caplet Monte-Carlo N = {notional}')
+        if save_fig:
+            plt.savefig(get_plot_path('trolle_schwartz/ts_3D_cpl_strikes.png'), dpi=400)
+        plt.show()
 

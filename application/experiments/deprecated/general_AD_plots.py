@@ -1,5 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from application.engine.mcBase import mcSim, RNG
+from application.engine.products import Caplet
+from application.engine.vasicek import Vasicek
+import torch
+from application.utils.torch_utils import max0
+from tqdm.contrib import itertools
+
 
 def digital_call_payoff(S, K, P):
     return np.where(S > K, P, 0)
@@ -95,13 +102,153 @@ digital_approximation_curve = digital_approximation(S, a, b)
 # Plotting
 plt.figure(figsize=(10, 6))
 plt.plot(S, digital_call_payoff_curve, label='Digital Call Option Payoff', color='black')
-plt.plot(S, digital_approximation_curve, color='darkorange', linestyle='--', label=r'Sigmoid $a_0$')
-plt.plot(S,  digital_approximation(S, 750, b), color='orange', linestyle='--', label=r'Sigmoid $a_1$')
-plt.plot(S,  digital_approximation(S, 2000, b), color='bisque', linestyle='--', label=r'Sigmoid $a_2$')
+plt.plot(S, digital_approximation_curve, color='C1', linestyle='--', label=r'Sigmoid $a_0$')
+plt.plot(S,  digital_approximation(S, 750, b), color='darkorange', linestyle='--', label=r'Sigmoid $a_1$')
+plt.plot(S,  digital_approximation(S, 2000, b), color='orange', linestyle='--', label=r'Sigmoid $a_2$')
 plt.xlabel(r'$X(T_0)$')
 plt.ylabel('Payoff')
 plt.legend()
 plt.show()
 
 
+## FIGURE 4 -------------------
+# Barrier path breach
 
+seed = 1234
+N = 100
+measure = 'risk_neutral'
+
+# vasicek params
+a = torch.tensor(0.86)
+b = torch.tensor(0.09)
+sigma = torch.tensor(0.0148)
+r0 = torch.tensor(0.08)
+notional = torch.tensor(1e6)
+
+start = torch.tensor(1.0)
+delta = torch.tensor(.25)
+dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
+
+model = Vasicek(a, b, sigma, r0, True, False, measure)
+swap_rate = torch.tensor(0.084)
+
+rng = RNG(seed=seed, use_av=True)
+
+prd = Caplet(
+    strike=swap_rate,
+    start=start,
+    delta=delta,
+    notional=notional
+)
+
+payoff = mcSim(prd, model, rng, N, dTL)
+
+print(
+    'MC price =', torch.mean(payoff)
+)
+
+
+fwds = torch.zeros( size=(len(model.timeline), N) )
+for i, t in enumerate(model.timeline):
+    fwds[i,:] = model.calc_fwd(model.x[i,:], start, delta)[0]
+
+
+path = fwds[:,0:3]
+eps = 0.001
+barrier = path.max() - eps/4 #0.096 - eps/2
+
+idx_barrier_hit = (path >= barrier).nonzero()
+index_barrier_hit = idx_barrier_hit[0].item() + 1
+new_path = path[:index_barrier_hit]
+
+idx_lb_hit = (path >= barrier-eps/2).nonzero()
+idx_lb_hit = idx_lb_hit[0].item()
+lower_path = path[:idx_lb_hit]
+
+
+fx1 = 0.01
+fx2 = 0.
+x1 = barrier-eps
+x2 = barrier+eps
+a = (fx1-fx2) / (x1-x2)
+
+def line_function(x):
+    return a * (x - x1) + fx1
+x_subset = torch.linspace(barrier - eps, barrier + eps, 100)
+# terminal
+payoff = lambda x: max0( (barrier-x) / (barrier-x).abs() ) * max0(x-swap_rate)
+x = torch.linspace(swap_rate-0.005, path.max()+0.005, 1000)
+
+#plt.plot(model.timeline[:index_barrier_hit],new_path, linestyle='--' , color='black')
+#plt.text(max(model.timeline[:index_barrier_hit]) +0.1 , barrier - eps / 2, r'$B-\frac{\varepsilon}{2}$', color='orange', ha='right', va='center')
+#plt.text(max(model.timeline[:index_barrier_hit])+ 0.1, barrier + eps / 2, r'$B+\frac{\varepsilon}{2}$', color='orange', ha='right', va='center')
+
+
+# path-dependent
+plt.figure()
+plt.plot(model.timeline,path, linestyle='--' )
+plt.axhline(y=barrier, linestyle='-', color='black')
+plt.axhline(y=barrier-eps/2, linestyle='-', color='orange')
+plt.axhline(y=barrier+eps/2, linestyle='-', color='orange')
+plt.axhline(y=path.max(), linestyle='--', color='C2')
+plt.axhline(y=path[:,0].max(), linestyle='--', color='C0')
+plt.axhline(y=path[:,1].max(), linestyle='--', color='C1')
+plt.text(max(model.timeline) + 0.2 , barrier - eps / 2, r'$B-\frac{\varepsilon}{2}$', color='orange', ha='right', va='center')
+plt.text(max(model.timeline)+ 0.2, barrier + eps / 2, r'$B+\frac{\varepsilon}{2}$', color='orange', ha='right', va='center')
+plt.text(min(model.timeline)- 0.07, path.max(), r'$a=0$', color='C2', ha='right', va='center')
+plt.text(min(model.timeline)- 0.07, path[:,0].max(), r'$a=0.25$', color='C0', ha='right', va='center')
+plt.text(min(model.timeline)- 0.07, path[:,1].max(), r'$a=1$', color='C1', ha='right', va='center')
+plt.xlabel('t')
+plt.ylabel(r'$F(t,T, T+\delta)$')
+plt.title('Up-and-Out Caplet with Discretely Monitored Barrier')
+plt.show()
+
+
+plt.figure()
+plt.plot(x, payoff(x), color='black')
+plt.axvline(x= barrier-eps, color='orange')
+plt.axvline(x= barrier+eps, color='orange')
+plt.plot(x_subset, line_function(x_subset), color='orange', linestyle='--')
+plt.text(barrier - eps*1.2, min(payoff(x)) - 0.01/5.5, r'$B-\frac{\varepsilon}{2}$', color='orange', ha='center')
+plt.text(barrier + eps*1.2, min(payoff(x)) - 0.01/5.5, r'$B+\frac{\varepsilon}{2}$', color='orange', ha='center')
+plt.ylabel('Payoff')
+plt.xlabel(r'$F(T,T+\delta)$')
+plt.title('Up-and-Out Caplet with European Barrier')
+plt.show()
+
+
+
+
+# First subplot (path-dependent)
+plt.figure(figsize=(12, 5))
+
+plt.subplot(1, 2, 1)
+plt.plot(model.timeline, path, linestyle='--', color='black')
+plt.axhline(y=barrier, linestyle='-', color='black')
+plt.axhline(y=barrier - eps / 2, linestyle='-', color='orange')
+plt.axhline(y=barrier + eps / 2, linestyle='-', color='orange')
+plt.axhline(y=path.max(), linestyle='--', color='gray')
+plt.text(max(model.timeline) + 0.2 , barrier - eps / 2, r'$B-\frac{\varepsilon}{2}$', color='orange', ha='right', va='center')
+plt.text(max(model.timeline)+ 0.2, barrier + eps / 2, r'$B+\frac{\varepsilon}{2}$', color='orange', ha='right', va='center')
+plt.text(min(model.timeline)- 0.07, path.max(), r'$a=0.25$', color='gray', ha='right', va='center')
+plt.xlabel('t')
+plt.ylabel(r'$F(t,T, T+\delta)$')
+plt.title('Up-and-Out Caplet with Discretely Monitored Barrier')
+
+# Second subplot (European Barrier)
+plt.subplot(1, 2, 2)
+plt.plot(x, payoff(x), color='black')
+plt.axvline(x=barrier - eps, color='orange')
+plt.axvline(x=barrier + eps, color='orange')
+plt.plot(x_subset, line_function(x_subset), color='orange', linestyle='--')
+plt.text(barrier - eps * 1.2, min(payoff(x)) - 0.01 / 5.5, r'$B-\frac{\varepsilon}{2}$', color='orange', ha='center')
+plt.text(barrier + eps * 1.2, min(payoff(x)) - 0.01 / 5.5, r'$B+\frac{\varepsilon}{2}$', color='orange', ha='center')
+plt.ylabel('Payoff')
+plt.xlabel(r'$F(T,T+\delta)$')
+plt.title('Up-and-Out Caplet with Terminal Barrier')
+
+# Adjust layout to prevent clipping of titles
+plt.tight_layout(w_pad=1.)
+
+# Show the plot
+plt.show()

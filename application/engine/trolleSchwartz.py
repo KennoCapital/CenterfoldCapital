@@ -240,7 +240,7 @@ class trolleSchwartz(Model):
         Euler's discretisation of the state variables:
         x, v, phi1, phi2, phi3, phi4, phi5, phi6
         """
-
+        v = torch.abs(v)
         dx = -self.gamma * x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
 
         dv = self.kappa * (self.theta.reshape(self.simDim, 1) - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)

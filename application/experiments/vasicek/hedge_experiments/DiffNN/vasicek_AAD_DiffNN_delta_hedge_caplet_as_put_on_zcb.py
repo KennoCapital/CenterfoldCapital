@@ -15,22 +15,22 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 1024
+    N_train = 1024 * 4
     N_test = 256
     use_av = True
     save_plot = False
 
     # Hedge experiment settings
-    hedge_points = 25
-    r0_min = 0.06
-    r0_max = 0.13
+    hedge_points = 10
+    r0_min = -0.02
+    r0_max = 0.15
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Differential Neural Network Settings
     seed_weights = 1234
-    epochs = 100
-    batches_per_epoch = 32
-    min_batch_size = 256
+    epochs = 250
+    batches_per_epoch = 16
+    min_batch_size = 256 * 10
     lam = 1.0
     hidden_units = 20
     hidden_layers = 4
@@ -42,7 +42,7 @@ if __name__ == '__main__':
     a = torch.tensor(0.86)
     b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
-    r0 = torch.tensor(0.08)
+    r0 = torch.linspace(r0_min, r0_max, N_test) #torch.tensor(0.08)
     measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
@@ -54,7 +54,7 @@ if __name__ == '__main__':
     delta = torch.tensor(.25)
     notional = torch.tensor(1e6)
 
-    strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
+    strike = torch.tensor(0.0871) #mdl.calc_swap_rate(r0, exerciseDate, delta)
 
     prd = CapletAsPutOnZCB(
         strike=strike,
@@ -122,9 +122,9 @@ if __name__ == '__main__':
 
     # Initialize experiment
     B = torch.ones((N_test, ))
-    zcb = mdl.calc_zcb(r[0, :], exerciseDate + delta)[0]
+    zcb = mdl.calc_zcb(r0, exerciseDate + delta)[0]
 
-    V = cpl * torch.ones_like(r[0, :])
+    V = cpl
     h_a = calc_delta_diff_nn(u_vec=zcb, r0_vec=r0_vec, t0=0.0,
                              calc_dPrd_dr=calc_dcpl_dr, calc_dU_dr=calc_dzcb_dr,
                              nn_Params=nn_params, use_av=use_av)
@@ -188,7 +188,7 @@ if __name__ == '__main__':
 
     # Title
     fig.suptitle(
-        prd.name + f'\nHedgeFreq={dTL[1]:.4g}, epochs = {100}, nw={hidden_layers}x{hidden_units}, {N_train} training samples ' + av_str)
+        prd.name + f'\nHedgeFreq={dTL[1]:.4g}, epochs = {epochs}, nw={hidden_layers}x{hidden_units}, {N_train} training samples ' + av_str)
 
     # Legend
     handles, labels = fig.gca().get_legend_handles_labels()
