@@ -40,7 +40,7 @@ if __name__ == '__main__':
     rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
-    exerciseDate = torch.tensor(1.0)
+    exerciseDate = torch.tensor(0.05)
     delta = torch.tensor(0.25)
     notional = torch.tensor(1e6)
 
@@ -178,5 +178,5 @@ if __name__ == '__main__':
     av_str = 'with AV' if use_av else 'without AV'
     fig.suptitle(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
 
-    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_plot_delta_caplet_as_put_on_zcb.png'), dpi=400)
+    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_plot_delta_caplet_as_put_on_zcb.png'), dpi=400)
     plt.show()

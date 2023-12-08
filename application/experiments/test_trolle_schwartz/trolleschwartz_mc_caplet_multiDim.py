@@ -1,4 +1,4 @@
-from application.engine.products import Caplet
+from application.engine.products import CapletAsPutOnZCB
 from application.engine.trolleSchwartz import trolleSchwartz
 import torch
 from application.engine.mcBase import mcSim, RNG
@@ -11,9 +11,9 @@ torch.set_printoptions(8)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == "__main__":
-    strike_plot = True
-    save_fig = True
-    euler_step_size = 100
+    strike_plot = False
+    save_fig = False
+    euler_step_size = 100*5
 
     # Setup
     seed = 1234
@@ -22,6 +22,7 @@ if __name__ == "__main__":
 
     # Trolle-Schwartz model specification
     # ref to paper for values
+    v0 = torch.tensor([9.34233402, 1.19091676, 1.90420149])
     kappa = torch.tensor([0.2169, 0.5214, 0.8340])
     sigma = torch.tensor([0.6586, 1.0212, 1.2915])
     alpha0 = torch.tensor([0.0000, 0.0014, -0.0085])
@@ -38,35 +39,32 @@ if __name__ == "__main__":
     varphi = torch.tensor(0.0668)
 
     # Product specification
-    start = torch.tensor(5.)
+    exerciseDate = torch.tensor(2.0)
     delta = torch.tensor(.25)
     strike = torch.tensor(0.07)
     notional = torch.tensor(1e6)
+    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=3)
 
-    dTL = torch.linspace(0.0, start + delta, int(euler_step_size * (start + delta) + 1))
+    # Analytical solution
+    cpl = model.calc_cpl(torch.tensor(0.), exerciseDate, delta, strike, notional)
+    print('Semi-analytic Price =', cpl)
 
-    # instantiate model
-    model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=3)
+    # Monte Carlo simulation
+    dTL = torch.linspace(0.0, exerciseDate + delta, int(euler_step_size * (exerciseDate + delta) + 1))
 
     rng = RNG(seed=seed, use_av=True)
 
-    prd = Caplet(
+    prd = CapletAsPutOnZCB(
         strike=strike,
-        start=start,
+        exerciseDate=exerciseDate,
         delta=delta,
         notional=notional
     )
 
-    cashflows = mcSim(prd, model, rng, N, dTL)
-    payoff = torch.sum(cashflows, dim=0)
+    payoff = mcSim(prd, model, rng, N, dTL)
 
-    # mc
-    mc_price = torch.nanmean(payoff)
+    mc_price = torch.mean(payoff)
     print('MC Price =', mc_price)
-
-    # analytic
-    #cpl = model.calc_cpl(torch.tensor(0.), prd.start, prd.delta, prd.strike, notional)
-    #print('Semi-analytic Price =', cpl)
 
 
     if strike_plot:
@@ -108,3 +106,4 @@ if __name__ == "__main__":
         if save_fig:
             plt.savefig(get_plot_path('trolle_schwartz/ts_3D_cpl_strikes.png'), dpi=400)
         plt.show()
+

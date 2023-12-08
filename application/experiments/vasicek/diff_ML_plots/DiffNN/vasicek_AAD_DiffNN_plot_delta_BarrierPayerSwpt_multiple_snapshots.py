@@ -6,8 +6,7 @@ import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek
 from application.engine.products import BarrierPayerSwaption
-from application.engine.standard_scalar import DifferentialStandardScaler
-from application.engine.differential_Regression import DifferentialPolynomialRegressor
+from application.engine.differential_NN import Neural_Approximator
 from application.engine.mcBase import mcSim, RNG
 from application.utils.path_config import get_plot_path, get_data_path
 from application.experiments.vasicek.vasicek_hedge_tools import training_data
@@ -18,7 +17,7 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 1024
+    N_train = 1024 * 16
     N_test = 256
     use_av = True
 
@@ -27,18 +26,21 @@ if __name__ == '__main__':
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
-    # Setup Differential Regressor, and Scalar
-    deg = 9
-    alpha = 1.0
-    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True, include_interactions=True)
-    scalar = DifferentialStandardScaler()
+    # Differential Neural Network Settings
+    seed_weights = 1234
+    epochs = 250
+    batches_per_epoch = 16
+    min_batch_size = 256 * 40
+    lam = 1.0
+    hidden_units = 20
+    hidden_layers = 4
 
     # Model specification
     a = torch.tensor(0.86)
     b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     r0 = torch.tensor(0.08)
-    measure = 'terminal'
+    measure = 'risk_neutral'
 
     mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
 
@@ -52,7 +54,7 @@ if __name__ == '__main__':
     if len(T) != 4 & len(file_str) != 4:
         raise ValueError('Maturities and file_str must contain exactly 4 elements!')
 
-    for i in range(len(T)):
+    for i in tqdm(range(len(T))):
         exerciseDate = torch.tensor(T[i])
         delta = torch.tensor(0.25)
         swapFirstFixingDate = exerciseDate
@@ -144,7 +146,7 @@ if __name__ == '__main__':
             for j in tqdm(range(len(r0_test_vec))):
                 tmp_mdl = Vasicek(a, b, sigma, r0_test_vec[j], use_ATS=True, use_euler=False, measure='terminal')
                 tmp_rng = RNG(seed=seed, use_av=True)
-                y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 20000)))
+                y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 200000)))
             y_mdl = y_mdl.reshape(-1, 1)
 
             X_test = tmp_mdl.calc_swap(r0_test_vec, t_swap_fixings, delta, strike, notional).reshape(-1, 1)
@@ -158,14 +160,11 @@ if __name__ == '__main__':
 
         X_train, y_train, z_train = training_data(r0_vec = r0_vec, t0 = 0.0, calc_dU_dr = calc_dswap_dr, calc_dPrd_dr = calc_dswpt_dr, use_av = True)
 
-        X_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(X_train, y_train, z_train)
-
-        diff_reg.fit(X_train_scaled, y_train_scaled, z_train_scaled)
-
-        X_test_scaled, _, _ = scalar.transform(X_test, None, None)
-        y_pred_scaled, z_pred_scaled = diff_reg.predict(X_test_scaled, predict_derivs=True)
-
-        _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
+        diff_nn = Neural_Approximator(X_train, y_train, z_train)
+        diff_nn.prepare(N_train, True, weight_seed=seed_weights, lam=lam, hidden_units=hidden_units,
+                        hidden_layers=hidden_layers)
+        diff_nn.train(epochs=epochs, batches_per_epoch=batches_per_epoch, min_batch_size=min_batch_size)
+        y_pred, z_pred = diff_nn.predict_values_and_derivs(X_test)
 
         RMSE_price = torch.sqrt(torch.mean((y_pred - y_mdl) ** 2))
         MAE_delta = torch.mean(torch.abs(z_pred[1:] - z_mdl))
@@ -184,7 +183,7 @@ if __name__ == '__main__':
 
         # Plot price function
         ax[row, col].plot(X_train.flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25, label='Pathwise samples')
-        ax[row, col].plot(X_test.flatten(), y_pred, label='DiffReg', color='orange')
+        ax[row, col].plot(X_test.flatten(), y_pred, label='DiffNN', color='orange')
         ax[row, col].plot(X_test, y_mdl, color='black', label='MC (Bump and reval)')
         ax[row, col].set_ylabel('Price')
         ax[row, col].text(0.05, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[row, col].transAxes)
@@ -192,7 +191,7 @@ if __name__ == '__main__':
 
         # Plot delta function
         ax[row + 1, col].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
-        ax[row + 1, col].plot(X_test, z_pred, label='DiffReg', color='orange')
+        ax[row + 1, col].plot(X_test, z_pred, label='DiffNN', color='orange')
         ax[row + 1, col].plot(X_test[1:], z_mdl, color='black', label='MC (Bump and reval)')
         ax[row + 1, col].set_xlabel('Swap(0)')
         ax[row + 1, col].set_ylabel('Delta')
@@ -215,7 +214,7 @@ if __name__ == '__main__':
 
     # Title
     av_str = 'with AV' if use_av else 'without AV'
-    fig.suptitle(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
+    fig.suptitle(prd.name + f'\nalpha = {N_train} training samples ' + av_str)
 
     #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_EuSwpt_closetoT_Naive.png'), dpi=400)
     plt.show()
