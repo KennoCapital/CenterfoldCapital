@@ -55,18 +55,19 @@ if __name__ == '__main__':
 
     # initializer
     varphi = torch.tensor(0.0832)
+    v0 = theta
 
     # only chosen for time-0
     init = torch.empty(N_train)
     init = init.fill_(varphi)
+
     """
     r0_min = 0.07
     r0_max = 0.09
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
     """
 
-
-    model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
+    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
     #mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
 
     rng = RNG(seed=seed, use_av=use_av)

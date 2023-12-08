@@ -29,8 +29,10 @@ if __name__ == '__main__':
     alpha1 = torch.tensor(0.0046)  # 0131
     gamma = torch.tensor(0.1777)
     rho = torch.tensor(0.327)
-    theta = torch.tensor(2.1070)  # * torch.tensor(.1476)/ kappa
+    theta = torch.tensor(2.1070)  * torch.tensor(.1476)/ kappa
     varphi = torch.tensor(0.068)
+
+    v0 = theta
     """
     kappa = torch.tensor(0.0553) #0553
     sigma = torch.tensor(0.3325) #3325
@@ -51,7 +53,7 @@ if __name__ == '__main__':
 
     dTL = torch.linspace(0.0, float(exerciseDates[-1]), 50 * int(exerciseDates[-1]) + 1)
 
-    model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
+    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
 
     t = torch.linspace(float(swapFirstFixingDate),
                        float(swapLastFixingDate),

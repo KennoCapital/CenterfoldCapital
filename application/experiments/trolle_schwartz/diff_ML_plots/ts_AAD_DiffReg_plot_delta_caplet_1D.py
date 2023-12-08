@@ -36,13 +36,14 @@ if __name__ == '__main__':
     gamma = torch.tensor(0.3341)
     rho = torch.tensor(0.4615)
     theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476)
+    v0 = theta
 
     # initializer
     varphi_min = 0.03
     varphi_max = 0.13
     varphi = torch.linspace(varphi_min, varphi_max, N_train)
 
-    model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
+    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
 
     rng = RNG(seed=seed, use_av=use_av)
 
@@ -102,7 +103,7 @@ if __name__ == '__main__':
         def _payoffs(x, v, phi1, phi2, phi3, phi4, phi5, phi6):
             state = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
             f0T = model.calc_instant_fwd(state, t0, exerciseDate + delta - t0).flatten()
-            cMdl = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, f0T, simDim=1)
+            cMdl = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, f0T, simDim=1)
             cPrd = CapletAsPutOnZCB(
                 strike=strike,
                 exerciseDate=exerciseDate - t0,
@@ -127,7 +128,7 @@ if __name__ == '__main__':
 
     hedge_points = 100
     #dTL = torch.linspace(0.0, float(exerciseDate+delta), hedge_points + 1)
-    dTL = torch.linspace(0.0, exerciseDate + delta, int(hedge_points * (exerciseDate + delta) + 1))
+    dTL = torch.linspace(0.0, exerciseDate, int(hedge_points * exerciseDate + 1))
 
     mcSim(prd, model, rng, N_train, dTL)
     x0_vec = torch.stack(model.x)[:, :, 0, :]
@@ -146,7 +147,7 @@ if __name__ == '__main__':
                                               use_av=use_av)
 
     plt.figure()
-    plt.plot(X_train, z_train, 'o')
+    plt.plot(X_train, y_train, 'o')
     plt.show()
 
 
@@ -160,7 +161,7 @@ if __name__ == '__main__':
     varphi = -torch.log(X_test)/(exerciseDate + delta)  # torch.tensor(0.0832)
     y_mdl = torch.full_like(X_test, torch.nan)
     for j in tqdm(range(len(X_test))):
-        tmp_mdl = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi[j], simDim=1)
+        tmp_mdl = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi[j], simDim=1)
         tmp_rng = RNG(seed=seed, use_av=use_av)
         y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 10000, dTL)))
     y_mdl = y_mdl.reshape(-1, 1)

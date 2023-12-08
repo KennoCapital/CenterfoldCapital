@@ -28,6 +28,7 @@ if __name__ == "__main__":
     theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476)
     # initialize IFR
     varphi = torch.tensor(0.0832)
+    v0 = theta
 
     # Product specification
     start = torch.tensor(1.0)
@@ -38,7 +39,7 @@ if __name__ == "__main__":
     dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
 
     # instantiate model
-    model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
+    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
 
     rng = RNG(seed=seed, use_av=True)
 

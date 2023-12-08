@@ -40,6 +40,7 @@ if __name__ == '__main__':
     kappaP = torch.tensor([1.4235, 0.7880, 1.2602])
 
     theta = thetaP * kappaP / kappa
+    v0 = theta
 
     # initializer
     varphi_min = 0.03
@@ -54,7 +55,7 @@ if __name__ == '__main__':
     init = init.fill_(varphi)
     """
 
-    model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=3)
+    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=3)
 
     rng = RNG(seed=seed, use_av=use_av)
 
@@ -116,7 +117,7 @@ if __name__ == '__main__':
         def _payoffs(x, v, phi1, phi2, phi3, phi4, phi5, phi6):
             state = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
             f0T = model.calc_instant_fwd(state, t0, exerciseDate + delta - t0).flatten()
-            cMdl = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, f0T, simDim=3)
+            cMdl = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, f0T, simDim=3)
             cPrd = CapletAsPutOnZCB(
                 strike=strike,
                 exerciseDate=exerciseDate - t0,
@@ -177,7 +178,7 @@ if __name__ == '__main__':
     varphi = -torch.log(X_test)/(exerciseDate + delta)  # torch.tensor(0.0832)
     y_mdl = torch.full_like(X_test, torch.nan)
     for j in tqdm(range(len(X_test))):
-        tmp_mdl = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi[j], simDim=3)
+        tmp_mdl = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi[j], simDim=3)
         tmp_rng = RNG(seed=seed, use_av=use_av)
         y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 10000, dTL)))
     y_mdl = y_mdl.reshape(-1, 1)
