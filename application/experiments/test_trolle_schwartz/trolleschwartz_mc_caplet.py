@@ -58,7 +58,7 @@ if __name__ == "__main__":
     print('MC Price =', mc_price)
 
     # analytic
-    cpl = model.calc_cpl(0, prd.start, prd.delta, prd.strike, notional)
+    cpl = model.calc_cpl(torch.tensor(0.0), prd.start, prd.delta, prd.strike, notional)
     print('Semi-analytic Price =', cpl)
 
 
@@ -84,7 +84,7 @@ if __name__ == "__main__":
             mc_price = torch.nanmean(payoff)
 
             # analytical
-            cpl = model.calc_cpl(0, prd.start, prd.delta, prd.strike, notional)
+            cpl = model.calc_cpl(torch.tensor(0.), prd.start, prd.delta, prd.strike, notional)
 
             prices[i] = cpl
             mc_prices[i] = mc_price

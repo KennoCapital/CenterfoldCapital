@@ -32,17 +32,7 @@ if __name__ == '__main__':
     deg = 9
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True, include_interactions=True)
-    # Differential Neural Network Settings
-    seed_weights = 1234
-    epochs = 100
-    batches_per_epoch = 32
-    min_batch_size = 256
-    lam = 1.0
-    hidden_units = 20
-    hidden_layers = 4
-    nn_params = {'N_train': N_train, 'seed_weights': seed_weights, 'epochs': epochs,
-                 'batches_per_epoch': batches_per_epoch, 'min_batch_size': min_batch_size,
-                 'lam': lam, 'hidden_units': hidden_units, 'hidden_layers': hidden_layers}
+
 
     # Trolle-Schwartz model specification
     kappa = torch.tensor(0.0553)
@@ -52,25 +42,18 @@ if __name__ == '__main__':
     gamma = torch.tensor(0.3341)
     rho = torch.tensor(0.4615)
     theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476)
-
-    # initializer
-    varphi = torch.tensor(0.0832)
     v0 = theta
 
-    # only chosen for time-0
-    init = torch.empty(N_train)
-    init = init.fill_(varphi)
+    # initializer
+    varphi_min = 0.03
+    varphi_max = 0.13
+    varphi = torch.linspace(varphi_min, varphi_max, N_train)
+    varphi = torch.ones(N_train) * 0.0832
 
-    """
-    r0_min = 0.07
-    r0_max = 0.09
-    r0_vec = torch.linspace(r0_min, r0_max, N_train)
-    """
-
-    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
-    #mdl = Vasicek(a, b, sigma, r0, use_ATS=True, use_euler=False, measure=measure)
+    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
 
     rng = RNG(seed=seed, use_av=use_av)
+
 
     # Product specification
     exerciseDate = torch.tensor(1.0)
@@ -78,7 +61,6 @@ if __name__ == '__main__':
     notional = torch.tensor(1e6)
 
     strike = torch.tensor(.07)
-    #strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
 
     prd = Caplet(
         strike=strike,
@@ -89,40 +71,47 @@ if __name__ == '__main__':
 
     # Simulate paths
     dTL = torch.linspace(0.0, float(exerciseDate), hedge_points + 1)
-    #mcSimPaths(prd, model, rng, N_test, dTL)
+
     cashflows = mcSim(prd, model, rng, N_test, dTL)
 
     x = torch.stack(model.x)
 
-    x0_vec = x[:,:,1,:]
+    x0_vec = x[:,:,0,:]
 
     # Find index of the exercise date
     last_idx = int((dTL == exerciseDate).nonzero(as_tuple=True)[0])
 
     """ Helper functions for calculating pathwise payoffs and deltas, and generating training data """
-    def calc_dfwd_dx(x0_vec, t0):
+
+
+    def calc_dzcb_dx(x0_vec, t0):
         """
-        :param  x0_vec:    Current Short rate x
+        :param  x0_vec:    Possible state variables of state space
         :param  t0:        Current time
 
         returns:
             tuple with: (Forward Prices, Forward Prices differentiated wrt. r0 evaluated at x)
         """
         t0 = torch.tensor(t0)
-        def _fwd(x0_vec):
-            fwd = model.calc_fwd(x0_vec, exerciseDate - t0, delta)[0]
-            return fwd
 
-        res = []
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [x.reshape(model.simDim, -1) for x in x0_vec]
 
-        for x in [x0_vec[:,:,i] for i in range(len(x0_vec[0,0,:]))]:
+        def _zcb(x, v, phi1, phi2, phi3, phi4, phi5, phi6):
+            state = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
+            zcb = model.calc_zcb(state, t0, exerciseDate + delta)[0]
+            return zcb
 
-            jac = jacrev(_fwd, argnums=0)(x)
-            res.append(jac[0])
+        zcbs = _zcb(x, v, phi1, phi2, phi3, phi4, phi5, phi6)  # size N
 
-        #ones = torch.ones(8)
-        #res = (jvp(_fwd, x, ones, create_graph=False)))
-        return (x0_vec, torch.stack(res))
+        # first we find x, phis state var sens (since the method 'calc_zcb' will not give us any sens wrt v)
+        # the reverse mode is efficient for R^n -> R^m when n>m
+        jac = jacrev(_zcb, argnums=(0, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+        jac_sum = torch.stack([x.sum_to_size((model.simDim, x0_vec.shape[2])) for x in jac])
+        tmp = jac_sum.permute(1, 2, 0).squeeze()
+        tmp = tmp.unsqueeze(dim=2)  # size N x 7 (!) x simDim
+
+        return zcbs, tmp
+
 
     def calc_dcpl_dx(x0_vec, t0):
         """
@@ -133,28 +122,31 @@ if __name__ == '__main__':
             tuple with: (Pathwise payoffs, Pathwise differentials wrt. r0 evaluated at x)
         """
         t0 = torch.tensor(t0)
-        def _payoffs(x0_vec, size=1):
-            f0T = model.calc_instant_fwd(x0_vec,t0,exerciseDate+delta - t0).mean()
-            cMdl = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, f0T)
-            cPrd = Caplet(
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [x.reshape(model.simDim, -1) for x in x0_vec]
+
+        def _payoffs(x, v, phi1, phi2, phi3, phi4, phi5, phi6):
+            state = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
+            f0T = model.calc_instant_fwd(state, t0, exerciseDate + delta - t0).flatten()
+            cMdl = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, f0T, simDim=1)
+            cPrd = CapletAsPutOnZCB(
                 strike=strike,
-                start=exerciseDate - t0,
+                exerciseDate=exerciseDate - t0,
                 delta=delta,
                 notional=notional
             )
             cTL = dTL[dTL <= exerciseDate - t0]
+            payoffs = mcSim(cPrd, cMdl, rng, len(f0T), cTL)
+            return payoffs
 
-            payoffs = mcSim(cPrd, cMdl, rng, N_test, cTL)
-            return payoffs[0,]
+        cpls = _payoffs(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
 
-        res = []
-        for x in [x0_vec[:, :, i] for i in range(len(x0_vec[0, 0, :]))]:
-            jac = jacrev(_payoffs, argnums=0)(x)
-            res.append(jac[0])
+        # the reverse mode is efficient for R^n -> R^m when n>m
+        jac = jacrev(_payoffs, argnums=(0, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+        jac_sum = torch.stack([x.sum_to_size((1, x0_vec.shape[2])) for x in jac])
+        tmp = jac_sum.permute(1, 2, 0).squeeze()
+        tmp = tmp.unsqueeze(dim=2)  # size N x 7 (!) x simDim
 
-        #ones = torch.ones_like(x0_vec)
-        #res = jvp(_payoffs, x0_vec, ones, create_graph=False)
-        return (_payoffs(x0_vec, size=len(x0_vec[0, 0, :])), torch.stack(res))
+        return cpls, tmp
 
 
     """ Delta Hedge Experiment """
@@ -163,8 +155,6 @@ if __name__ == '__main__':
     cpl = torch.nanmean(payoff)
     print('MC Price =', cpl)
 
-    # Get price of claim (no need to simulate as we have an analytical expression)
-    #cpl = model.calc_cpl(r0, exerciseDate, delta, strike, notional)[0]
 
     # Initialize experiment
     B = torch.ones((N_test, ))

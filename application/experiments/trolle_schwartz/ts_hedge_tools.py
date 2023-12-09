@@ -49,7 +49,7 @@ def training_data(x0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use
     if dydr.dim() == 1:
         dydr = dydr.reshape(-1, 1)
 
-    z_train = (torch.pinverse(dxdr).T * dydr).reshape(-1, 1)
+    z_train = (torch.pinverse(dxdr) @ dydr).reshape(-1, 1)
     """
     if x_train.shape[1] > 1:
         # General (multi-dimensional) case

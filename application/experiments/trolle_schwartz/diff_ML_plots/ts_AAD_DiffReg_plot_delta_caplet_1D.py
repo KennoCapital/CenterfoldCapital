@@ -8,7 +8,7 @@ from application.engine.products import CapletAsPutOnZCB
 from application.engine.trolleSchwartz import trolleSchwartz
 from application.utils.path_config import get_plot_path, get_data_path
 from application.engine.mcBase import mcSim, RNG
-from torch.func import jacrev
+from torch.func import jacrev, jacfwd
 import pickle
 import os
 
@@ -82,10 +82,28 @@ if __name__ == '__main__':
 
         zcbs = _zcb(x, v, phi1, phi2, phi3, phi4, phi5, phi6) # size N
 
-        jac = jacrev(_zcb, argnums=(0, 1, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+        # first we find x, phis state var sens (since the method 'calc_zcb' will not give us any sens wrt v)
+        # the reverse mode is efficient for R^n -> R^m when n>m
+        jac = jacrev(_zcb, argnums=(0, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
         jac_sum = torch.stack([x.sum_to_size((model.simDim, x0_vec.shape[2])) for x in jac])
         tmp = jac_sum.permute(1, 2, 0).squeeze()
-        dzcbs = tmp.unsqueeze(dim=2) # size N x 8 x simDim
+        tmp = tmp.unsqueeze(dim=2) # size N x 7 (!) x simDim
+
+        # to track v we have to "show" auto diff how v is influencing other state vars
+        v = torch.tensor(v, requires_grad=True)
+        def _zcb_v(v):
+            tmp_mdl = trolleSchwartz(v, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
+            mcSim(prd, tmp_mdl, rng, len(varphi), dTL[::2])
+            state = torch.stack(tmp_mdl.x)[:, :, int(t0), :]
+            zcb = model.calc_zcb(state, t0, exerciseDate + delta)[0]
+            return zcb
+
+        # forward mode when just one argument
+        J = jacfwd(_zcb_v, argnums=(0), randomness='same')(v).detach()
+        J = J.sum_to_size(len(varphi)) # size N
+
+        # **we append dP/dv in the last column**
+        dzcbs = torch.cat( (tmp, J.reshape(-1,1,1)), dim=1) # size N x 8 x simDim
 
         return zcbs, dzcbs
 
@@ -100,7 +118,6 @@ if __name__ == '__main__':
         """
         t0 = torch.tensor(t0)
         x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [x.reshape(model.simDim, -1) for x in x0_vec]
-
         def _payoffs(x, v, phi1, phi2, phi3, phi4, phi5, phi6):
             state = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
             f0T = model.calc_instant_fwd(state, t0, exerciseDate + delta - t0).flatten()
@@ -117,10 +134,30 @@ if __name__ == '__main__':
 
         cpls = _payoffs(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
 
-        jac = jacrev(_payoffs, argnums=(0, 1, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+        # the reverse mode is efficient for R^n -> R^m when n>m
+        jac = jacrev(_payoffs, argnums=(0, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
         jac_sum = torch.stack([x.sum_to_size((1, x0_vec.shape[2])) for x in jac])
         tmp = jac_sum.permute(1, 2, 0).squeeze()
-        dcpls = tmp.unsqueeze(dim=2)
+        tmp = tmp.unsqueeze(dim=2) # size N x 7 (!) x simDim
+
+        v = torch.tensor(v, requires_grad=True)
+        def _payoffs_v(v):
+            cMdl = trolleSchwartz(v, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
+            cPrd = CapletAsPutOnZCB(
+                strike=strike,
+                exerciseDate=exerciseDate - t0,
+                delta=delta,
+                notional=notional
+            )
+            cTL = dTL[dTL <= exerciseDate - t0]
+            payoffs = mcSim(cPrd, cMdl, rng, len(varphi), cTL[::2])
+            return payoffs
+
+        J = jacfwd(_payoffs_v, argnums=(0), randomness='same')(v).detach()
+        J = J.sum_to_size(len(varphi))
+
+        # **we append dP/dv in the last column**
+        dcpls = torch.cat((tmp, J.reshape(-1, 1, 1)), dim=1)  # size N x 8 x simDim
 
         return cpls, dcpls
 
@@ -133,6 +170,41 @@ if __name__ == '__main__':
 
     mcSim(prd, model, rng, N_train, dTL)
     x0_vec = torch.stack(model.x)[:, :, 0, :]
+
+
+    p, dp = calc_dzcb_dx(x0_vec, t0=0.)
+    c, dc = calc_dcpl_dx(x0_vec, t0=0.)
+
+    plt.figure()
+    plt.plot(p, dp[:,0,0], 'o', label='dx')
+    plt.plot(p, dp[:, 1, 0] , 'o', label='dphi1')
+    plt.plot(p, dp[:, 2, 0] / 1., 'o', label='dphi2')
+    plt.plot(p, dp[:, 3, 0] / 1, 'o', label='dphi3')
+    plt.plot(p, dp[:, 4, 0] / 1, 'o', label='dphi4')
+    plt.plot(p, dp[:, 5, 0] / 1, 'o', label='dphi5')
+    plt.plot(p, dp[:, 6, 0] / 1, 'o', label='dphi6')
+    plt.plot(p, dp[:, 7, 0] / 1, 'o', label='dv')
+    plt.legend()
+    plt.xlabel('P(0,T)')
+    plt.ylabel('dP(0,T)')
+    plt.show()
+
+    plt.figure()
+    plt.plot(p, dc[:, 0, 0] / notional, 'o', label='dx')
+    plt.plot(p, dc[:, 1, 0] / notional, 'o', label='dphi1')
+    plt.plot(p, dc[:, 2, 0] / notional, 'o', label='dphi2')
+    plt.plot(p, dc[:, 3, 0] / notional, 'o', label='dphi3')
+    plt.plot(p, dc[:, 4, 0] / notional, 'o', label='dphi4')
+    plt.plot(p, dc[:, 5, 0] / notional, 'o', label='dphi5')
+    plt.plot(p, dc[:, 6, 0] / notional, 'o', label='dphi6')
+    plt.plot(p, dc[:, 7, 0] / notional, 'o', label='dv', alpha=0.2)
+    plt.legend()
+    plt.ylim(-0.05, 0.05)
+    plt.xlabel('d')
+    plt.ylabel('cpl')
+    plt.show()
+
+
 
     # Required when using AV to concat the initial forward rates
     if use_av:
@@ -147,8 +219,14 @@ if __name__ == '__main__':
                                               calc_dU_dr=calc_dzcb_dx,
                                               use_av=use_av)
 
+
+
     plt.figure()
     plt.plot(X_train, y_train, 'o')
+    plt.show()
+
+    plt.figure()
+    plt.plot(X_train, z_train, 'o')
     plt.show()
 
     X_test = torch.linspace(max(X_train.min(),X_train.mean()-5*X_train.std() ), min(X_train.max(), X_train.mean()+5*X_train.std()), N_test).reshape(-1, 1)
@@ -158,7 +236,7 @@ if __name__ == '__main__':
     for j in tqdm(range(len(X_test))):
         tmp_mdl = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi[j], simDim=1)
         tmp_rng = RNG(seed=seed, use_av=use_av)
-        y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 10000, dTL)))
+        y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 10000//2, dTL)))
     y_mdl = y_mdl.reshape(-1, 1)
     z_mdl = y_mdl.diff(dim=0) / X_test.diff(dim=0)
     """
@@ -201,9 +279,9 @@ if __name__ == '__main__':
     ax[0].text(0.05, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0].transAxes)
 
     # Plot delta function
-    ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
-    ax[1].plot(X_test, z_pred, label='DiffReg', color='orange')
-    ax[1].plot(X_test[1:], z_mdl, color='black', label='MC (Bump and reval)')
+    ax[1].plot(X_train, z_train/notional, 'o', color='gray', alpha=0.25, label='Pathwise samples')
+    ax[1].plot(X_test, z_pred/notional, label='DiffReg', color='orange')
+    ax[1].plot(X_test[1:], z_mdl/notional, color='black', label='MC (Bump and reval)')
     ax[1].set_xlabel('P(0,T)')
     ax[1].set_ylabel('Delta')
     ax[1].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1].transAxes)
