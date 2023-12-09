@@ -5,27 +5,6 @@ from application.engine.linearProducts import forward, swap, swap_rate
 from scipy.integrate import solve_ivp
 
 
-def _format_dim_X(X):
-    """Helper function ensuring that r0 is formatted as a row-vector"""
-    X = torch.stack(X)
-    if X.dim() > 1:
-        raise ValueError(f'Expected r0 to be a scalar or 1D tensor (row-vector) got {X.shape}')
-    if X.dim() == 0:
-        X = X.unsqueeze(0)
-    return X
-
-
-def _format_dim_t(t):
-    """Helper function ensuring that t is formatted as column-vector"""
-    if t.dim() > 2:
-        raise ValueError(f'Expected t to be a scalar or 2D tensor (column-vector) got {t.shape}')
-    if t.dim() == 0:
-        t = t.unsqueeze(0)
-    if t.dim() == 1:
-        t = t.reshape(-1, 1)
-    return t
-
-
 class trolleSchwartz(Model):
     """
         Implementation of the model descibed in Trolle & Schwartz (2006):
@@ -75,14 +54,18 @@ class trolleSchwartz(Model):
         :param disc_method:     Discretization scheme of the evolution of the state variables.
                                 Supports currently Euler (first order), Milstein (second order)
         """
-        self._v0 = v0.reshape(-1, 1)
-        self.gamma = gamma.reshape(-1 ,1)
-        self.kappa = kappa.reshape(-1, 1)
-        self.theta = theta.reshape(-1, 1)
-        self.rho = rho.reshape(-1, 1)
-        self.sigma = sigma.reshape(-1, 1)
-        self.alpha0 = alpha0.reshape(-1, 1)
-        self.alpha1 = alpha1.reshape(-1, 1)
+        self.simDim = simDim
+
+        self._v0 = v0.reshape(self.simDim, 1)
+        self.gamma = gamma.reshape(self.simDim, 1)
+        self.kappa = kappa.reshape(self.simDim, 1)
+        self.theta = theta.reshape(self.simDim, 1)
+        self.rho = rho.reshape(self.simDim, 1)
+        self.sigma = sigma.reshape(self.simDim, 1)
+        self.alpha0 = alpha0.reshape(self.simDim, 1)
+        self.alpha1 = alpha1.reshape(self.simDim, 1)
+
+        self.varphi = varphi.reshape(1, -1)
 
         self._x0 = torch.zeros(size=(simDim, 1))
         self._phi1_0 = torch.clone(self._x0)
@@ -92,9 +75,6 @@ class trolleSchwartz(Model):
         self._phi5_0 = torch.clone(self._x0)
         self._phi6_0 = torch.clone(self._x0)
 
-        self.varphi = varphi
-
-        self.simDim = simDim
         self._numRV = simDim * 2
 
         self.measure = measure
@@ -231,7 +211,7 @@ class trolleSchwartz(Model):
         return Wf, Wv
 
     def fwd_rate_vol(self, t, T):
-        """sigma(0,t) = (alpha0 + alpha1(T-t)) * exp^{ -gamma *(T-t) }"""
+        """sigma(0,t) = (alpha0 + alpha1(T-t)) * exp^{ -gamma * (T-t) }"""
         ret = [(self.alpha0[i] + self.alpha1[i] * (T-t)) * torch.exp(-self.gamma[i] * (T-t)) for i in range(self.simDim)]
         return torch.stack(ret)
 
@@ -239,11 +219,14 @@ class trolleSchwartz(Model):
         """
         Euler's discretisation of the state variables:
         x, v, phi1, phi2, phi3, phi4, phi5, phi6
+
+        Note: Taking abs(v) ensures that the boundary condition v > 0 is satisfied.
         """
-        v = torch.abs(v)
+        v = torch.abs(v.clone())
+
         dx = -self.gamma * x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
 
-        dv = self.kappa * (self.theta.reshape(self.simDim, 1) - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
+        dv = self.kappa * (self.theta - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
 
         dphi1 = (x - self.gamma * phi1) * dt
         dphi2 = (v - self.gamma * phi2) * dt
@@ -363,11 +346,11 @@ class trolleSchwartz(Model):
         for k, s in enumerate(self.timeline[1:]):
 
             # State variables using step function
-            self._x[:, k+1, :], self._v[:,k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
-            self._phi3[:, k+1, :], self._phi4[:,k+1, :], self._phi5[:,k+1, :], self._phi6[:,k+1, :] = \
-                step_func(self._x[:, k, :], self._v[:,k, :], self._phi1[:,k, :], self._phi2[:,k, :],
-                          self._phi3[:,k, :], self._phi4[:,k, :], self._phi5[:,k, :], self._phi6[:,k, :],
-                          dt[k], Wf[:,k,:], Wv[:,k, :])
+            self._x[:, k+1, :], self._v[:, k+1, :], self._phi1[:,k+1, :], self._phi2[:,k+1, :], \
+            self._phi3[:, k+1, :], self._phi4[:, k+1, :], self._phi5[:, k+1, :], self._phi6[:, k+1, :] = \
+                step_func(self._x[:, k, :], self._v[:, k, :], self._phi1[:, k, :], self._phi2[:, k, :],
+                          self._phi3[:, k, :], self._phi4[:, k, :], self._phi5[:, k, :], self._phi6[:, k, :],
+                          dt[k], Wf[:, k, :], Wv[:, k, :])
 
             # Numeraire
             if self.measure == 'risk_neutral':
@@ -404,48 +387,59 @@ class trolleSchwartz(Model):
 
         :param X:    [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
         """
+
+        # Extract and reformat variables
+        # This allows for vectorized calculations in [simDim, T, N (paths)]
         if t.dim() == 0:
             t = t.view(1)
-        t = t.reshape(-1, 1)
+        t = t.reshape(1, -1, 1)
         if T.dim() == 0:
             T = T.view(1)
-        T = T.reshape(-1, 1)
+        T = T.reshape(1, -1, 1)
 
-        # Extract
-        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [x.reshape(self.simDim, -1) for x in X]
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [x.reshape(self.simDim, 1, -1) for x in X]
+        alpha0 = self.alpha0.reshape(self.simDim, 1, 1)
+        alpha1 = self.alpha1.reshape(self.simDim, 1, 1)
+        gamma = self.gamma.reshape(self.simDim, 1, 1)
+        varphi = self.varphi.reshape(1, 1, -1)
 
         # eq. (20) - (26)
-        Bx = self.alpha1 / self.gamma * (
-                    (1 / self.gamma + self.alpha0 / self.alpha1) * (torch.exp(-self.gamma * (T - t)) - 1) + \
-                    (T - t) * torch.exp(-self.gamma * (T - t)))
+        Bx = alpha1 / gamma * (
+                    (1 / gamma + alpha0 / alpha1) * (torch.exp(-gamma * (T - t)) - 1) + \
+                    (T - t) * torch.exp(-gamma * (T - t)))
 
-        Bphi1 = self.alpha1 / self.gamma * (torch.exp(-self.gamma * (T - t)) - 1)
+        Bphi1 = alpha1 / gamma * (torch.exp(-gamma * (T - t)) - 1)
 
-        Bphi2 = torch.pow(self.alpha1 / self.gamma, 2) * (1 / self.gamma + self.alpha0 / self.alpha1) * \
-                ((1 / self.gamma + self.alpha0 / self.alpha1) * (torch.exp(-self.gamma * (T - t)) - 1) + \
-                 (T - t) * torch.exp(-self.gamma * (T - t)))
+        Bphi2 = torch.pow(alpha1 / gamma, 2) * (1 / gamma + alpha0 / alpha1) * \
+                ((1 / gamma + alpha0 / alpha1) * (torch.exp(-gamma * (T - t)) - 1) + \
+                 (T - t) * torch.exp(-gamma * (T - t)))
 
-        Bphi3 = - self.alpha1 / torch.pow(self.gamma, 2) * (
-                    (self.alpha1 / (2 * torch.pow(self.gamma, 2)) + self.alpha0 / self.gamma + \
-                     torch.pow(self.alpha0, 2) / (2 * self.alpha1)) * (torch.exp(-2 * self.gamma * (T - t)) - 1) + \
-                    (self.alpha1 / self.gamma + self.alpha0) * (T - t) * torch.exp(-2 * self.gamma * (T - t)) + \
-                    self.alpha1 / 2 * (T - t) ** 2 * torch.exp(-2 * self.gamma * (T - t)))
+        Bphi3 = - alpha1 / torch.pow(gamma, 2) * (
+                    (alpha1 / (2 * torch.pow(gamma, 2)) + alpha0 / gamma + \
+                     torch.pow(alpha0, 2) / (2 * alpha1)) * (torch.exp(-2 * gamma * (T - t)) - 1) + \
+                    (alpha1 / gamma + alpha0) * (T - t) * torch.exp(-2 * gamma * (T - t)) + \
+                    alpha1 / 2 * (T - t) ** 2 * torch.exp(-2 * gamma * (T - t)))
 
-        Bphi4 = torch.pow(self.alpha1 / self.gamma, 2) * (1 / self.gamma + self.alpha0 / self.alpha1) * (
-                    torch.exp(-self.gamma * (T - t)) - 1)
+        Bphi4 = torch.pow(alpha1 / gamma, 2) * (1 / gamma + alpha0 / alpha1) * (
+                    torch.exp(-gamma * (T - t)) - 1)
 
-        Bphi5 = - self.alpha1 / torch.pow(self.gamma, 2) * ((self.alpha1 / self.gamma + self.alpha0) * \
-                                                            (torch.exp(-2 * self.gamma * (T - t)) - 1) + self.alpha1 * (
-                                                                        T - t) * torch.exp(-2 * self.gamma * (T - t)))
+        Bphi5 = - alpha1 / torch.pow(gamma, 2) * ((alpha1 / gamma + alpha0) * \
+                                                            (torch.exp(-2 * gamma * (T - t)) - 1) + alpha1 * (
+                                                                        T - t) * torch.exp(-2 * gamma * (T - t)))
 
-        Bphi6 = - 0.5 * torch.pow(self.alpha1 / self.gamma, 2) * (torch.exp(-2 * self.gamma * (T - t)) - 1)
+        Bphi6 = - 0.5 * torch.pow(alpha1 / gamma, 2) * (torch.exp(-2 * gamma * (T - t)) - 1)
 
         # eq. (20) by each term
-        zcbT_by_zcbt = torch.exp(-self.varphi * (T - t))
-        Bx_sum = Bx.T @ x
-        Bphi_sum = Bphi1.T @ phi1 + Bphi2.T @ phi2 + Bphi3.T @ phi3 + Bphi4.T @ phi4 + Bphi5.T @ phi5 + Bphi6.T @ phi6
+        zcbT_by_zcbt = torch.exp(-varphi * (T - t))
+        Bx_sum = torch.sum(Bx * x, dim=0, keepdim=True)
+        Bphi_sum = torch.sum(
+            Bphi1 * phi1 + Bphi2 * phi2 + Bphi3 * phi3 + Bphi4 * phi4 + Bphi5 * phi5 + Bphi6 * phi6,
+            dim=0, keepdim=True
+        )
 
-        return zcbT_by_zcbt * torch.exp(Bx_sum + Bphi_sum)
+        zcb = zcbT_by_zcbt * torch.exp(Bx_sum + Bphi_sum)
+
+        return zcb
 
     def calc_instant_fwd(self, X, t, T):
         """
@@ -519,14 +513,16 @@ class trolleSchwartz(Model):
         if delta.dim() == 0:
             delta = delta.unsqueeze(0)
 
-        t = _format_dim_t(t)
+        if t.dim() == 0:
+            t = t.view(0)
+        t = t.reshape(-1, 1)
 
-        zcb = self.calc_zcb(X=X, t=torch.tensor(0.0), T=t)
-        zcb_tdt = self.calc_zcb(X=X, t=torch.tensor(0.0), T=t[-1] + delta)
+        zcb = self.calc_zcb(X=X, t=torch.tensor(0.0), T=t).reshape(len(t), -1)
+        zcb_tdt = self.calc_zcb(X=X, t=torch.tensor(0.0), T=t[-1] + delta).reshape(1, -1)
 
         swaps = swap(torch.concat([zcb, zcb_tdt], dim=0), delta, K, N)
 
-        return swaps.nan_to_num(float(swaps.nanmean()))
+        return swaps
 
     def calc_swap_rate(self, X, t, delta):
         """t = T_0, ..., T_n (future dates)"""
