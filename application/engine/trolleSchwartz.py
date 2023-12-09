@@ -309,7 +309,7 @@ class trolleSchwartz(Model):
         # Initialize state variables
         # set initial values to same for all paths
         self._x[:, 0, :] = self._x0
-        self._v[:, 0, :] = self._v0
+        self._v[:, 0, :] = self._v0.flatten() # todo: make this general / check for issues
         self._phi1[:, 0, :] = self._phi1_0
         self._phi2[:, 0, :] = self._phi2_0
         self._phi3[:, 0, :] = self._phi3_0

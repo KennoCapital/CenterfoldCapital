@@ -21,6 +21,7 @@ if __name__ == '__main__':
     N_train = 1024
     N_test = 256
     use_av = True
+    save_plot = False
 
     # Setup Differential Regressor, and Scalar
     deg = 9
@@ -150,15 +151,9 @@ if __name__ == '__main__':
     plt.plot(X_train, y_train, 'o')
     plt.show()
 
-
-    #X_test = model.calc_zcb(x0_vec, torch.tensor(0.0), exerciseDate + delta).reshape(-1, 1)
     X_test = torch.linspace(max(X_train.min(),X_train.mean()-5*X_train.std() ), min(X_train.max(), X_train.mean()+5*X_train.std()), N_test).reshape(-1, 1)
 
-    #x = torch.exp(-varphi*(exerciseDate + delta))
-    #X_test = torch.linspace(x.min(), x.max(), N_test).reshape(-1, 1)
-    #varphi_red = torch.linspace(varphi.min(), varphi.max(), N_test)
-
-    varphi = -torch.log(X_test)/(exerciseDate + delta)  # torch.tensor(0.0832)
+    varphi = -torch.log(X_test)/(exerciseDate + delta)
     y_mdl = torch.full_like(X_test, torch.nan)
     for j in tqdm(range(len(X_test))):
         tmp_mdl = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi[j], simDim=1)
@@ -197,7 +192,6 @@ if __name__ == '__main__':
     MAE_delta = torch.mean(torch.abs(z_pred[1:] - z_mdl))
 
     """ Plot results """
-
     fig, ax = plt.subplots(2, sharex='col')
     # Plot price function
     ax[0].plot(X_train.flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25, label='Pathwise samples')
@@ -210,7 +204,7 @@ if __name__ == '__main__':
     ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
     ax[1].plot(X_test, z_pred, label='DiffReg', color='orange')
     ax[1].plot(X_test[1:], z_mdl, color='black', label='MC (Bump and reval)')
-    ax[1].set_xlabel('Swap(0)')
+    ax[1].set_xlabel('P(0,T)')
     ax[1].set_ylabel('Delta')
     ax[1].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1].transAxes)
 
@@ -230,7 +224,7 @@ if __name__ == '__main__':
     # Title
     av_str = 'with AV' if use_av else 'without AV'
     fig.suptitle(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
-
-    # plt.savefig(get_plot_path('vasicek_AAD_DiffReg_EuSwpt_closetoT_Naive.png'), dpi=400)
+    if save_plot:
+        plt.savefig(get_plot_path('ts_AAD_DiffReg_plot_delta_caplet_1D.png'), dpi=400)
     plt.show()
 
