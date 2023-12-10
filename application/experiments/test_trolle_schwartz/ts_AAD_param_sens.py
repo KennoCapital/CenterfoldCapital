@@ -1,12 +1,43 @@
 import torch
+from torch.func import jacfwd
 from application.engine.trolleSchwartz import trolleSchwartz
 from application.engine.mcBase import mcSim, RNG
 from application.engine.products import EuropeanPayerSwaption
+from functools import partial
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
-# TODO find a fast way to calculate the Jacobian for all the parameters at the same time
+
+def calc_swpt(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi,
+              prd, rng, N, dTL, simDim):
+
+    cPrd = EuropeanPayerSwaption(
+        strike=prd.strike,
+        exerciseDate=prd.exerciseDate,
+        delta=prd.delta,
+        swapFirstFixingDate=prd.swapFirstFixingDate,
+        swapLastFixingDate=prd.swapLastFixingDate,
+        notional=prd.notional
+    )
+    cRng = RNG(seed=rng.seed, use_av=rng.use_av)
+    cMdl = trolleSchwartz(
+        v0=v0,
+        gamma=gamma,
+        kappa=kappa,
+        theta=theta,
+        rho=rho,
+        sigma=sigma,
+        alpha0=alpha0,
+        alpha1=alpha1,
+        varphi=varphi,
+        simDim=simDim
+    )
+    cTL = dTL
+    payoff = mcSim(cPrd, cMdl, cRng, N, cTL)
+    price = torch.mean(payoff)
+    return price.view(1), payoff
+
 
 if __name__ == '__main__':
     seed = 1234
@@ -25,8 +56,7 @@ if __name__ == '__main__':
     v0 = theta
     varphi = torch.tensor(0.0832)
 
-    torch.autograd.set_detect_anomaly(True)
-    v0.requires_grad = True
+    param = v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi
 
     mdl = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
 
@@ -51,8 +81,12 @@ if __name__ == '__main__':
     rng = RNG(seed=seed, use_av=use_av)
     dTL = torch.linspace(0.0, float(exerciseDate), int(exerciseDate * steps_per_year) + 1)
 
-    payoff = mcSim(prd, mdl, rng, N, dTL)
+    # Auxiliary function
+    V = partial(calc_swpt, prd=prd, rng=rng, N=N, dTL=dTL, simDim=1)
 
-    swpt = torch.mean(payoff)
-    swpt.backward(retain_graph=True)
-    print(f'Swpt={swpt}, v0_grad={v0.grad}')
+    # Evaluate function and its Jacobian
+    price, payoff = V(*param)
+    J = jacfwd(V, argnums=(0, 1, 2, 3, 4, 5, 6, 7, 8), randomness='same')(*param)
+
+    dPrice_dParam = torch.vstack(J[0])
+    dPayoff_dParam = torch.vstack(J[1])
