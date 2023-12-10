@@ -18,7 +18,7 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 1024
+    N_train = 256
     N_test = 256
     use_av = True
     save_plot = False
@@ -93,7 +93,7 @@ if __name__ == '__main__':
         v = torch.tensor(v, requires_grad=True)
         def _zcb_v(v):
             tmp_mdl = trolleSchwartz(v, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
-            mcSim(prd, tmp_mdl, rng, len(varphi), dTL[::2])
+            mcSim(prd, tmp_mdl, rng, len(varphi), dTL[::2]) # this is the slow part. Now skipping every other
             state = torch.stack(tmp_mdl.x)[:, :, int(t0), :]
             zcb = model.calc_zcb(state, t0, exerciseDate + delta)[0]
             return zcb
@@ -105,7 +105,7 @@ if __name__ == '__main__':
         # **we append dP/dv in the last column**
         dzcbs = torch.cat( (tmp, J.reshape(-1,1,1)), dim=1) # size N x 8 x simDim
 
-        return zcbs, dzcbs
+        return zcbs[0], dzcbs
 
 
     def calc_dcpl_dx(x0_vec, t0):
@@ -150,7 +150,7 @@ if __name__ == '__main__':
                 notional=notional
             )
             cTL = dTL[dTL <= exerciseDate - t0]
-            payoffs = mcSim(cPrd, cMdl, rng, len(varphi), cTL[::2])
+            payoffs = mcSim(cPrd, cMdl, rng, len(varphi), cTL[::2]) # this is the slow part. Now skipping every other
             return payoffs
 
         J = jacfwd(_payoffs_v, argnums=(0), randomness='same')(v).detach()
@@ -183,7 +183,7 @@ if __name__ == '__main__':
     plt.plot(p, dp[:, 4, 0] / 1, 'o', label='dphi4')
     plt.plot(p, dp[:, 5, 0] / 1, 'o', label='dphi5')
     plt.plot(p, dp[:, 6, 0] / 1, 'o', label='dphi6')
-    plt.plot(p, dp[:, 7, 0] / 1, 'o', label='dv')
+    plt.plot(p, dp[:, 7, 0] / 1, 'o', label='dv', alpha=0.2)
     plt.legend()
     plt.xlabel('P(0,T)')
     plt.ylabel('dP(0,T)')
@@ -199,9 +199,9 @@ if __name__ == '__main__':
     plt.plot(p, dc[:, 6, 0] / notional, 'o', label='dphi6')
     plt.plot(p, dc[:, 7, 0] / notional, 'o', label='dv', alpha=0.2)
     plt.legend()
-    plt.ylim(-0.05, 0.05)
-    plt.xlabel('d')
-    plt.ylabel('cpl')
+    #plt.ylim(-0.1, 0.1)
+    plt.xlabel('P(0,T)')
+    plt.ylabel('dcpl')
     plt.show()
 
 

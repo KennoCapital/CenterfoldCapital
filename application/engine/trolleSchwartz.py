@@ -56,14 +56,14 @@ class trolleSchwartz(Model):
         """
         self.simDim = simDim
 
-        self._v0 = v0.reshape(self.simDim, 1)
-        self.gamma = gamma.reshape(self.simDim, 1)
-        self.kappa = kappa.reshape(self.simDim, 1)
-        self.theta = theta.reshape(self.simDim, 1)
-        self.rho = rho.reshape(self.simDim, 1)
-        self.sigma = sigma.reshape(self.simDim, 1)
-        self.alpha0 = alpha0.reshape(self.simDim, 1)
-        self.alpha1 = alpha1.reshape(self.simDim, 1)
+        self._v0 = v0.reshape(self.simDim, -1)
+        self.gamma = gamma.reshape(self.simDim, -1)
+        self.kappa = kappa.reshape(self.simDim, -1)
+        self.theta = theta.reshape(self.simDim, -1)
+        self.rho = rho.reshape(self.simDim, -1)
+        self.sigma = sigma.reshape(self.simDim, -1)
+        self.alpha0 = alpha0.reshape(self.simDim, -1)
+        self.alpha1 = alpha1.reshape(self.simDim, -1)
 
         self.varphi = varphi.reshape(1, -1)
 

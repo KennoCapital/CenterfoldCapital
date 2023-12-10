@@ -11,7 +11,7 @@ torch.set_default_dtype(torch.float64)
 
 if __name__ == "__main__":
     # Setup
-    strike_plot = True
+    strike_plot = False
     save_fig = False
 
     seed = 1234
