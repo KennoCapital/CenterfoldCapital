@@ -114,110 +114,85 @@ if __name__ == '__main__':
             return payoffs, payoffs
 
         J, C = jacfwd(_payoffs_v, argnums=(0, 1), has_aux=True, randomness='same')(vt_vec, p_vec)
-        J = torch.stack( (J[0].sum_to_size(vt_vec.shape[-1]), J[1].sum_to_size(vt_vec.shape[-1])) )
-        dCdv = J.sum_to_size(vt_vec.shape[-1])
+        dCdv = torch.stack( (J[0].sum_to_size(vt_vec.shape[-1]), J[1].sum_to_size(vt_vec.shape[-1])) )
 
-        return C, dCdv
-
+        return C.reshape(-1,1), dCdv.reshape(-1,2)
 
 
-    # Required when using AV to concat the initial forward rates
-    if use_av:
-        varphi = torch.concat([varphi, varphi], dim=0)
-        model.varphi = varphi
+        # Setup Differential Regressor, and Scalar
+        deg = 5
+        alpha = 1.0
+        include_interactions = True
+        diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True,
+                                                   include_interactions=include_interactions)
+        scalar = DifferentialStandardScaler()
 
-    """ Estimate Price and Delta using Differential Regression """
+        c, dc = calc_dcpl_dv(vt_vec, p_vec, t1)
 
-    X_train, y_train, z_train = training_data(x0_vec=x0_vec,
-                                              t0=0.0,
-                                              calc_dPrd_dr=calc_dcpl_dx,
-                                              calc_dU_dr=calc_dzcb_dx,
-                                              use_av=use_av)
+        x_train = torch.hstack([p_vec.reshape(-1,1), vt_vec.reshape(-1,1)])
+        y_train = c
+        z_train = dc
 
+        zcb_test = torch.linspace(p_vec.min(), p_vec.max(), 16)
+        v0_test = torch.linspace(vt_vec.min(), vt_vec.max(), 16)
+        x_test = torch.cartesian_prod(zcb_test, v0_test)
 
+        x_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(x_train, y_train, z_train)
 
-    plt.figure()
-    plt.plot(X_train, y_train, 'o')
-    plt.show()
+        diff_reg.fit(x_train_scaled, y_train_scaled, z_train_scaled)
 
-    plt.figure()
-    plt.plot(X_train, z_train, 'o')
-    plt.show()
+        x_test_scaled, _, _ = scalar.transform(x_test, None, None)
+        y_pred_scaled, z_pred_scaled = diff_reg.predict(x_test_scaled, predict_derivs=True)
 
-    X_test = torch.linspace(max(X_train.min(),X_train.mean()-5*X_train.std() ), min(X_train.max(), X_train.mean()+5*X_train.std()), N_test).reshape(-1, 1)
+        _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
 
-    varphi = -torch.log(X_test)/(exerciseDate + delta)
-    y_mdl = torch.full_like(X_test, torch.nan)
-    for j in tqdm(range(len(X_test))):
-        tmp_mdl = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi[j], simDim=1)
-        tmp_rng = RNG(seed=seed, use_av=use_av)
-        y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 10000//2, dTL)))
-    y_mdl = y_mdl.reshape(-1, 1)
-    z_mdl = y_mdl.diff(dim=0) / X_test.diff(dim=0)
-    """
-    filename = get_data_path('ts_mc_cpl_test_set.pkl')
-    if os.path.isfile(filename):
-        with open(filename, 'rb') as file:
-            y_mdl, z_mdl = pickle.load(file)
-    else:
-        #varphi = -torch.log(X_test)/(exerciseDate + delta)  # torch.tensor(0.0832)
-        y_mdl = torch.full_like(X_test, torch.nan)
-        for j in tqdm(range(len(X_test))):
-            tmp_mdl = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi_red[j])
-            tmp_rng = RNG(seed=seed, use_av=use_av)
-            y_mdl[j] = (torch.mean(mcSim(prd, tmp_mdl, tmp_rng, 10000*10, dTL)))
-        y_mdl = y_mdl.reshape(-1, 1)
-        z_mdl = y_mdl.diff(dim=0) / X_test.diff(dim=0)
+        " Plot Results "
+        # Data for plotting a surface
+        x_ = x_test[:, 0].reshape(32, 32)
+        y_ = x_test[:, 1].reshape(32, 32)
+        z_price = y_pred.reshape(32, 32)
+        z_delta = z_pred[:, 0].reshape(32, 32)
+        z_vega = z_pred[:, 1].reshape(32, 32)
+        zero = torch.zeros(32, 32)
 
-        with open(filename,'wb') as file:
-            pickle.dump((y_mdl, z_mdl),file,pickle.HIGHEST_PROTOCOL)
-    """
-    X_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(X_train, y_train, z_train)
+        # Price
+        fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, sharex='all', sharey='all')
+        surf_train = ax.scatter(zcb_test, v0, payoff, c='gray', alpha=1.0)
+        # surf_pred = ax.scatter(x_, y_, z_, c=y_pred, cmap=plt.cm.magma)
+        surf_pred = ax.plot_surface(x_, y_, z_price, cmap=plt.cm.magma)
+        # surf_zero = ax.plot_surface(x_, y_, zero, color='blue', alpha=0.5)
 
-    diff_reg.fit(X_train_scaled, y_train_scaled, z_train_scaled)
+        ax.set_xlabel('Swap(0)')
+        ax.set_ylabel('v(0)')
+        ax.set_zlabel('Payoff')
 
-    X_test_scaled, _, _ = scalar.transform(X_test, None, None)
-    y_pred_scaled, z_pred_scaled = diff_reg.predict(X_test_scaled, predict_derivs=True)
+        fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+        plt.show()
 
-    _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
+        # Delta
+        fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, sharex='all', sharey='all')
+        surf_train = ax.scatter(swap, v0, z_train[:, 0], c='gray', alpha=1.0)
+        surf_pred = ax.plot_surface(x_, y_, z_delta, cmap=plt.cm.magma)
 
-    RMSE_price = torch.sqrt(torch.mean((y_pred - y_mdl) ** 2))
-    MAE_delta = torch.mean(torch.abs(z_pred[1:] - z_mdl))
+        ax.set_xlabel('Swap(0)')
+        ax.set_ylabel('v(0)')
+        ax.set_zlabel('Delta')
 
-    """ Plot results """
-    fig, ax = plt.subplots(2, sharex='col')
-    # Plot price function
-    ax[0].plot(X_train.flatten(), y_train.flatten(), 'o', color='gray', alpha=0.25, label='Pathwise samples')
-    ax[0].plot(X_test.flatten(), y_pred, label='DiffReg', color='orange')
-    ax[0].plot(X_test, y_mdl, color='black', label='MC (Bump and reval)')
-    ax[0].set_ylabel('Price')
-    ax[0].text(0.05, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0].transAxes)
+        # Add a color bar which maps values to colors.
+        fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+        plt.show()
 
-    # Plot delta function
-    ax[1].plot(X_train, z_train/notional, 'o', color='gray', alpha=0.25, label='Pathwise samples')
-    ax[1].plot(X_test, z_pred/notional, label='DiffReg', color='orange')
-    ax[1].plot(X_test[1:], z_mdl/notional, color='black', label='MC (Bump and reval)')
-    ax[1].set_xlabel('P(0,T)')
-    ax[1].set_ylabel('Delta')
-    ax[1].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1].transAxes)
+        # Vega
+        fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, sharex='all', sharey='all')
+        surf_train = ax.scatter(swap, v0, z_train[:, 1], c='gray', alpha=1.0)
+        surf_pred = ax.plot_surface(x_, y_, z_vega, cmap=plt.cm.magma)
 
-    # Adjust size of subplots
-    box0 = ax[0].get_position()
-    ax[0].set_position([box0.x0, box0.y0 - box0.height * 0.1, box0.width, box0.height * 0.9])
+        ax.set_xlabel('Swap(0)')
+        ax.set_ylabel('v(0)')
+        ax.set_zlabel('Payoff')
 
-    box1 = ax[1].get_position()
-    ax[1].set_position([box1.x0, box1.y0, box1.width, box1.height * 0.9])
+        # Add a color bar which maps values to colors.
+        fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+        plt.show()
 
-    # Legend
-    handles, labels = fig.gca().get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=3, fancybox=True, shadow=True,
-               bbox_to_anchor=(0.5, 0.90))
-
-    # Title
-    av_str = 'with AV' if use_av else 'without AV'
-    fig.suptitle(prd.name + f'\nalpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
-    if save_plot:
-        plt.savefig(get_plot_path('ts_AAD_DiffReg_plot_delta_caplet_1D.png'), dpi=400)
-    plt.show()
 
