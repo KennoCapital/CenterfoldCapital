@@ -449,7 +449,7 @@ class EuropeanPayerSwaption(Product):
 
         self._timeline = torch.concat([torch.tensor([0.0]), exerciseDate.view(1)])
 
-        swapFixingDates = torch.linspace(
+        self.swapFixingDates = torch.linspace(
             float(self.swapFirstFixingDate),
             float(self.swapLastFixingDate),
             int((self.swapLastFixingDate - self.swapFirstFixingDate) / self.delta) + 1
@@ -464,7 +464,7 @@ class EuropeanPayerSwaption(Product):
         self._defline += [
             SampleDef(
                 fwdRates=[],
-                irs=[InterestRateSwapDef(fixingDates=swapFixingDates, fixRate=self.strike, notional=self.notional)],
+                irs=[InterestRateSwapDef(fixingDates=self.swapFixingDates, fixRate=self.strike, notional=self.notional)],
                 discMats=torch.tensor([]),
                 numeraire=True,
                 stateVar=False
