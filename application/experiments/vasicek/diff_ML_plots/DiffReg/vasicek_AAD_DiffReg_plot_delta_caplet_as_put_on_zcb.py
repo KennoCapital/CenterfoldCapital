@@ -40,11 +40,11 @@ if __name__ == '__main__':
     rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
-    exerciseDate = torch.tensor(0.05)
+    exerciseDate = torch.tensor(1.00)
     delta = torch.tensor(0.25)
     notional = torch.tensor(1e6)
 
-    strike = mdl.calc_swap_rate(r0, exerciseDate, delta)
+    strike = torch.tensor(.07) #mdl.calc_swap_rate(r0, exerciseDate, delta)
 
     prd = CapletAsPutOnZCB(
         strike=strike,
@@ -154,9 +154,9 @@ if __name__ == '__main__':
     ax[0].text(0.05, 0.8, f'RMSE = {RMSE_price:.2f}', fontsize=8, transform=ax[0].transAxes)
 
     # Plot delta function
-    ax[1].plot(X_train, z_train, 'o', color='gray', alpha=0.25, label='Pathwise samples')
-    ax[1].plot(X_test, z_pred, label='DiffReg', color='orange')
-    ax[1].plot(X_test[1:], z_mdl, color='black', label='Analytical (Bump and reval)')
+    ax[1].plot(X_train, z_train/notional, 'o', color='gray', alpha=0.25, label='Pathwise samples')
+    ax[1].plot(X_test, z_pred/notional, label='DiffReg', color='orange')
+    ax[1].plot(X_test[1:], z_mdl/notional, color='black', label='Analytical (Bump and reval)')
     ax[1].set_xlabel('P(0, T + delta)')
     ax[1].set_ylabel('Delta')
     ax[1].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[1].transAxes)
