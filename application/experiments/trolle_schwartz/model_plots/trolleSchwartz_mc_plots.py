@@ -27,8 +27,10 @@ if __name__ == '__main__':
     theta = torch.tensor(2.1070) * torch.tensor(.1476)/ kappa
     varphi = torch.tensor(0.068)
 
+    v0 = theta
+
     # Product specification
-    start = torch.tensor(1.0)
+    start = torch.tensor(8.0)
     delta = torch.tensor(.25)
     strike = torch.tensor(0.084)
     notional = torch.tensor(1e6)
@@ -36,7 +38,7 @@ if __name__ == '__main__':
     dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
 
     # instantiate model
-    model = trolleSchwartz(gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
+    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
 
     rng = RNG(seed=seed, use_av=True)
 

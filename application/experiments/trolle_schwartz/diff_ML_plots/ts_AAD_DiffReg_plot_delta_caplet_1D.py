@@ -40,11 +40,26 @@ if __name__ == '__main__':
     v0 = theta
 
     # initializer
-    varphi_min = 0.03
-    varphi_max = 0.13
+    #varphi_min = 0.03
+    #varphi_max = 0.13
     varphi = torch.linspace(varphi_min, varphi_max, N_train)
+    #varphi = torch.ones(N_train) * 0.0832
 
-    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
+    """
+    model = trolleSchwartz(vt=v0, gamma=gamma, kappa=kappa, theta=theta, rho=rho,
+                           sigma=sigma, alpha0=alpha0, alpha1=alpha1, varphi=varphi, simDim=1)
+    """
+
+    model = trolleSchwartz(xt=torch.tensor([0.0]),
+                 phi1t=torch.tensor([0.0]),
+                 phi2t=torch.tensor([0.]),
+                 phi3t=torch.tensor([0.]),
+                 phi4t=torch.tensor([0.]),
+                 phi5t=torch.tensor([0.]),
+                 phi6t=torch.tensor([0.]),
+                 vt=v0, gamma=gamma, kappa=kappa, theta=theta, rho=rho,
+                sigma=sigma, alpha0=alpha0, alpha1=alpha1, varphi=varphi, simDim=1)
+
 
     rng = RNG(seed=seed, use_av=use_av)
 
@@ -90,7 +105,7 @@ if __name__ == '__main__':
         tmp = tmp.unsqueeze(dim=2) # size N x 7 (!) x simDim
 
         # to track v we have to "show" auto diff how v is influencing other state vars
-        v = torch.tensor(v, requires_grad=True)
+        #v = torch.tensor(v, requires_grad=True)
         def _zcb_v(v):
             tmp_mdl = trolleSchwartz(v, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
             mcSim(prd, tmp_mdl, rng, len(varphi), dTL[::2]) # this is the slow part. Now skipping every other
@@ -135,12 +150,13 @@ if __name__ == '__main__':
         cpls = _payoffs(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
 
         # the reverse mode is efficient for R^n -> R^m when n>m
-        jac = jacrev(_payoffs, argnums=(0, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+        jac = jacfwd(_payoffs, argnums=(0, 2, 3, 4, 5, 6, 7), randomness='same')(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
+        #jac = jacrev(_payoffs, argnums=(0, 2, 3, 4, 5, 6, 7))(x, v, phi1, phi2, phi3, phi4, phi5, phi6)
         jac_sum = torch.stack([x.sum_to_size((1, x0_vec.shape[2])) for x in jac])
         tmp = jac_sum.permute(1, 2, 0).squeeze()
         tmp = tmp.unsqueeze(dim=2) # size N x 7 (!) x simDim
 
-        v = torch.tensor(v, requires_grad=True)
+        #v = torch.tensor(v, requires_grad=True)
         def _payoffs_v(v):
             cMdl = trolleSchwartz(v, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
             cPrd = CapletAsPutOnZCB(
