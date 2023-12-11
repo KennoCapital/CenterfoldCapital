@@ -49,7 +49,21 @@ def training_data(x0_vec: torch.Tensor, t0: float, calc_dU_dr, calc_dPrd_dr, use
     if dydr.dim() == 1:
         dydr = dydr.reshape(-1, 1)
 
-    z_train = (torch.pinverse(dxdr) @ dydr).reshape(-1, 1)
+    # TODO: Adjust for simdim > 1
+
+
+
+    num_features = x_train.shape[1]
+
+    solve_rowwise = lambda dxdr_, dydr_: (torch.pinverse(dxdr_.T) @ dydr_.T).reshape(-1, num_features)
+    equations = (
+        (dxdr[i, :, :].reshape(num_features, -1), dydr[i, :, :].reshape(num_features, -1)) for i in
+    range(x0_vec.shape[2])
+    )
+    solutions = itertools.starmap(solve_rowwise, equations)
+    z_train = torch.vstack(list(solutions))
+
+    #z_train = (torch.pinverse(dxdr) @ dydr).reshape(-1, 1)
     """
     if x_train.shape[1] > 1:
         # General (multi-dimensional) case
