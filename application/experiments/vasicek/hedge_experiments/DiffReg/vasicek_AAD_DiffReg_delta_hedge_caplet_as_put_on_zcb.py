@@ -110,7 +110,7 @@ if __name__ == '__main__':
     """ Delta Hedge Experiment """
 
     # Get price of claim (no need to simulate as we have an analytical expression)
-    cpl = torch.empty_like(r[0, :])
+    cpl = torch.empty_like(r[0, :]) # size N_train
     for n in range(N_test):
         mdl.r0 = r[0, n]
         cpl = mdl.calc_cpl(r0, exerciseDate, delta, strike, notional)[0]
