@@ -28,7 +28,7 @@ if __name__ == '__main__':
 
 
     # Model specification
-    r0 = torch.tensor(0.08) #torch.linspace(r0_min, r0_max, N_test)
+    r0 = torch.linspace(r0_min, r0_max, N_test) #torch.tensor(0.08)
     a = torch.tensor(0.86)
     b = torch.tensor(0.09) #r0.median()
     sigma = torch.tensor(0.0148)
@@ -51,7 +51,7 @@ if __name__ == '__main__':
         int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
     )
 
-    strike = mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
+    strike = torch.tensor(.0871) #mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
 
     prd = EuropeanPayerSwaption(
         strike=strike,
@@ -108,7 +108,7 @@ if __name__ == '__main__':
     """ Delta Hedge Experiment """
 
     # Setup Differential Regressor, and Scalar
-    degrees = [7] #[3, 5, 7, 9]
+    degrees = [3, 5, 7, 9]
 
 
     plt.figure()
@@ -117,7 +117,7 @@ if __name__ == '__main__':
         diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True, include_interactions=True)
 
         # Simulate paths
-        hedge_times = [1, 2, 4, 12, 250//5, 250//2, 250, 250*2, 250*4]
+        hedge_times = [1, 2, 4, 12, 250//5, 250//2] #, 250, 250*2, 250*4]
         hedge_error = []
 
         for steps in hedge_times:
@@ -129,7 +129,7 @@ if __name__ == '__main__':
             swpt = torch.empty_like(r[0, :])
             for n in range(N_test):
                 mdl.r0 = r[0, n]
-                swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
+                swpt[n] = torch.mean(mcSim(prd, mdl, rng, 50000))
 
             # Initialize experiment
             swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
