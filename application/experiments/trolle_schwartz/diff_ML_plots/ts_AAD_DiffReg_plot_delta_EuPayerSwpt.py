@@ -14,7 +14,9 @@ torch.set_default_dtype(torch.float64)
 
 
 def calc_payoff_EuPayerSwpt(
-        v0, varphi, gamma, kappa, theta, rho, sigma, alpha0, alpha1,
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6,
+        kappa, theta, rho, sigma,
+        alpha0, alpha1, gamma, varphi,
         prd, rng, N, dTL, simDim
 ):
     cPrd = EuropeanPayerSwaption(
@@ -27,14 +29,21 @@ def calc_payoff_EuPayerSwpt(
     )
     cRng = RNG(seed=rng.seed, use_av=rng.use_av)
     cMdl = trolleSchwartz(
-        v0=v0,
-        gamma=gamma,
+        xt=x,
+        vt=v,
+        phi1t=phi1,
+        phi2t=phi2,
+        phi3t=phi3,
+        phi4t=phi4,
+        phi5t=phi5,
+        phi6t=phi6,
         kappa=kappa,
         theta=theta,
         rho=rho,
         sigma=sigma,
         alpha0=alpha0,
         alpha1=alpha1,
+        gamma=gamma,
         varphi=varphi,
         simDim=simDim
     )
@@ -44,22 +53,29 @@ def calc_payoff_EuPayerSwpt(
 
 
 def calc_swap(
-    v0, varphi, gamma, kappa, theta, rho, sigma, alpha0, alpha1,
     x, v, phi1, phi2, phi3, phi4, phi5, phi6,
+    kappa, theta, rho, sigma, alpha0, alpha1, gamma, varphi,
     fixings, delta, K, N,
     simDim: int = 1
 ):
     #
     X = (x, v, phi1, phi2, phi3, phi4, phi5, phi6)
     cMdl = trolleSchwartz(
-        v0=v0,
-        gamma=gamma,
+        xt=x,
+        vt=v,
+        phi1t=phi1,
+        phi2t=phi2,
+        phi3t=phi3,
+        phi4t=phi4,
+        phi5t=phi5,
+        phi6t=phi6,
         kappa=kappa,
         theta=theta,
         rho=rho,
         sigma=sigma,
         alpha0=alpha0,
         alpha1=alpha1,
+        gamma=gamma,
         varphi=varphi,
         simDim=simDim
     )
@@ -76,29 +92,42 @@ if __name__ == '__main__':
     use_av = True
 
     # Model specification
-    kappa = torch.tensor(0.0553) 
-    sigma = torch.tensor(0.3325) 
-    alpha0 = torch.tensor(0.045) 
-    alpha1 = torch.tensor(0.131) 
-    gamma = torch.tensor(0.3341) 
-    rho = torch.tensor(0.4615) 
-    theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476) 
-    #v0 = theta
-    #varphi = torch.tensor(0.0832)
+    simDim = 1
+    xt = torch.tensor([0.0])
+    vt = torch.tensor([0.0194])
+    phi1t = torch.tensor([0.0])
+    phi2t = torch.tensor([0.075])
+    phi3t = torch.tensor([0.040])
+    phi4t = torch.tensor([0.200])
+    phi5t = torch.tensor([0.060])
+    phi6t = torch.tensor([0.165])
 
-    #v0 = torch.ones(N_train) * theta
-    #v0 = torch.linspace(1E-6, 0.5, N_train)
-    #varphi = torch.linspace(-0.02, 0.15, N_train)
-    #grid = torch.stack(torch.meshgrid(v0, varphi)).mT.reshape(-1, 2)
+    kappa = torch.tensor(0.0553) 
+    theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476)
+    sigma = torch.tensor(0.3325)
+    rho = torch.tensor(0.4615)
+
+    alpha0 = torch.tensor(0.045)
+    alpha1 = torch.tensor(0.131)
+    gamma = torch.tensor(0.3341)
+
+    varphi = torch.tensor(0.0832)
 
     # Random grid in U[a, b] x U[c, d]
-    v0 = (1E-6 - 0.5) * torch.rand(N_train) + 0.5
-    varphi = (-0.02 - 0.15) * torch.rand(N_train) + 0.15
+
+
+    #v0 = (1E-6 - 0.5) * torch.rand(N_train) + 0.5
+    #varphi = (-0.02 - 0.15) * torch.rand(N_train) + 0.15
     #grid = torch.hstack((v0, varphi))
 
-    param = v0, varphi, gamma, kappa, theta, rho, sigma, alpha0, alpha1
+    const = kappa, theta, sigma, rho, varphi, gamma, alpha0, alpha1
 
-    mdl = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
+    mdl = trolleSchwartz(
+        xt=xt, vt=vt, phi1t=phi1t, phi2t=phi2t, phi3t=phi3t, phi4t=phi4t, phi5t=phi5t, phi6t=phi6t,
+        kappa=kappa, theta=theta, sigma=sigma, rho=rho,
+        gamma=gamma, alpha0=alpha0, alpha1=alpha1, varphi=varphi,
+        simDim=simDim
+    )
 
     # Product specification
     exerciseDate = torch.tensor(1.0)
@@ -123,19 +152,15 @@ if __name__ == '__main__':
 
     # Auxiliary functions
     x, v, phi1, phi2, phi3, phi4, phi5, phi6 = mdl.x0
-    f_V = partial(calc_payoff_EuPayerSwpt, prd=prd, rng=rng, N=N_train, dTL=dTL,
-                  #gamma=gamma, kappa=kappa, theta=theta, rho=rho, sigma=sigma, alpha0=alpha0, alpha1=alpha1
-                  simDim=1)
-    f_swap = partial(calc_swap, fixings=prd.swapFixingDates, delta=prd.delta, K=prd.strike, N=prd.notional,
-                     #gamma=gamma, kappa=kappa, theta=theta, rho=rho, sigma=sigma, alpha0=alpha0, alpha1=alpha1,
-                     #x=x, v=v, phi1=phi1, phi2=phi2, phi3=phi3, phi4=phi4, phi5=phi5, phi6=phi6,
-                     simDim=1)
+    f_V = partial(calc_payoff_EuPayerSwpt, prd=prd, rng=rng, N=N_train, dTL=dTL, simDim=1)
+    f_swap = partial(calc_swap, fixings=prd.swapFixingDates, delta=prd.delta, K=prd.strike, N=prd.notional, simDim=1)
 
-    # Compute Jacobians and values (argnums=(0, 1) allow for changing v0 and varphi)
+    # Compute Jacobians and values
     ones = torch.ones(N_train)
     state = mdl.x0
-    Jswap, swap = jacfwd(f_swap, argnums=(0, 1), has_aux=True)(*param, *state)
-    Jpayoff, payoff = jacfwd(f_V, argnums=(0, 1), has_aux=True, randomness='same')(*param)
+    Jswap, swap = jacfwd(f_swap, argnums=(0, 1, 2, 3, 4, 5, 6), has_aux=True)(*state, *const)
+    Jpayoff, payoff = jacfwd(f_V, argnums=(0, 1, 2, 3, 4, 5, 6), has_aux=True, randomness='same')(*state, *const)
+
     dU_dParam = torch.hstack([J @ ones for J in Jswap])
     dPayoff_dParam = torch.hstack([J @ ones for J in Jpayoff])
 
