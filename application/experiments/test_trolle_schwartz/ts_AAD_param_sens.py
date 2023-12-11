@@ -1,5 +1,5 @@
 import torch
-from torch.func import jacfwd
+from torch.func import jacfwd, jacrev
 from application.engine.trolleSchwartz import trolleSchwartz
 from application.engine.mcBase import mcSim, RNG
 from application.engine.products import EuropeanPayerSwaption
@@ -41,7 +41,7 @@ def calc_swpt(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi,
 
 if __name__ == '__main__':
     seed = 1234
-    N = 50000
+    N = 256
     steps_per_year = 100
     use_av = True
 
@@ -90,3 +90,6 @@ if __name__ == '__main__':
 
     dPrice_dParam = torch.vstack(J[0])
     dPayoff_dParam = torch.vstack(J[1])
+
+    # torch.autograd.set_detect_anomaly(True)
+    # J = jacrev(V, argnums=(0, 1, 2, 3, 4, 5, 6, 7, 8))(*param)

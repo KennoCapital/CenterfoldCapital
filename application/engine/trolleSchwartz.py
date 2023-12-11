@@ -224,27 +224,18 @@ class trolleSchwartz(Model):
         """
         v = torch.abs(v.clone())
 
-        dx = -self.gamma * x * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
+        dx = -self.gamma * x.clone() * dt + torch.sqrt(v) * Wf * torch.sqrt(dt)
 
-        dv = self.kappa * (self.theta - v) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
+        dv = self.kappa * (self.theta - v.clone()) * dt + self.sigma * torch.sqrt(v) * Wv * torch.sqrt(dt)
 
-        dphi1 = (x - self.gamma * phi1) * dt
-        dphi2 = (v - self.gamma * phi2) * dt
-        dphi3 = (v - 2 * self.gamma * phi3) * dt
-        dphi4 = (phi2 - self.gamma * phi4) * dt
-        dphi5 = (phi3 - 2 * self.gamma * phi5) * dt
-        dphi6 = (2 * phi5 - 2 * self.gamma * phi6) * dt
+        dphi1 = (x.clone() - self.gamma * phi1.clone()) * dt
+        dphi2 = (v - self.gamma * phi2.clone()) * dt
+        dphi3 = (v - 2 * self.gamma * phi3.clone()) * dt
+        dphi4 = (phi2.clone() - self.gamma * phi4.clone()) * dt
+        dphi5 = (phi3.clone() - 2 * self.gamma * phi5.clone()) * dt
+        dphi6 = (2 * phi5.clone() - 2 * self.gamma * phi6.clone()) * dt
 
-        x += dx
-        v += dv
-        phi1 += dphi1
-        phi2 += dphi2
-        phi3 += dphi3
-        phi4 += dphi4
-        phi5 += dphi5
-        phi6 += dphi6
-
-        return x, v, phi1, phi2, phi3, phi4, phi5, phi6
+        return x + dx, v + dv, phi1 + dphi1, phi2 + dphi2, phi3 + dphi3,  phi4 + dphi4,  phi5 + dphi5, phi6 + dphi6
 
     def _milstein_step(self, x, v, phi1, phi2, phi3, phi4, phi5, phi6, dt, Wf, Wv):
         """
@@ -398,9 +389,9 @@ class trolleSchwartz(Model):
         T = T.reshape(1, -1, 1)
 
         x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [x.reshape(self.simDim, 1, -1) for x in X]
-        alpha0 = self.alpha0.reshape(self.simDim, 1, 1)
-        alpha1 = self.alpha1.reshape(self.simDim, 1, 1)
-        gamma = self.gamma.reshape(self.simDim, 1, 1)
+        alpha0 = self.alpha0.reshape(self.simDim, 1, -1)
+        alpha1 = self.alpha1.reshape(self.simDim, 1, -1)
+        gamma = self.gamma.reshape(self.simDim, 1, -1)
         varphi = self.varphi.reshape(1, 1, -1)
 
         # eq. (20) - (26)
