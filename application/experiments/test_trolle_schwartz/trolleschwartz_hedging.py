@@ -133,8 +133,8 @@ if __name__ == '__main__':
         y_train = c
         z_train = dc
 
-        zcb_test = torch.linspace(p_vec.min(), p_vec.max(), 16)
-        v0_test = torch.linspace(vt_vec.min(), vt_vec.max(), 16)
+        zcb_test = torch.linspace(p_vec.min(), p_vec.max(), 32)
+        v0_test = torch.linspace(torch.abs(vt_vec).min(), vt_vec.max(), 32)
         x_test = torch.cartesian_prod(zcb_test, v0_test)
 
         x_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(x_train, y_train, z_train)
@@ -151,19 +151,19 @@ if __name__ == '__main__':
         x_ = x_test[:, 0].reshape(32, 32)
         y_ = x_test[:, 1].reshape(32, 32)
         z_price = y_pred.reshape(32, 32)
-        z_delta = z_pred[:, 0].reshape(32, 32)
-        z_vega = z_pred[:, 1].reshape(32, 32)
+        z_delta = z_pred[:, 0].reshape(32, 32) / notional
+        z_vega = z_pred[:, 1].reshape(32, 32) / notional
         zero = torch.zeros(32, 32)
 
         # Price
         fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, sharex='all', sharey='all')
-        surf_train = ax.scatter(zcb_test, v0, payoff, c='gray', alpha=1.0)
+        #surf_train = ax.scatter(zcb_test, v0, c, c='gray', alpha=1.0)
         # surf_pred = ax.scatter(x_, y_, z_, c=y_pred, cmap=plt.cm.magma)
-        surf_pred = ax.plot_surface(x_, y_, z_price, cmap=plt.cm.magma)
+        surf_pred = ax.plot_surface(x_, y_, z_price, cmap=plt.cm.rainbow)
         # surf_zero = ax.plot_surface(x_, y_, zero, color='blue', alpha=0.5)
 
-        ax.set_xlabel('Swap(0)')
-        ax.set_ylabel('v(0)')
+        ax.set_xlabel('zcb')
+        ax.set_ylabel('v')
         ax.set_zlabel('Payoff')
 
         fig.colorbar(surf_pred, shrink=0.5, aspect=5)
@@ -171,11 +171,11 @@ if __name__ == '__main__':
 
         # Delta
         fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, sharex='all', sharey='all')
-        surf_train = ax.scatter(swap, v0, z_train[:, 0], c='gray', alpha=1.0)
-        surf_pred = ax.plot_surface(x_, y_, z_delta, cmap=plt.cm.magma)
+        #surf_train = ax.scatter(zcb_test, v0_test, z_train[:, 0], c='gray', alpha=1.0)
+        surf_pred = ax.plot_surface(x_, y_, z_delta, cmap=plt.cm.rainbow)
 
-        ax.set_xlabel('Swap(0)')
-        ax.set_ylabel('v(0)')
+        ax.set_xlabel('zcb')
+        ax.set_ylabel('v')
         ax.set_zlabel('Delta')
 
         # Add a color bar which maps values to colors.
@@ -184,12 +184,12 @@ if __name__ == '__main__':
 
         # Vega
         fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, sharex='all', sharey='all')
-        surf_train = ax.scatter(swap, v0, z_train[:, 1], c='gray', alpha=1.0)
-        surf_pred = ax.plot_surface(x_, y_, z_vega, cmap=plt.cm.magma)
+        #surf_train = ax.scatter(zcb_test, v0_test, z_train[:, 1], c='gray', alpha=1.0)
+        surf_pred = ax.plot_surface(x_, y_, z_vega, cmap=plt.cm.rainbow)
 
-        ax.set_xlabel('Swap(0)')
-        ax.set_ylabel('v(0)')
-        ax.set_zlabel('Payoff')
+        ax.set_xlabel('zcb')
+        ax.set_ylabel('v')
+        ax.set_zlabel('vega')
 
         # Add a color bar which maps values to colors.
         fig.colorbar(surf_pred, shrink=0.5, aspect=5)
