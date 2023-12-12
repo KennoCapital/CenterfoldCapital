@@ -27,7 +27,7 @@ if __name__ == '__main__':
 
     save_plot = False
 
-    hedge_points = 20
+    hedge_points = 10
 
     # Setup Differential Regressor, and Scalar
     deg = 9
@@ -52,7 +52,16 @@ if __name__ == '__main__':
     #varphi = torch.ones(N_train) * 0.0832
     varphi = torch.tensor(0.0832)
 
-    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=1)
+
+    model = trolleSchwartz(xt=torch.tensor([0.0]),
+                 phi1t=torch.tensor([0.0]),
+                 phi2t=torch.tensor([0.]),
+                 phi3t=torch.tensor([0.]),
+                 phi4t=torch.tensor([0.]),
+                 phi5t=torch.tensor([0.]),
+                 phi6t=torch.tensor([0.]),
+                 vt=v0, gamma=gamma, kappa=kappa, theta=theta, rho=rho,
+                sigma=sigma, alpha0=alpha0, alpha1=alpha1, varphi=varphi, simDim=1)
 
     rng = RNG(seed=seed, use_av=use_av)
 

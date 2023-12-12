@@ -586,7 +586,7 @@ class trolleSchwartz(Model):
         zcb1 = self.calc_zcb(self.x0, t, T1)
 
         term1 = M
-        term2 = torch.sum(N * self._vt, dim=0)
+        term2 = torch.sum(N * self.vt, dim=0)
         term3 = u * torch.log(zcb1) + (1.0 - u) * torch.log(zcb0)
 
         return torch.exp(term1 + term2 + term3)
