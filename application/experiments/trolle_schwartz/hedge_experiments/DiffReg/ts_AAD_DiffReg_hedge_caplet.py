@@ -17,7 +17,7 @@ from joblib import Parallel, delayed
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
-MAX_PROCESSES = os.cpu_count() - 1
+MAX_PROCESSES = os.cpu_count() - 4
 print(f'Settings MAX_PROCESSES = {MAX_PROCESSES}')
 
 
@@ -42,7 +42,7 @@ def calc_hedge_coef(X_train, t0,
     return h_c, h_zcb
 
 
-def cpl_mc_price(t0, X, const, prd, dTL, N: int = 50000, simDim: int = 1, seed: int = 1234, use_av: bool = True):
+def cpl_mc_price(t0, X, const, prd, dTL, N: int = 5000, simDim: int = 1, seed: int = 1234, use_av: bool = True):
     cPrd = CapletAsPutOnZCB(
         strike=prd.strike,
         exerciseDate=prd.exerciseDate - t0,
@@ -244,16 +244,16 @@ class ZcbAAD(torch.nn.Module):
 if __name__ == '__main__':
     # Settings
     file_path = get_data_path('ts_cpl_mc_prices.pkl')
-    burn_in_dTL = torch.linspace(0.0, 1.0, 101)
+    burn_in_dTL = torch.linspace(0.0, 5.0, 101)
 
     seed = 1234
-    N_train = 1024
+    N_train = 1024*20
     N_test = 256
     steps_per_year = 100
     use_av = True
 
     # Differential Regressor and Scalar
-    deg = 5
+    deg = 9
     alpha = 1.0
     include_interactions = True
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True,
@@ -262,11 +262,11 @@ if __name__ == '__main__':
 
     # Product specification
     exerciseDate = torch.tensor(1.0)
-    delta = torch.tensor(0.25)
+    delta = torch.tensor(0.5)
     notional = torch.tensor(1e6)
 
     strike = torch.tensor(0.07)
-    strike_hedge = torch.tensor(0.09)
+    strike_hedge = torch.tensor(0.07)
 
     prd_sold = CapletAsPutOnZCB(
         strike=strike,
@@ -289,7 +289,7 @@ if __name__ == '__main__':
     # Model specification
     simDim = 1
     xt = torch.tensor([0.0])
-    vt = torch.tensor([0.0194])
+    vt = torch.tensor([.1])
     phi1t = torch.tensor([0.0])
     phi2t = torch.tensor([0.0])
     phi3t = torch.tensor([0.0])
@@ -297,8 +297,8 @@ if __name__ == '__main__':
     phi5t = torch.tensor([0.0])
     phi6t = torch.tensor([0.0])
 
-    kappa = torch.tensor(0.0553)
-    theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476)
+    kappa = torch.tensor(0.553)
+    theta = torch.tensor(0.7542) #* kappa / torch.tensor(2.1476)
     sigma = torch.tensor(0.3325)
     rho = torch.tensor(0.4615)
 
@@ -400,7 +400,7 @@ if __name__ == '__main__':
 
         if t < prd_hedge.exerciseDate:
             cpl = torch.hstack(
-                Parallel(n_jobs=MAX_PROCESSES)(
+                Parallel(n_jobs=1)(
                     delayed(cpl_mc_price)(t0=t, X=[X_test[i][j] for i in range(8)], const=const, prd=prd_hedge, dTL=dTL, N=50000)
                     for j in range(N_test)
                 )
@@ -411,7 +411,7 @@ if __name__ == '__main__':
             #])
         else:
             kBar = 1.0 / (1.0 + prd_hedge.delta * prd_hedge.strike)
-            cpl = max0(kBar - zcb)
+            cpl = max0(kBar - zcb) * notional / kBar
 
         matCpl[k, :] = cpl
         matZcb[k, :] = zcb
@@ -427,3 +427,20 @@ if __name__ == '__main__':
             matHc[k, :] = h_c
             matHzcb[k, :] = h_zcb
             matHb[k, :] = h_b
+
+
+    payoff_func = lambda strike, zcb: notional / strike * max0(strike - zcb) * zcb
+
+    zcbT = mdl.calc_zcb(X_test, torch.tensor(0.), delta).flatten()
+    V_ = V* zcbT
+
+    kBar_sold = 1 / (1+ prd_sold.delta*prd_sold.strike)
+
+    plt.figure()
+    plt.plot(zcb, V_, 'o',color='orange', label='Value of Hedge Portfolio')
+    plt.plot(zcbT.sort().values, payoff_func(kBar_sold,zcbT.sort().values), color='black', label='Payoff function')
+    plt.ylim(-1e4, 1e5)
+    plt.xlim(0.8, 1.2)
+    plt.xlabel(r'$P(T,T+\delta)$')
+    plt.title('1Y6M Caplet on Zero Coupon Bond')
+    plt.show()
