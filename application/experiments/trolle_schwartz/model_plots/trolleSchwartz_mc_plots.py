@@ -38,7 +38,14 @@ if __name__ == '__main__':
     dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
 
     # instantiate model
-    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
+    model = trolleSchwartz(xt=torch.tensor([0.0]),vt=torch.tensor([0.0]),
+                 phi1t=torch.tensor([0.0]),phi2t=torch.tensor([0.0]),
+                 phi3t=torch.tensor([0.0]),phi4t=torch.tensor([0.0]),
+                 phi5t=torch.tensor([0.0]),phi6t=torch.tensor([0.0]),
+                           gamma=gamma, kappa=kappa, theta=theta,
+                           rho=rho, sigma=sigma, alpha0=alpha0,
+                           alpha1=alpha1, varphi=varphi, simDim=1)
+
 
     rng = RNG(seed=seed, use_av=True)
 

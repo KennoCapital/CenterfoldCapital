@@ -30,14 +30,14 @@ if __name__ == "__main__":
     thetaP = torch.tensor([1.4235, 0.7880, 1.2602])
 
     kappaP = torch.tensor([1.4235, 0.7880, 1.2602])
-    theta = thetaP #* kappaP / kappa
+    theta = torch.ones_like(thetaP) #thetaP * kappaP / kappa
 
     v0 = theta
     # initialize ifr curve
     varphi = torch.tensor(0.0668)
 
     # Product specification
-    start = torch.tensor(8.)
+    start = torch.tensor(5.)
     delta = torch.tensor(.25)
     strike = torch.tensor(0.07)
     notional = torch.tensor(1e6)
@@ -45,7 +45,14 @@ if __name__ == "__main__":
     dTL = torch.linspace(0.0, start + delta, int(euler_step_size * (start + delta) + 1))
 
     # instantiate model
-    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi, simDim=3)
+    model = trolleSchwartz(xt=gamma*0,vt=gamma*0,
+                 phi1t=gamma*0,phi2t=gamma*0,
+                 phi3t=gamma*0,phi4t=gamma*0,
+                 phi5t=gamma*0,phi6t=gamma*0,
+                           gamma=gamma, kappa=kappa, theta=theta,
+                           rho=rho, sigma=sigma, alpha0=alpha0,
+                           alpha1=alpha1, varphi=varphi, simDim=3)
+
 
     rng = RNG(seed=seed, use_av=True)
 
@@ -159,10 +166,10 @@ if __name__ == "__main__":
         plt.show()
 
         # plotting term structure
-        maturities = torch.linspace(0.25, 15.25, 100)
+        maturities = torch.linspace(0., 5.25, 100)
         state_vars = torch.stack(model.x)
         yields = torch.zeros_like(maturities)
-        zcbs = torch.zeros( (len(dTL), 4))
+        zcbs = torch.zeros( (len(dTL), 5))
 
         for i, T in enumerate(maturities):
             zcb = model.calc_zcb(state_vars[:, :, 1, :], dTL[1], torch.tensor(T)).mean()
@@ -172,7 +179,7 @@ if __name__ == "__main__":
             t = torch.tensor(t)
             x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i.squeeze()[:, j, :] for i in model.x]
             state = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
-            zcbs[j,:] = model.calc_zcb(state, t, start+delta)[0][:4].flatten()
+            zcbs[j,:] = model.calc_zcb(state, t, start+delta).flatten()[:5]
 
         fig, axs = plt.subplots(1, 2, figsize=(12, 4))  # 1 row, 2 columns
         axs[0].plot(maturities, yields, color='black', label=r'$T \rightarrow R(t,T)$')
@@ -186,16 +193,16 @@ if __name__ == "__main__":
         plt.show()
 
         ## IFR plot
-        ifr = torch.empty((len(maturities),4))
-        for j, t in enumerate(maturities):
+        ifr = torch.empty((len(dTL),5))
+        for j, t in enumerate(dTL):
             t = torch.tensor(t)
-            x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i.squeeze()[:, 1, ] for i in model.x]
+            x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i[:, j, :] for i in model.x]
             state = [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
-            ifr[j,:] = model.calc_instant_fwd(state, dTL[1], t).flatten()[0:4]
+            ifr[j,:] = model.calc_instant_fwd(state, dTL[j], start+delta).flatten()[:5]
 
         plt.figure()
-        plt.plot(maturities, ifr, color='black', linestyle='--')
-        plt.plot(maturities, ifr[:,0], color='black',linestyle='--', label=r'$T\rightarrow f(t,T)$')
+        plt.plot(dTL, ifr, color='black', linestyle='--')
+        plt.plot(dTL, ifr[:,0], color='black',linestyle='--', label=r'$t\rightarrow f(t,T)$')
         plt.xlabel('Years')
         plt.legend()
         plt.show()

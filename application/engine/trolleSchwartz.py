@@ -200,7 +200,7 @@ class trolleSchwartz(Model):
         """ Generate correlated Brownian motions
             Note: RV's Z is generated outside class
         """
-        '''
+
         # Covariance matrix
         covMat = torch.ones((self.simDim, 2, 2))
         for i in range(self.simDim):
@@ -221,7 +221,7 @@ class trolleSchwartz(Model):
         for i in range(self.simDim):
             W[[2 * i + 1], :, :] = self.rho[i] * Z[[2 * i], :, :] * \
                                    torch.sqrt(1.0 - self.rho[i] ** 2.0) * Z[[2 * i + 1],:, :]
-
+        '''
         Wf = W[0::2, :, :]
         Wv = W[1::2, :, :]
 
