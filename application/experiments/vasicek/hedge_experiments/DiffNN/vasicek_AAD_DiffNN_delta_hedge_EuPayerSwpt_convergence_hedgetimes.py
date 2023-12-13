@@ -1,3 +1,4 @@
+import concurrent.futures
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,6 +32,9 @@ def random_color(lam : float):
         # Default color if lam is neither 1.0 nor 0.0
         return "#{:06x}".format(random.randint(0, 0xFFFFFF))
 
+def parrallel_tasks(combo):
+    lam, N_train, batch_ratio, steps = combo
+    return lam, N_train, batch_ratio, steps
 
 if __name__ == '__main__':
 
@@ -142,10 +146,18 @@ if __name__ == '__main__':
 
     import itertools
     combinations = list(itertools.product(lams, training_sets, batch_ratios, hedge_times))
-    for index, combo in enumerate(combinations):
-        pri
+
+    #for index, combo in enumerate(combinations):
+    #    lam, N_train, batch_ratio, steps = combo
+    #    print(f"Index: {index}, Lambda: {lam}, N_train: {N_train}, Batch ratio: {batch_ratio}, Hedge time: {steps}")
+
+    with ProcessPoolExecutor(MAX_PROCESSES) as executor:
+        results = executor.map(parrallel_tasks, *zip(*combinations))
+        for result in results:
+            print(result)
 
 
+    """
     # use parallel computing
     out = torch.zeros((len(lams), len(training_sets), len(batch_ratios), len(hedge_times)))
     def parallel_tasks(lam, N_train):
@@ -254,3 +266,4 @@ if __name__ == '__main__':
     end_time = time.time()
     runtime = (end_time - start_time) / 60
     print(f"Runtime of the script is {runtime} minutes")
+    """
