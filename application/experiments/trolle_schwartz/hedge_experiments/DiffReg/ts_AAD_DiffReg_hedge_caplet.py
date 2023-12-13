@@ -18,6 +18,8 @@ torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
 MAX_PROCESSES = os.cpu_count() - 1
+print(f'Settings MAX_PROCESSES = {MAX_PROCESSES}')
+
 
 def calc_hedge_coef(X_train, t0,
                     prd_sold, prd_hedge, N_train,
