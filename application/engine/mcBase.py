@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 
 
 MEASURES = ['risk_neutral', 'terminal']
-
+torch.set_default_dtype(torch.float64)
 
 class RNG:
     """Random Number Generator"""
@@ -38,9 +38,9 @@ class RNG:
         """Returns a Cube (3D-tensor) of numRV x M x N Gaussian random variables"""
         if self.use_av:
             self._check_av_dim()
-            Z = torch.randn(size=(self.numRV, self.M, self.N // 2), generator=self.gen)
+            Z = torch.randn(size=(self.numRV, self.M, self.N // 2), generator=self.gen, dtype=torch.float64)
             return torch.concat([Z, -Z], dim=2)
-        return torch.randn(size=(self.numRV, self.M, self.N), generator=self.gen)
+        return torch.randn(size=(self.numRV, self.M, self.N), generator=self.gen, dtype=torch.float64)
 
     def gaussMat(self):
         """Returns a matrix (2D-tensor) of MxN Gaussian random variables"""
