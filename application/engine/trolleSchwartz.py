@@ -4,6 +4,8 @@ from application.engine.products import Product, Sample
 from application.engine.linearProducts import forward, swap, swap_rate
 from scipy.integrate import solve_ivp
 
+torch.set_default_dtype(torch.float64)
+
 
 class trolleSchwartz(Model):
     """
