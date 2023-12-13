@@ -10,16 +10,19 @@ from application.engine.standard_scalar import DifferentialStandardScaler
 from application.engine.products import CapletAsPutOnZCB
 from application.engine.trolleSchwartz import trolleSchwartz
 from application.utils.path_config import get_plot_path, get_data_path
+from application.utils.torch_utils import max0
 from application.engine.mcBase import mcSim, RNG, mcSimPaths
+from joblib import Parallel, delayed
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
+MAX_PROCESSES = os.cpu_count() - 1
 
 def calc_hedge_coef(X_train, t0,
                     prd_sold, prd_hedge, N_train,
                     const, diff_reg, scalar,
-                    simDim: int = 1, seed: int = 1234, use_av: bool = 1234):
+                    simDim: int = 1, seed: int = 1234, use_av: bool = True):
     _, z_sold = estimate_greeks(
         X=X_train, t0=t0, prd=prd_sold, N_train=N_train,
         const=const, diff_reg=diff_reg, scalar=scalar, simDim=simDim,
@@ -48,7 +51,7 @@ def cpl_mc_price(t0, X, const, prd, dTL, N: int = 50000, simDim: int = 1, seed: 
     cRng = RNG(seed=seed, use_av=use_av)
     cTL = dTL[dTL <= prd.exerciseDate - t0]
     payoff = mcSim(cPrd, cMdl, cRng, N, cTL)
-    return torch.mean(payoff)
+    return torch.mean(payoff).view(1)
 
 
 def estimate_greeks(X, t0, prd, N_train, const,
@@ -235,10 +238,11 @@ class ZcbAAD(torch.nn.Module):
 
         return zcb.detach(), grad
 
+
 if __name__ == '__main__':
     # Settings
     file_path = get_data_path('ts_cpl_mc_prices.pkl')
-    burn_in_dTL = torch.linspace(0.0, 5.0, 501)
+    burn_in_dTL = torch.linspace(0.0, 1.0, 101)
 
     seed = 1234
     N_train = 1024
@@ -351,6 +355,9 @@ if __name__ == '__main__':
                          diff_reg=diff_reg, scalar=scalar, simDim=simDim, seed=seed, use_av=use_av)
 
     # Initialize hedge experiment
+    matHc = matHzcb = matHb = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
+    matCpl = matZcb = matB = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
+
     mcSimPaths(prd_sold, mdl, rng, N_train, dTL)
     paths = mdl.x
 
@@ -362,6 +369,20 @@ if __name__ == '__main__':
     r = torch.full((len(dTL), N_test), torch.nan)
     r[0, :] = mdl.calc_short_rate(X_test, torch.tensor(0.0))
 
+    B = torch.ones((N_test, ))
+
+    V0 = price_sold - h_zcb * zcb - h_c * price_hedge - h_b * torch.tensor(1.0)
+    if not torch.allclose(V0, torch.tensor(0.0)):
+        print('Initial value of portfolio is not 0!')
+
+    matHc[0, :] = h_c
+    matHzcb[0, :] = h_zcb
+    matHb[0, :] = h_b
+
+    matCpl[0, :] = price_hedge
+    matZcb[0, :] = zcb
+    matB[0, :] = B
+
     # Simulate
     for k in tqdm(range(1, len(dTL))):
         dt = dTL[k] - dTL[k - 1]
@@ -372,17 +393,35 @@ if __name__ == '__main__':
 
         # Update market variables
         r[k, :] = mdl.calc_short_rate(X_test, torch.tensor(0.0))
+        B *= torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
         zcb = mdl.calc_zcb(X_test, torch.tensor(0.0), (prd_sold.exerciseDate + prd_sold.delta).view(1) - t).flatten()
 
-        cpl = torch.hstack([
-            cpl_mc_price(t0=t, X=[X_test[i][j] for i in range(8)], const=const, prd=prd_hedge, dTL=dTL, N=50000).view(1)
-            for j in range(N_test)
-        ])
+        if t < prd_hedge.exerciseDate:
+            cpl = torch.hstack(
+                Parallel(n_jobs=MAX_PROCESSES)(
+                    delayed(cpl_mc_price)(t0=t, X=[X_test[i][j] for i in range(8)], const=const, prd=prd_hedge, dTL=dTL, N=50000)
+                    for j in range(N_test)
+                )
+            )
+            #cpl = torch.hstack([
+            #    cpl_mc_price(t0=t, X=[X_test[i][j] for i in range(8)], const=const, prd=prd_hedge, dTL=dTL, N=50000).view(1)
+            #    for j in range(N_test)
+            #])
+        else:
+            kBar = 1.0 / (1.0 + prd_hedge.delta * prd_hedge.strike)
+            cpl = max0(kBar - zcb)
+
+        matCpl[k, :] = cpl
+        matZcb[k, :] = zcb
+        matB[k, :] = B
 
         # Update portfolio
-        V = h_zcb * zcb + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt) + h_c * cpl
+        V = h_zcb * zcb + h_c * cpl + h_b * B
         if k < len(dTL) - 1:
             X_train = [x[0][k] for x in paths]
             h_c, h_zcb = calc_hedge(X_train, t)
-
             h_b = V - h_c * cpl - h_zcb * zcb
+
+            matHc[k, :] = h_c
+            matHzcb[k, :] = h_zcb
+            matHb[k, :] = h_b

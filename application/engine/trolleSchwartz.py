@@ -4,6 +4,8 @@ from application.engine.products import Product, Sample
 from application.engine.linearProducts import forward, swap, swap_rate
 from scipy.integrate import solve_ivp
 
+torch.set_default_dtype(torch.float64)
+
 
 class trolleSchwartz(Model):
     """
@@ -219,8 +221,8 @@ class trolleSchwartz(Model):
 
         W = Z.clone()
         for i in range(self.simDim):
-            W[[2 * i + 1], :, :] = self.rho[i] * Z[[2 * i], :, :] * \
-                                   torch.sqrt(1.0 - self.rho[i] ** 2.0) * Z[[2 * i + 1],:, :]
+            W[[2 * i + 1], :, :] = (self.rho[i] * Z[[2 * i], :, :] * \
+                                    torch.sqrt(1.0 - self.rho[i] ** 2.0) * Z[[2 * i + 1], :, :])
 
         Wf = W[0::2, :, :]
         Wv = W[1::2, :, :]
