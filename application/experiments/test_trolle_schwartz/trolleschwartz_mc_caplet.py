@@ -38,10 +38,10 @@ if __name__ == "__main__":
     strike = torch.tensor(.07)
     notional = torch.tensor(1e6)
 
-    dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
+    dTL = torch.linspace(0.0, start + delta, int(100 * (start + delta) + 1))
 
     # instantiate model
-    model = trolleSchwartz(xt=torch.tensor([0.0]),vt=v0,
+    model = trolleSchwartz(vt=v0,
                  phi1t=torch.tensor([0.0]),phi2t=torch.tensor([0.0]),
                  phi3t=torch.tensor([0.0]),phi4t=torch.tensor([0.0]),
                  phi5t=torch.tensor([0.0]),phi6t=torch.tensor([0.0]),
@@ -70,7 +70,7 @@ if __name__ == "__main__":
 
 
     if strike_plot:
-        strikes = torch.linspace(0.025, 0.14, 10)
+        strikes = torch.linspace(0.03, 0.13, 10)
         times = torch.tensor([1, 2, 3, 5, 7, 10])
 
         prices = torch.empty(len(strikes) * len(times))
@@ -134,15 +134,23 @@ if __name__ == "__main__":
         import numpy as np
 
         # Create a meshgrid for X, Y, and Z values
-        X, Y = np.meshgrid(strikes, [1, 2, 3, 5, 7, 10])
-        Z_mc = torch.stack([mcprices1, mcprices2, mcprices3, mcprices4, mcprices5, mcprices6])
-        Z_an = torch.stack([prices1, prices2, prices3, prices4, prices5, prices6])
+        X, Y = np.meshgrid(strikes, [1, 2, 3, 5]) #[1, 2, 3, 5, 7, 10]
+        Z_mc = torch.stack([mcprices1, mcprices2, mcprices3, mcprices4]) #, mcprices5, mcprices6
+        Z_an = torch.stack([prices1, prices2, prices3, prices4]) #, prices5, prices6
+
+        d1 = (mcprices1 - prices1) / prices1
+        d2 =  (mcprices2 - prices2) / prices2
+        d3 = (mcprices3 - prices3) / prices3
+        d4 = (mcprices4 - prices4) / prices4
+
+        Devs = torch.stack((d1,d2,d3,d4))
 
         # Create a 3D figure
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
 
-        ax.plot_surface(X, Y, abs(Z_an-Z_mc)/notional, cmap='plasma', linestyle='--')
+        ax.plot_wireframe(X, Y, Z_an, color='black', linestyle='--')
+        ax.plot_surface(X, Y, Z_mc, cmap='magma', linestyle='--')
 
         ax.set_xlabel('K')
         ax.set_ylabel('Maturity')
