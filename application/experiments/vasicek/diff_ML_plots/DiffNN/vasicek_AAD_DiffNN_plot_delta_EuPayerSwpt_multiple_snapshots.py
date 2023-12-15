@@ -16,7 +16,7 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 1024 * 4
+    N_train = 1024 #* 4
     N_test = 256
     use_av = True
 
@@ -29,7 +29,7 @@ if __name__ == '__main__':
     seed_weights = 1234
     epochs = 500
     batches_per_epoch = 16
-    min_batch_size = 256 * 10
+    min_batch_size = int(N_train * 5/8) #256 * 10
     lam = 1.0
     hidden_units = 20
     hidden_layers = 4
