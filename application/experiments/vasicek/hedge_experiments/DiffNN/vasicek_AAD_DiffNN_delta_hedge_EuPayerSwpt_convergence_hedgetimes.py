@@ -19,6 +19,7 @@ torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
 MAX_PROCESSES = os.cpu_count() - 1
+print(f"MAX PROCESSES SETTING={MAX_PROCESSES}")
 
 def random_color(lam : float):
     """Generate random colors within specific ranges based on the value of lam."""
@@ -32,16 +33,77 @@ def random_color(lam : float):
         # Default color if lam is neither 1.0 nor 0.0
         return "#{:06x}".format(random.randint(0, 0xFFFFFF))
 
-def parrallel_tasks(combo):
-    lam, N_train, batch_ratio, steps = combo
+def parrallel_tasks(lam, N_train, batch_ratio, steps):
     return lam, N_train, batch_ratio, steps
+
+def hedge(args):
+    lam, N_train, batch_ratio, steps, mdl, prd, rng, N_test = args
+    r0 = torch.tensor(0.08)  # torch.linspace(r0_min, r0_max, N_test)
+    mdl.r0 = r0
+
+    min_batch_size = N_train // batch_ratio
+    nn_params = {'N_train': N_train, 'seed_weights': seed_weights, 'epochs': epochs,
+                 'batches_per_epoch': batches_per_epoch, 'min_batch_size': min_batch_size,
+                 'lam': lam, 'hidden_units': hidden_units, 'hidden_layers': hidden_layers}
+
+    # Simulate paths
+    # hedge_error = []
+
+    dTL = torch.linspace(0.0, float(swapFirstFixingDate), steps + 1)
+    mcSimPaths(prd, mdl, rng, N_test, dTL)
+    r = mdl.x
+    # Get price of claim (we use 500k simulations to get an accurate estimate)
+
+    if r0.dim() != 0:
+        swpt = torch.empty_like(r[0, :])
+        for n in range(N_test):
+            mdl.r0 = r[0, n]
+            swpt[n] = torch.mean(mcSim(prd, mdl, rng, 50000))
+    else:
+        price = torch.mean(mcSim(prd, mdl, rng, 500000))
+        swpt = price * torch.ones(N_test)
+
+    # Initialize experiment
+    swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
+
+    V = swpt
+    h_a = calc_delta_diff_nn(u_vec=swap, r0_vec=r0_vec, t0=0.0,
+                             calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
+                             nn_Params=nn_params, use_av=use_av)
+    h_b = V - h_a * swap
+
+    # Loop over time
+    for k in range(1, len(dTL)):
+        dt = dTL[k] - dTL[k - 1]
+        t = dTL[k]
+
+        # Update market variables
+        swap = mdl.calc_swap(r[k, :], t_swap_fixings - t, delta, strike, notional)
+
+        # Update portfolio
+        V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
+        if k < len(dTL) - 1:
+            #r0_vec = choose_training_grid(r[k, :], N_train)
+            h_a = calc_delta_diff_nn(u_vec=swap, r0_vec=r0_vec, t0=t,
+                                     calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
+                                     nn_Params=nn_params, use_av=use_av)
+            h_b = V - h_a * swap
+    # price adjusted
+    # hedge_error.append(torch.std((V - max0(swap))/swpt))
+
+    # normal hedge error
+    # hedge_error.append(torch.std(V - max0(swap)))
+    # out[lam, N_train, i, steps] = torch.std(V - max0(swap))
+    hedge_error = torch.std(V - max0(swap))
+    return lam, N_train, min_batch_size, steps, hedge_error
+
 
 if __name__ == '__main__':
 
     #start_time = time.time()
 
     seed = 1234
-    N_train = 1024 * 2
+    N_train = 1024
     N_test = 256
     use_av = True
 
@@ -140,9 +202,9 @@ if __name__ == '__main__':
 
     # varying sets
     lams = [0.0, 1.0]
-    training_sets = [1024, 1024 * 8]
-    batch_ratios = [2, 4, 8] #, 8])
-    hedge_times = [1, 2, 4, 12, 250 // 5]  # , 250//2, 250]
+    training_sets = [1024] #, 1024 * 8]
+    batch_ratios = [2, 4] #, 8] #, 8])
+    hedge_times = [1, 2, 4, 12] #, 250 // 5]  # , 250//2, 250]
 
     import itertools
     combinations = list(itertools.product(lams, training_sets, batch_ratios, hedge_times))
@@ -151,8 +213,10 @@ if __name__ == '__main__':
     #    lam, N_train, batch_ratio, steps = combo
     #    print(f"Index: {index}, Lambda: {lam}, N_train: {N_train}, Batch ratio: {batch_ratio}, Hedge time: {steps}")
 
+    args = [(lam, N_train, batch_ratio, steps, mdl, prd, rng, N_test)
+        for lam, N_train, batch_ratio, steps in combinations]
     with ProcessPoolExecutor(MAX_PROCESSES) as executor:
-        results = executor.map(parrallel_tasks, *zip(*combinations))
+        results = executor.map(hedge, args) #executor.map(parrallel_tasks, *zip(*combinations))
         for result in results:
             print(result)
 
