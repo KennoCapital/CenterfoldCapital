@@ -201,7 +201,7 @@ if __name__ == '__main__':
     lams = [0.0, 1.0]
     training_sets = [1024, 1024 * 8, 1024 * 16]
     batch_ratios = [1, 2, 4, 8]
-    hedge_times = [1, 2, 4, 12, 250 // 5, 250//2, 250, 500] #TODO: Do it with a year and perhaps two years
+    hedge_times = [1, 2, 4, 12, 250 // 5, 250//2, 250, 500]
 
     combinations = list(itertools.product(lams, training_sets, batch_ratios, hedge_times))
 
