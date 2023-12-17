@@ -25,19 +25,19 @@ def calc_hedge_coef(X_train, t0,
                     prd_sold, prd_hedge, N_train,
                     const, diff_reg, scalar,
                     simDim: int = 1, seed: int = 1234, use_av: bool = True):
-    _, z_sold = estimate_greeks(
+    _, z_sold, _, _, _ = estimate_greeks(
         X=X_train, t0=t0, prd=prd_sold, N_train=N_train,
         const=const, diff_reg=diff_reg, scalar=scalar, simDim=simDim,
         seed=seed, use_av=use_av
     )
-    _, z_hedge = estimate_greeks(
+    _, z_hedge, _, _, _ = estimate_greeks(
         X=X_train, t0=t0, prd=prd_hedge, N_train=N_train,
         const=const, diff_reg=diff_reg, scalar=scalar, simDim=simDim,
         seed=seed, use_av=use_av
     )
 
-    h_c = z_sold[idx_test, 1] / z_hedge[idx_test, 1]
-    h_zcb = z_sold[idx_test, 0] - z_hedge[idx_test, 0] * h_c
+    h_c = z_sold[:, 1] / z_hedge[:, 1]
+    h_zcb = z_sold[:, 0] - z_hedge[:, 0] * h_c
 
     return h_c, h_zcb
 
@@ -57,7 +57,7 @@ def cpl_mc_price(t0, X, const, prd, dTL, N: int = 50000, simDim: int = 1, seed: 
 
 
 def estimate_greeks(X, t0, prd, N_train, const,
-                    diff_reg, scalar,
+                    diff_reg=None, scalar=None,
                     simDim: int = 1, seed: int = 1234, use_av: bool = True):
     # Calculate required sensitivities
     state = param_clone(*X)
@@ -76,11 +76,13 @@ def estimate_greeks(X, t0, prd, N_train, const,
     y_train = payoff.reshape(N_train, 1)
     z_train = torch.hstack([dydu, dydx[:, 1].reshape(N_train, 1)])
 
+    if diff_reg is None or scalar is None:
+        return x_train, y_train, z_train
+
     # Make predictions
     f_pred = partial(diff_reg_fit_predict, diff_reg=diff_reg, scalar=scalar)
     y_pred, z_pred = f_pred(x_train, y_train, z_train, x_train)
-
-    return y_pred, z_pred
+    return y_pred, z_pred, x_train, y_train, z_train
 
 
 def diff_reg_fit_predict(x_train, y_train, z_train, x_test, diff_reg, scalar):
@@ -244,10 +246,11 @@ class ZcbAAD(torch.nn.Module):
 if __name__ == '__main__':
     # Settings
     file_path = get_data_path('ts_cpl_mc_prices.pkl')
-    burn_in_dTL = torch.linspace(0.0, 1.0, 101)
+    burn_in_dTL = torch.linspace(0.0, 0.5, 51)
+    N_mc_price = 50000
 
     seed = 1234
-    N_train = 1024
+    N_train = 8196
     N_test = 256
     steps_per_year = 100
     use_av = True
@@ -319,51 +322,134 @@ if __name__ == '__main__':
 
     # Burn in simulation and re-init
     mcSimPaths(prd_sold, mdl, rng, N_train, burn_in_dTL)
-    xt, vt, phi1t, phi2t, phi3t, phi4t, phi5t, phi6t = [x[:simDim, -1] for x in mdl.x]
+    state = [x[:simDim, -1] for x in mdl.x]
+
     mdl = trolleSchwartz(
-        xt=xt, vt=vt, phi1t=phi1t, phi2t=phi2t, phi3t=phi3t, phi4t=phi4t, phi5t=phi5t, phi6t=phi6t,
+        *state,
         kappa=kappa, theta=theta, sigma=sigma, rho=rho,
         gamma=gamma, alpha0=alpha0, alpha1=alpha1, varphi=varphi,
         simDim=simDim
     )
+
+    """
+    T = torch.linspace(0.0, 30.0, 121)
+    fwd = mdl.calc_instant_fwd(mdl.x0, torch.tensor(0.0), T)
+
+    def f_to_zcb(fwd, T):
+        return torch.exp(- torch.cumsum(0.5 * (fwd[:-1] + fwd[1:]) * T.diff().reshape(-1, 1), dim=0))
+
+     plt.plot(T[1:], f_to_zcb(fwd, T)[:, :100], color='black', alpha=0.2)
+     plt.xlabel('$T$')
+     plt.ylabel('$P(0,T)$')
+     plt.show()
+
+     for i in range(100):
+        plt.plot(torch.linspace(0.0, 30.0, 121), fwd[:, i], color='black', alpha=0.2)
+     plt.ylabel('$f(t,T)$')
+     plt.xlabel('$T$')
+     plt.show()
+    """
+
+    y_pred, z_pred, x_train, y_train, z_train = estimate_greeks(mdl.x0, torch.tensor(0.0), prd_sold, N_train, const, diff_reg, scalar)
+
+    fig, ax = plt.subplots(2, sharex='all')
+    ax[0].plot(x_train[:, 0], y_train, 'o', color='gray', alpha=0.5/8)
+    ax[0].plot(x_train[:, 0], y_pred, 'o', color='orange', alpha=0.25)
+
+    ax[1].plot(x_train[:, 0], z_train[:, 0], 'o', color='gray', alpha=0.5/8)
+    ax[1].plot(x_train[:, 0], z_pred[:, 0], 'o', color='orange', alpha=0.25)
+
+    ax[1].set_xlabel('ZCB')
+    ax[0].set_ylabel('Cpl')
+    ax[1].set_ylabel('Delta')
+    plt.show()
+
+    plt.plot(x_train[:, 0], z_train[:, 1], 'o', color='gray', alpha=0.5/4)
+    plt.plot(x_train[:, 0], z_pred[:, 1], 'o', color='orange', alpha=0.25)
+    plt.ylim(z_pred[:, 1].min() * 1.05, z_pred[:, 1].max() * 1.05)
+    plt.show()
 
     # Select random states as test paths
     idx_test = torch.randperm(N_train, generator=rng.gen)[:N_test]
     X_test = [x[0, idx_test] for x in mdl.x0]
     xt_test, vt_test, phi1t_test, phi2t_test, phi3t_test, phi4t_test, phi5t_test, phi6t_test = X_test
 
-    if os.path.exists(file_path):
-        with open(file_path, 'rb') as file:
-            price_sold, price_hedge = pickle.load(file)
+    if os.path.exists(get_data_path('ts_cpl_mc_full.pkl')):
+        with open(get_data_path('ts_cpl_mc_full.pkl'), 'rb') as file:
+            zcb_sold, v_sold, price_sold, delta_sold, vega_sold, zcb_hedge, v_hedge, price_hedge, delta_hedge, vega_hedge = pickle.load(file)
     else:
-        price_sold = torch.full((N_test,), torch.nan)
-        price_hedge = torch.full((N_test,), torch.nan)
+        price_sold = torch.full((N_test, ), torch.nan)
+        price_hedge = torch.full((N_test, ), torch.nan)
+
+        zcb_sold = torch.full((N_test, ), torch.nan)
+        zcb_hedge = torch.full((N_test, ), torch.nan)
+        v_sold = torch.full((N_test, ), torch.nan)
+        v_hedge = torch.full((N_test, ), torch.nan)
+
+        delta_sold = torch.full((N_test, ), torch.nan)
+        delta_hedge = torch.full((N_test, ), torch.nan)
+        vega_sold = torch.full((N_test, ), torch.nan)
+        vega_hedge = torch.full((N_test, ), torch.nan)
+
+        cX = [[X_test[i][j] * torch.ones((N_mc_price,)) for i in range(8)] for j in range(N_test)]
         for i in tqdm(range(N_test), desc='Calculating initial prices with MC'):
-            cMdl = trolleSchwartz(
-                xt_test[i], vt_test[i], phi1t_test[i], phi2t_test[i], phi3t_test[i], phi4t_test[i], phi5t_test[i], phi6t_test[i],
-                *const, simDim
-            )
+
+            cX = [xt_test[i], vt_test[i], phi1t_test[i], phi2t_test[i], phi3t_test[i], phi4t_test[i], phi5t_test[i], phi6t_test[i]]
+            
+            cMdl = trolleSchwartz(*cX, *const, simDim)
             cRng = RNG(seed=seed, use_av=use_av)
-            paths = mcSimPaths(prd_sold, cMdl, cRng, 50000, dTL)
+            paths = mcSimPaths(prd_sold, cMdl, cRng, N_mc_price, dTL)
             price_sold[i] = torch.mean(prd_sold.payoff(paths))
             price_hedge[i] = torch.mean(prd_hedge.payoff(paths))
+            """
+            x_, y_, z_ = estimate_greeks(X=cX[i], t0=torch.tensor(0.0), prd=prd_sold, N_train=10000, const=const)
+            zcb_sold[i] = torch.mean(x_[:, 0])
+            v_sold[i] = torch.mean(x_[:, 1])
+            price_sold[i] = torch.mean(y_)
+            delta_sold[i] = torch.mean(z_[:, 0])
+            vega_sold[i] = torch.mean(z_[:, 1])
 
-        with open(file_path, 'wb') as file:
-            pickle.dump(tuple((price_sold, price_hedge)), file, pickle.HIGHEST_PROTOCOL)
+            x_, y_, z_ = estimate_greeks(X=cX[i], t0=torch.tensor(0.0), prd=prd_hedge, N_train=10000, const=const)
+            zcb_hedge[i] = torch.mean(x_[:, 0])
+            v_hedge[i] = torch.mean(x_[:, 1])
+            price_hedge[i] = torch.mean(y_)
+            delta_hedge[i] = torch.mean(z_[:, 0])
+            vega_hedge[i] = torch.mean(z_[:, 1])
+            """
+        # filepath
+        with open(get_data_path('ts_cpl_mc_full.pkl'), 'wb') as file:
+            test_data = zcb_sold, v_sold, price_sold, delta_sold, vega_sold, zcb_hedge, v_hedge, price_hedge, delta_hedge, vega_hedge
+            pickle.dump(tuple(test_data), file, pickle.HIGHEST_PROTOCOL)
 
     # Auxiliary function
     calc_hedge = partial(calc_hedge_coef,
                          prd_sold=prd_sold, prd_hedge=prd_hedge, N_train=N_train, const=const,
                          diff_reg=diff_reg, scalar=scalar, simDim=simDim, seed=seed, use_av=use_av)
 
-    # Initialize hedge experiment
-    matHc = matHzcb = matHb = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
-    matCpl = matZcb = matB = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
+    # Compare initial fit
+    out_sold = estimate_greeks(X=mdl.x0, t0=torch.tensor(0.0), prd=prd_sold, N_train=N_train,
+                               const=const, diff_reg=diff_reg, scalar=scalar)
+    out_hedge = estimate_greeks(X=mdl.x0, t0=torch.tensor(0.0), prd=prd_hedge, N_train=N_train,
+                                const=const, diff_reg=diff_reg, scalar=scalar)
+    y_pred_sold, z_pred_sold, x_train_sold, y_train_sold, z_train_sold = out_sold
+    y_pred_hedge, z_pred_hedge, x_train_hedge, y_train_hedge, z_train_hedge = out_hedge
 
+
+
+
+    # Initialize hedge experiment
     mcSimPaths(prd_sold, mdl, rng, N_train, dTL)
     paths = mdl.x
 
-    h_c, h_zcb = calc_hedge(mdl.x0, torch.tensor(0.0))
+    matHc = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
+    matHzcb = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
+    matHb = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
+    matCpl = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
+    matZcb = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
+    matB = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
+    matV = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
+
+    h_c, h_zcb = calc_hedge(mdl.x0, torch.tensor(0.0))[idx_test, :]
 
     zcb = mdl.calc_zcb(X_test, torch.tensor(0.0), (prd_sold.exerciseDate + prd_sold.delta).view(1)).flatten()
     h_b = price_sold - h_zcb * zcb - h_c * price_hedge
@@ -380,6 +466,8 @@ if __name__ == '__main__':
     matHc[0, :] = h_c
     matHzcb[0, :] = h_zcb
     matHb[0, :] = h_b
+
+    matV[0, :] = V0
 
     matCpl[0, :] = price_hedge
     matZcb[0, :] = zcb
@@ -401,7 +489,7 @@ if __name__ == '__main__':
         if t < prd_hedge.exerciseDate:
             cpl = torch.hstack(
                 Parallel(n_jobs=MAX_PROCESSES)(
-                    delayed(cpl_mc_price)(t0=t, X=[X_test[i][j] for i in range(8)], const=const, prd=prd_hedge, dTL=dTL, N=50000)
+                    delayed(cpl_mc_price)(t0=t, X=[X_test[i][j] for i in range(8)], const=const, prd=prd_hedge, dTL=dTL[0::2], N=10000)
                     for j in range(N_test)
                 )
             )
@@ -419,11 +507,24 @@ if __name__ == '__main__':
 
         # Update portfolio
         V = h_zcb * zcb + h_c * cpl + h_b * B
+        matV[k, :] = V
+
         if k < len(dTL) - 1:
             X_train = [x[0][k] for x in paths]
-            h_c, h_zcb = calc_hedge(X_train, t)
+            h_c, h_zcb = calc_hedge(X_train, t)[idx_test, :]
             h_b = V - h_c * cpl - h_zcb * zcb
 
             matHc[k, :] = h_c
             matHzcb[k, :] = h_zcb
             matHb[k, :] = h_b
+
+    # Export
+    #with open(get_data_path('ts_delta_hedge.pkl'), 'wb') as file:
+    #    pickle.dump(tuple((matCpl, matZcb, matB, matHc, matHzcb, matHb, matV)), file, pickle.HIGHEST_PROTOCOL)
+
+    # Import
+    #with open(get_data_path('ts_delta_hedge.pkl'), 'rb') as file:
+    #    matCpl, matZcb, matB, matHc, matHzcb, matHb, matV = pickle.load(file)
+
+    #plt.plot(matZcb[-1], matV[-1], 'o')
+    #plt.show()
