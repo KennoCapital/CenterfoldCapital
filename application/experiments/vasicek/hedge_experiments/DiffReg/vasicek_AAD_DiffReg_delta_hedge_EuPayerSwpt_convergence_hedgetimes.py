@@ -28,7 +28,7 @@ if __name__ == '__main__':
 
 
     # Model specification
-    r0 = torch.linspace(r0_min, r0_max, N_test) #torch.tensor(0.08)
+    r0 = torch.tensor(0.08) #torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
     b = torch.tensor(0.09) #r0.median()
     sigma = torch.tensor(0.0148)
@@ -109,15 +109,20 @@ if __name__ == '__main__':
 
     # Setup Differential Regressor, and Scalar
     degrees = [3, 5, 7, 9]
-
+    degree_colors = {3: "red",
+    5: "orange",
+    7: "darkred",
+    9: "pink"
+                     }
 
     plt.figure()
+
     for deg in tqdm(degrees):
         alpha = 1.0
         diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True, include_interactions=True)
 
         # Simulate paths
-        hedge_times = [1, 2, 4, 12, 250//5, 250//2] #, 250, 250*2, 250*4]
+        hedge_times = [1, 2, 4, 12, 250//5, 250//2, 250] #, 250*2, 250*4]
         hedge_error = []
 
         for steps in hedge_times:
@@ -126,10 +131,14 @@ if __name__ == '__main__':
             mcSimPaths(prd, mdl, rng, N_test, dTL)
             r = mdl.x
             # Get price of claim (we use 500k simulations to get an accurate estimate)
-            swpt = torch.empty_like(r[0, :])
-            for n in range(N_test):
-                mdl.r0 = r[0, n]
-                swpt[n] = torch.mean(mcSim(prd, mdl, rng, 50000))
+            if r0.dim() != 0:
+                swpt = torch.empty_like(r[0, :])
+                for n in range(N_test):
+                    mdl.r0 = r[0, n]
+                    swpt[n] = torch.mean(mcSim(prd, mdl, rng, 50000))
+            else:
+                price = torch.mean(mcSim(prd, mdl, rng, 500000))
+                swpt = price * torch.ones(N_test)
 
             # Initialize experiment
             swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
@@ -158,12 +167,16 @@ if __name__ == '__main__':
                     h_b = V - h_a * swap
 
             hedge_error.append(torch.std((V - max0(swap)/swpt)))
-        plt.plot(np.log(hedge_times), np.log(hedge_error), 'o-', label=f'Deg={deg}')
-
+        line, = plt.plot(np.log(hedge_times), np.log(hedge_error), 'o-', label=f'Deg={deg}', color=degree_colors[deg])
+        plt.annotate(f'Deg={deg}',
+                     xy=(np.log(hedge_times[-1]), np.log(hedge_error[-1])),
+                     textcoords='offset points',
+                     color=degree_colors[deg],
+                     horizontalalignment='center'
+                     )
 
     plt.title(prd.name + f'alpha = {alpha}, Samples={N_train} , Notional = {int(notional)}')
     plt.xlabel('Hedge Frequency')
     plt.ylabel('Std. of Hedge Error')
     plt.xticks(ticks=np.log(hedge_times), labels=hedge_times)
-    plt.legend()
     plt.show()

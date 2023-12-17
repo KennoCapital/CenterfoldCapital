@@ -28,14 +28,14 @@ if __name__ == '__main__':
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Setup Differential Regressor, and Scalar
-    deg = 7
+    deg = 9
     alpha = 1.0
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
 
     # Model specification
     r0 = torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = r0.median()
+    b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     measure = 'risk_neutral'
 
@@ -167,7 +167,7 @@ if __name__ == '__main__':
 
     V *= mdl.calc_zcb(r[-1], delta)[0]
 
-    MAE_value = torch.mean(torch.abs(V - notional * K_bar * max0(1.0 / K_bar - mdl.calc_zcb(r[-1, :], delta)[0])))
+    MAE_value = torch.mean(torch.abs( torch.std(V - notional * K_bar * max0(1.0 / K_bar - mdl.calc_zcb(r[-1, :], delta)[0]))))
 
     """ Plot """
     av_str = 'with AV' if use_av else 'without AV'

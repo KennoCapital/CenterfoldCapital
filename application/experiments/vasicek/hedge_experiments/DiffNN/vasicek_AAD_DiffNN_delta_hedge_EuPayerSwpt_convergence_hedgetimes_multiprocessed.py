@@ -201,7 +201,7 @@ if __name__ == '__main__':
     lams = [0.0, 1.0]
     training_sets = [1024, 1024 * 8, 1024 * 16]
     batch_ratios = [1, 2, 4, 8]
-    hedge_times = [1, 2, 4, 12, 250 // 5, 250//2] #, 250] #TODO: Do it with a year and perhaps two years
+    hedge_times = [1, 2, 4, 12, 250 // 5, 250//2, 250, 500]
 
     combinations = list(itertools.product(lams, training_sets, batch_ratios, hedge_times))
 
@@ -232,7 +232,7 @@ if __name__ == '__main__':
                     else:
                         raise ValueError("Chose wrong training size!")
                     plt.annotate(f'N={n}, bsz={b}',
-                                 xy=(np.log(df_tmp['STEPS'].values[3]), np.log(df_tmp['HEDGE_ERROR'].values[0])) if lam == 0.0
+                                 xy=(np.log(df_tmp['STEPS'].values[3]), np.log(df_tmp['HEDGE_ERROR'].values[3])) if lam == 0.0
                                     else
                                     (np.log(df_tmp['STEPS'].values[-1]), np.log(df_tmp['HEDGE_ERROR'].values[-1])),
                                  xytext=(0, y_offset),
