@@ -20,7 +20,7 @@ if __name__ == '__main__':
     N_test = 256
     use_av = True
 
-    hedge_times = 500
+    hedge_times = 250
 
     r0_min = -0.02
     r0_max = 0.15
@@ -36,7 +36,7 @@ if __name__ == '__main__':
     # Model specification
     r0 = torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = r0.median()
+    b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     measure = 'risk_neutral'
 
@@ -45,7 +45,7 @@ if __name__ == '__main__':
     rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
-    exerciseDate = torch.tensor(5.0)
+    exerciseDate = torch.tensor(1.0)
     delta = torch.tensor(0.25)
     swapFirstFixingDate = exerciseDate
     swapLastFixingDate = exerciseDate + torch.tensor(5.0)
@@ -119,8 +119,8 @@ if __name__ == '__main__':
     """ Delta Hedge Experiment """
 
     # Get price of claim (we use 500k simulations to get an accurate estimate)
-    swpt = torch.empty_like(r[0, :])
-    for n in range(N_test):
+    swpt = torch.zeros_like(r[0, :])
+    for n in tqdm(range(N_test)):
         mdl.r0 = r[0, n]
         swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
 

@@ -102,7 +102,7 @@ if __name__ == '__main__':
         return res
 
     """ Delta Hedge Experiment """
-    steps = 100 #100
+    steps = 100
     dTL = torch.linspace(0.0, float(swapFirstFixingDate), steps + 1)
     mcSimPaths(prd, mdl, rng, N_test, dTL)
     r = mdl.x
