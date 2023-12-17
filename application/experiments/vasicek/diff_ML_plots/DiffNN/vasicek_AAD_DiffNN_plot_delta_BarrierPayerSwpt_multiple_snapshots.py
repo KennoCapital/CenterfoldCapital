@@ -30,7 +30,7 @@ if __name__ == '__main__':
     seed_weights = 1234
     epochs = 250
     batches_per_epoch = 16
-    min_batch_size = 256 * 40
+    min_batch_size = int(N_train * 5/8) #256 * 40
     lam = 1.0
     hidden_units = 20
     hidden_layers = 4
@@ -195,8 +195,8 @@ if __name__ == '__main__':
         ax[row + 1, col].plot(X_test[1:], z_mdl, color='black', label='MC (Bump and reval)')
         ax[row + 1, col].set_xlabel('Swap(0)')
         ax[row + 1, col].set_ylabel('Delta')
-        ax[row + 1, col].set_ylim(-1.2, 1.2)
-        ax[row + 1, col].text(0.05, 0.8, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[row + 1, col].transAxes)
+        ax[row + 1, col].set_ylim(-5.0, 1.5)
+        ax[row + 1, col].text(0.05, 0.6, f'MAE = {MAE_delta:.4f}', fontsize=8, transform=ax[row + 1, col].transAxes)
 
         # Adjust size of subplots
         box0 = ax[row, col].get_position()

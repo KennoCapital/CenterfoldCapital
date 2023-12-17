@@ -17,48 +17,12 @@ from joblib import Parallel, delayed
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
-MAX_PROCESSES = os.cpu_count() - 4
+MAX_PROCESSES = os.cpu_count() - 1
 print(f'Settings MAX_PROCESSES = {MAX_PROCESSES}')
 
 
-def calc_hedge_coef(X_train, t0,
-                    prd_sold, prd_hedge, N_train,
-                    const, diff_reg, scalar,
-                    simDim: int = 1, seed: int = 1234, use_av: bool = True):
-    _, z_sold, pkg1 = estimate_greeks(
-        X=X_train, t0=t0, prd=prd_sold, N_train=N_train,
-        const=const, diff_reg=diff_reg, scalar=scalar, simDim=simDim,
-        seed=seed, use_av=use_av
-    )
-    _, z_hedge, pkg2 = estimate_greeks(
-        X=X_train, t0=t0, prd=prd_hedge, N_train=N_train,
-        const=const, diff_reg=diff_reg, scalar=scalar, simDim=simDim,
-        seed=seed, use_av=use_av
-    )
-
-    h_c = z_sold[idx_test, 1] / z_hedge[idx_test, 1]
-    h_zcb = z_sold[idx_test, 0] - z_hedge[idx_test, 0] * h_c
-
-    return h_c, h_zcb, pkg1, pkg2
-
-
-def cpl_mc_price(t0, X, const, prd, dTL, N: int = 1000, simDim: int = 1, seed: int = 1234, use_av: bool = True):
-    cPrd = CapletAsPutOnZCB(
-        strike=prd.strike,
-        exerciseDate=prd.exerciseDate - t0,
-        delta=delta,
-        notional=prd.notional
-    )
-    cMdl = trolleSchwartz(*X, *const, simDim)
-    cRng = RNG(seed=seed, use_av=use_av)
-    cTL = dTL[dTL <= prd.exerciseDate - t0]
-    payoff = mcSim(cPrd, cMdl, cRng, N, cTL)
-    return torch.mean(payoff).view(1)
-
-
-def estimate_greeks(X, t0, prd, N_train, const,
-                    diff_reg, scalar,
-                    simDim: int = 1, seed: int = 1234, use_av: bool = True):
+def get_training_data(X, t0, prd, N_train, const,
+                      simDim: int = 1, seed: int = 1234, use_av: bool = True):
     # Calculate required sensitivities
     state = param_clone(*X)
     zcb, dudx = ZcbAAD().aad(
@@ -76,11 +40,7 @@ def estimate_greeks(X, t0, prd, N_train, const,
     y_train = payoff.reshape(N_train, 1)
     z_train = torch.hstack([dydu, dydx[:, 1].reshape(N_train, 1)])
 
-    # Make predictions
-    f_pred = partial(diff_reg_fit_predict, diff_reg=diff_reg, scalar=scalar)
-    y_pred, z_pred = f_pred(x_train, y_train, z_train, x_train)
-
-    return y_pred, z_pred, (zcb, dudx, payoff, dydx)
+    return x_train, y_train, z_train
 
 
 def diff_reg_fit_predict(x_train, y_train, z_train, x_test, diff_reg, scalar):
@@ -186,11 +146,12 @@ class CplAAD(torch.nn.Module):
             x, v, phi1, phi2, phi3, phi4, phi5, phi6, t0, prd, N,
             kappa, theta, rho, sigma, alpha0, alpha1, gamma, varphi,
             simDim, seed, use_av)
-        payoff.backward(torch.ones((N, )), retain_graph=False)
+        payoff.backward(torch.ones((N,)), retain_graph=False)
         grad = torch.vstack([x.grad, v.grad, phi1.grad, phi2.grad, phi3.grad, phi4.grad, phi5.grad, phi6.grad]).T
 
-        payoff = 0.5 * (payoff[:idx_half] + payoff[idx_half:])
-        grad = 0.5 * (grad[:idx_half] + grad[idx_half:])
+        if use_av:
+            payoff = 0.5 * (payoff[:idx_half] + payoff[idx_half:])
+            grad = 0.5 * (grad[:idx_half] + grad[idx_half:])
 
         return payoff.detach(), grad
 
@@ -203,7 +164,6 @@ class ZcbAAD(torch.nn.Module):
                 xt, vt, phi1t, phi2t, phi3t, phi4t, phi5t, phi6t, tenor,
                 kappa, theta, rho, sigma, alpha0, alpha1, gamma, varphi,
                 simDim: int = 1):
-
         cMdl = trolleSchwartz(
             xt=xt, vt=vt, phi1t=phi1t, phi2t=phi2t, phi3t=phi3t, phi4t=phi4t, phi5t=phi5t, phi6t=phi6t,
             kappa=kappa, theta=theta, sigma=sigma, rho=rho,
@@ -219,7 +179,6 @@ class ZcbAAD(torch.nn.Module):
             x, v, phi1, phi2, phi3, phi4, phi5, phi6, tenor, N,
             kappa, theta, rho, sigma, alpha0, alpha1, gamma, varphi,
             simDim: int = 1):
-
         x.requires_grad = True
         v.requires_grad = True
         phi1.requires_grad = True
@@ -233,7 +192,7 @@ class ZcbAAD(torch.nn.Module):
             x, v, phi1, phi2, phi3, phi4, phi5, phi6, tenor,
             kappa, theta, rho, sigma, alpha0, alpha1, gamma, varphi,
             simDim)
-        zcb.backward(torch.ones((simDim, len(tenor), N, )), retain_graph=False)
+        zcb.backward(torch.ones((simDim, len(tenor), N,)), retain_graph=False)
 
         v.grad = torch.zeros_like(x.grad) if v.grad is None else v.grad
         grad = torch.vstack([x.grad, v.grad, phi1.grad, phi2.grad, phi3.grad, phi4.grad, phi5.grad, phi6.grad]).T
@@ -243,40 +202,33 @@ class ZcbAAD(torch.nn.Module):
 
 if __name__ == '__main__':
     # Settings
-    file_path = get_data_path('ts_cpl_mc_prices.pkl')
-    burn_in_dTL = torch.linspace(0.0, 5.0, 101)
+    file_path = get_data_path('ts_cpl_mc_prices_diffML_withAV_states_training.pkl')
+    # burn_in_dTL = torch.linspace(0.0, 1, 101)
 
     seed = 1234
-    N_train = 1024*10
+    N_train = 1024*15
     N_test = 256
-    steps_per_year = 50
+    steps_per_year = 100
     use_av = True
 
     # Differential Regressor and Scalar
-    deg = 9
+    deg = 7
     alpha = 1.0
     include_interactions = True
+
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True,
-                                               include_interactions=include_interactions)
+                                                   include_interactions=include_interactions)
     scalar = DifferentialStandardScaler()
 
     # Product specification
     exerciseDate = torch.tensor(1.0)
-    delta = torch.tensor(0.5)
+    delta = torch.tensor(0.25)
     notional = torch.tensor(1e6)
 
     strike = torch.tensor(0.07)
-    strike_hedge = torch.tensor(0.07)
 
-    prd_sold = CapletAsPutOnZCB(
+    prd = CapletAsPutOnZCB(
         strike=strike,
-        exerciseDate=exerciseDate,
-        delta=delta,
-        notional=notional
-    )
-
-    prd_hedge = CapletAsPutOnZCB(
-        strike=strike_hedge,
         exerciseDate=exerciseDate,
         delta=delta,
         notional=notional
@@ -284,21 +236,21 @@ if __name__ == '__main__':
 
     # Monte Carlo
     rng = RNG(seed=seed, use_av=use_av)
-    dTL = torch.linspace(0.0, float(prd_sold.exerciseDate), int(steps_per_year * prd_sold.exerciseDate) + 1)
+    dTL = torch.linspace(0.0, float(prd.exerciseDate), int(steps_per_year * prd.exerciseDate) + 1)
 
     # Model specification
     simDim = 1
-    xt = torch.tensor([0.0])
-    vt = torch.tensor([.1])
-    phi1t = torch.tensor([0.0])
-    phi2t = torch.tensor([0.0])
-    phi3t = torch.tensor([0.0])
-    phi4t = torch.tensor([0.0])
-    phi5t = torch.tensor([0.0])
-    phi6t = torch.tensor([0.0])
+    xt = torch.tensor([0.0]) * torch.ones(N_train)
+    vt = torch.tensor([0.0194]) * torch.ones(N_train)
+    phi1t = torch.tensor([0.0]) * torch.ones(N_train)
+    phi2t = torch.tensor([0.0]) * torch.ones(N_train)
+    phi3t = torch.tensor([0.0]) * torch.ones(N_train)
+    phi4t = torch.tensor([0.0]) * torch.ones(N_train)
+    phi5t = torch.tensor([0.0]) * torch.ones(N_train)
+    phi6t = torch.tensor([0.0]) * torch.ones(N_train)
 
-    kappa = torch.tensor(0.553)
-    theta = torch.tensor(0.7542) #* kappa / torch.tensor(2.1476)
+    kappa = torch.tensor(0.0553)
+    theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476)
     sigma = torch.tensor(0.3325)
     rho = torch.tensor(0.4615)
 
@@ -317,131 +269,121 @@ if __name__ == '__main__':
         simDim=simDim
     )
 
-    # Burn in simulation and re-init
-    mcSimPaths(prd_sold, mdl, rng, N_train, burn_in_dTL)
-    xt, vt, phi1t, phi2t, phi3t, phi4t, phi5t, phi6t = [x[:simDim, -1] for x in mdl.x]
-    mdl = trolleSchwartz(
-        xt=xt, vt=vt, phi1t=phi1t, phi2t=phi2t, phi3t=phi3t, phi4t=phi4t, phi5t=phi5t, phi6t=phi6t,
-        kappa=kappa, theta=theta, sigma=sigma, rho=rho,
-        gamma=gamma, alpha0=alpha0, alpha1=alpha1, varphi=varphi,
-        simDim=simDim
+    burn_in_dTL = torch.linspace(0.0, 0.5, 51)
+
+    mcSimPaths(prd, mdl, rng, N_train, burn_in_dTL)
+
+    t0 = torch.tensor(0.0)
+
+    X = [x[:simDim, -1] for x in mdl.x]
+    state0 = param_clone(*X)
+    zcb, dudx = ZcbAAD().aad(
+        *state0, (prd.exerciseDate + prd.delta - t0).view(1), N_train, *const, simDim=simDim
     )
 
-    # Select random states as test paths
+    # compute training set for caplet
+    state0 = param_clone(*X)
+    payoff, dydx = CplAAD().aad(
+        *state0, t0, prd, N_train, *const, simDim=simDim, seed=seed, use_av=use_av
+    )
+    dydu = row_wise_chain_rule(dydx, dudx)
+
+    # X: (ZCB, v)
+    X_train = torch.hstack((zcb.reshape(-1,1), X[1].reshape(-1,1))) # size N x 2
+
+    # y: (cpl)
+    y_train = payoff.reshape(-1,1) # size N x 1
+
+    # Z: (dC/dP, dc/dv)
+    Z_train = torch.hstack((dydu.reshape(-1,1), dydx[:,1].reshape(-1,1))) # size N x 2
+
+    # Make predictions
     idx_test = torch.randperm(N_train, generator=rng.gen)[:N_test]
-    X_test = [x[0, idx_test] for x in mdl.x0]
-    xt_test, vt_test, phi1t_test, phi2t_test, phi3t_test, phi4t_test, phi5t_test, phi6t_test = X_test
+    X_test = X_train[idx_test, :]
 
-    if os.path.exists(file_path):
-        with open(file_path, 'rb') as file:
-            price_sold, price_hedge = pickle.load(file)
-    else:
-        price_sold = torch.full((N_test,), torch.nan)
-        price_hedge = torch.full((N_test,), torch.nan)
-        for i in tqdm(range(N_test), desc='Calculating initial prices with MC'):
-            cMdl = trolleSchwartz(
-                xt_test[i], vt_test[i], phi1t_test[i], phi2t_test[i], phi3t_test[i], phi4t_test[i], phi5t_test[i], phi6t_test[i],
-                *const, simDim
-            )
-            cRng = RNG(seed=seed, use_av=use_av)
-            paths = mcSimPaths(prd_sold, cMdl, cRng, 50000, dTL)
-            price_sold[i] = torch.mean(prd_sold.payoff(paths))
-            price_hedge[i] = torch.mean(prd_hedge.payoff(paths))
-
-        with open(file_path, 'wb') as file:
-            pickle.dump(tuple((price_sold, price_hedge)), file, pickle.HIGHEST_PROTOCOL)
-
-    # Auxiliary function
-    calc_hedge = partial(calc_hedge_coef,
-                         prd_sold=prd_sold, prd_hedge=prd_hedge, N_train=N_train, const=const,
-                         diff_reg=diff_reg, scalar=scalar, simDim=simDim, seed=seed, use_av=use_av)
-
-    # Initialize hedge experiment
-    matHc = matHzcb = matHb = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
-    matCpl = matZcb = matB = torch.full(size=(len(dTL), N_test), fill_value=torch.nan)
-
-    mcSimPaths(prd_sold, mdl, rng, N_train, dTL)
-    paths = mdl.x
-
-    h_c, h_zcb, pkg1, pkg2 = calc_hedge(mdl.x0, torch.tensor(0.0))
-
-    zcb = mdl.calc_zcb(X_test, torch.tensor(0.0), (prd_sold.exerciseDate + prd_sold.delta).view(1)).flatten()
-    h_b = price_sold - h_zcb * zcb - h_c * price_hedge
-
-    r = torch.full((len(dTL), N_test), torch.nan)
-    r[0, :] = mdl.calc_short_rate(X_test, torch.tensor(0.0))
-
-    B = torch.ones((N_test, ))
-
-    V0 = price_sold - h_zcb * zcb - h_c * price_hedge - h_b * torch.tensor(1.0)
-    if not torch.allclose(V0, torch.tensor(0.0)):
-        print('Initial value of portfolio is not 0!')
-
-    matHc[0, :] = h_c
-    matHzcb[0, :] = h_zcb
-    matHb[0, :] = h_b
-
-    matCpl[0, :] = price_hedge
-    matZcb[0, :] = zcb
-    matB[0, :] = B
-
-    # Simulate
-    for k in tqdm(range(1, len(dTL))):
-        dt = dTL[k] - dTL[k - 1]
-        t = dTL[k]
-
-        # Assume calibration to know the state variables
-        X_test = [x[0][k, idx_test] for x in paths]
-
-        # Update market variables
-        r[k, :] = mdl.calc_short_rate(X_test, torch.tensor(0.0))
-        B *= torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
-        zcb = mdl.calc_zcb(X_test, torch.tensor(0.0), (prd_sold.exerciseDate + prd_sold.delta).view(1) - t).flatten()
-
-        if t < prd_hedge.exerciseDate:
-            cpl = torch.hstack(
-                Parallel(n_jobs=1)(
-                    delayed(cpl_mc_price)(t0=t, X=[X_test[i][j] for i in range(8)], const=const, prd=prd_hedge, dTL=dTL, N=1000)
-                    for j in range(N_test)
-                )
-            )
-            #cpl = torch.hstack([
-            #    cpl_mc_price(t0=t, X=[X_test[i][j] for i in range(8)], const=const, prd=prd_hedge, dTL=dTL, N=50000).view(1)
-            #    for j in range(N_test)
-            #])
-        else:
-            kBar = 1.0 / (1.0 + prd_hedge.delta * prd_hedge.strike)
-            cpl = max0(kBar - zcb) * notional / kBar
-
-        matCpl[k, :] = cpl
-        matZcb[k, :] = zcb
-        matB[k, :] = B
-
-        # Update portfolio
-        V = h_zcb * zcb + h_c * cpl + h_b * B
-        if k < len(dTL) - 1:
-            X_train = [x[0][k] for x in paths]
-            h_c, h_zcb = calc_hedge(X_train, t)
-            h_b = V - h_c * cpl - h_zcb * zcb
-
-            matHc[k, :] = h_c
-            matHzcb[k, :] = h_zcb
-            matHb[k, :] = h_b
+    # Fit and predict
+    X_train_scaled, y_train_scaled, z_train_scaled = scalar.fit_transform(X_train, y_train, Z_train)
+    diff_reg.fit(X_train_scaled, y_train_scaled, z_train_scaled)
+    X_test_scaled, _, _ = scalar.transform(X_test, None, None)
+    # Predict
+    y_pred_scaled, z_pred_scaled = diff_reg.predict(X_test_scaled, predict_derivs=True)
+    _, y_pred, z_pred = scalar.predict(None, y_pred_scaled, z_pred_scaled)
 
 
-    payoff_func = lambda strike, zcb: notional / strike * max0(strike - zcb) * zcb
+    # MC price
+    price = torch.zeros_like(y_pred)
+    for i in tqdm(range(N_test), desc='Calculating initial prices with MC'):
+        x_mc = torch.stack(state0)
+        x_mc = x_mc[:,:,idx_test]
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [j for j in x_mc[:, :, i]]
+        cMdl = trolleSchwartz(xt=x, vt=v, phi1t=phi1, phi2t=phi2, phi3t=phi3,
+                              phi4t=phi4, phi5t=phi5, phi6t=phi6)
+        cRng = RNG(seed=seed, use_av=use_av)
+        payoff = mcSim(prd, cMdl, cRng, 50000, dTL)
+        price[i] = torch.mean(payoff)
 
-    zcbT = mdl.calc_zcb(X_test, torch.tensor(0.), delta).flatten()
-    V_ = V* zcbT
+    z_mdl = price.flatten().diff(dim=0) / X_test[:,0].flatten().diff(dim=0)
 
-    kBar_sold = 1 / (1+ prd_sold.delta*prd_sold.strike)
+    # Data for plotting a surface
+    x_ = X_test[:, 0].reshape(16, 16)  # zcb
+    y_ = X_test[:, 1].reshape(16, 16)  # vol
+    z_price = y_pred.reshape(16, 16)  # cpl price
+    z_delta = z_pred[:, 0].reshape(16, 16) / notional  # dc/dp
+    z_vega = z_pred[:, 1].reshape(16, 16) / notional  # dc/dv
+
+    from scipy.interpolate import griddata
+    import numpy as np
+
+    x_grid, y_grid = np.meshgrid(np.linspace(x_.min(), x_.max(), 100), np.linspace(y_.min(), y_.max(), 100))
+    z_price_grid = griddata((x_.flatten(), y_.flatten()), z_price.flatten(), (x_grid, y_grid), method='cubic')
+    z_delta_grid = griddata((x_.flatten(), y_.flatten()), z_delta.flatten(), (x_grid, y_grid), method='cubic')
+    z_vega_grid = griddata((x_.flatten(), y_.flatten()), z_vega.flatten(), (x_grid, y_grid), method='cubic')
+
+    # Price
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    surf_pred = ax.plot_surface(x_grid, y_grid, z_price_grid, cmap=plt.cm.magma, linewidth=0, antialiased=False)
+    scatter_train = ax.scatter(X_train[:, 0].reshape(64, 64), X_train[:, 1].reshape(64, 64), y_train.reshape(64, 64),
+                               alpha=0.05, color='gray')
+    ax.set_ylim(0., 0.5)
+    ax.set_xlim(0.7, 1.05)
+    ax.set_xlabel(r'$P(0,T+\delta)$')
+    ax.set_ylabel(r'$\nu(0)$')
+    fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    plt.show()
+
+    # Delta
+    fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, sharex='all', sharey='all')
+    surf_pred = ax.plot_surface(x_grid, y_grid, z_delta_grid, cmap=plt.cm.magma)
+    scatter_train = ax.scatter(X_train[:, 0].reshape(64, 64), X_train[:, 1].reshape(64, 64),
+                               Z_train[:, 0].reshape(64, 64) / notional,
+                               alpha=0.05, color='gray')
+    ax.set_ylim(0., 0.5)
+    ax.set_xlim(0.7, 1.05)
+    ax.set_xlabel(r'$P(0,T+\delta)$')
+    ax.set_ylabel(r'$\nu(0)$')
+    fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    plt.show()
+
+    # Vega
+    fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, sharex='all', sharey='all')
+    surf_pred = ax.plot_surface(x_grid, y_grid, z_vega_grid, cmap=plt.cm.magma)
+    scatter_train = ax.scatter(X_train[:, 0].reshape(64, 64), X_train[:, 1].reshape(64, 64),
+                               Z_train[:, 1].reshape(64, 64) / notional,
+                               alpha=0.1, color='gray')
+    ax.set_ylim(0., 0.5)
+    ax.set_zlim(0, 0.025)
+    ax.set_xlim(0.7, 1.05)
+    ax.set_xlabel(r'$P(0,T+\delta)$')
+    ax.set_ylabel(r'$\nu(0)$')
+    fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    plt.show()
 
     plt.figure()
-    plt.plot(zcb, V_, 'o',color='orange', label='Value of Hedge Portfolio')
-    plt.plot(zcbT.sort().values, payoff_func(kBar_sold,zcbT.sort().values), color='black', label='Payoff function')
-    plt.ylim(-1e4, 1e5)
-    plt.xlim(0.8, 1.2)
+    plt.plot(zcb.flatten(), y_train, 'o', color='gray', alpha=0.2)
+    plt.plot(X_test[:, 0], y_pred, 'o', label='diff reg')
+    plt.xlabel('zcb')
+    plt.xlim(0.825, 1.)
     plt.legend()
-    plt.xlabel(r'$P(T,T+\delta)$')
-    plt.title('1Y6M Caplet on Zero Coupon Bond')
     plt.show()

@@ -11,20 +11,22 @@ torch.set_default_dtype(torch.float64)
 
 if __name__ == "__main__":
     # Setup
-    strike_plot = False
+    strike_plot = True
     save_fig = False
 
     seed = 1234
-    N = 1024*10
+    N = 1024*50
     measure = 'risk_neutral'
 
+
+
     # Trolle-Schwartz model specification
-    kappa = torch.tensor(0.0553)
-    sigma = torch.tensor(0.3325)
-    alpha0 = torch.tensor(0.045)
-    alpha1 = torch.tensor(0.131)
-    gamma = torch.tensor(0.3341)
-    rho = torch.tensor(0.4615)
+    kappa = torch.tensor([0.0553])
+    sigma = torch.tensor([0.3325])
+    alpha0 = torch.tensor([0.045])
+    alpha1 = torch.tensor([0.131])
+    gamma = torch.tensor([0.3341])
+    rho = torch.tensor([0.4615])
     theta = torch.tensor(0.7542) * kappa / torch.tensor(2.1476)
     # initialize IFR
     varphi = torch.tensor(0.0832)
@@ -36,10 +38,16 @@ if __name__ == "__main__":
     strike = torch.tensor(.07)
     notional = torch.tensor(1e6)
 
-    dTL = torch.linspace(0.0, start + delta, int(50 * (start + delta) + 1))
+    dTL = torch.linspace(0.0, start + delta, int(100 * (start + delta) + 1))
 
     # instantiate model
-    model = trolleSchwartz(v0, gamma, kappa, theta, rho, sigma, alpha0, alpha1, varphi)
+    model = trolleSchwartz(vt=v0,
+                 phi1t=torch.tensor([0.0]),phi2t=torch.tensor([0.0]),
+                 phi3t=torch.tensor([0.0]),phi4t=torch.tensor([0.0]),
+                 phi5t=torch.tensor([0.0]),phi6t=torch.tensor([0.0]),
+                           gamma=gamma, kappa=kappa, theta=theta,
+                           rho=rho, sigma=sigma, alpha0=alpha0,
+                           alpha1=alpha1, varphi=varphi, simDim=1)
 
     rng = RNG(seed=seed, use_av=True)
 
@@ -51,10 +59,9 @@ if __name__ == "__main__":
     )
 
     cashflows = mcSim(prd, model, rng, N, dTL)
-    payoff = torch.sum(cashflows, dim=0)
+    mc_price = torch.mean(cashflows, dim=0)
 
     # mc
-    mc_price = torch.nanmean(payoff)
     print('MC Price =', mc_price)
 
     # analytic
@@ -63,8 +70,8 @@ if __name__ == "__main__":
 
 
     if strike_plot:
-        strikes = torch.linspace(0.025, 0.14, 10)
-        times = torch.tensor([1., 2., 5.])
+        strikes = torch.linspace(0.03, 0.13, 10)
+        times = torch.tensor([1, 2, 3, 5, 7, 10])
 
         prices = torch.empty(len(strikes) * len(times))
         mc_prices = torch.empty(len(strikes) * len(times))
@@ -78,7 +85,7 @@ if __name__ == "__main__":
                 notional=notional
             )
             cashflows = mcSim(prd, model, rng, N, dTL)
-            payoff = torch.sum(cashflows, dim=0)
+            payoff = torch.mean(cashflows, dim=0)
 
             # mc
             mc_price = torch.nanmean(payoff)
@@ -92,11 +99,17 @@ if __name__ == "__main__":
 
         prices1 = prices[:10]
         prices2 = prices[10:20]
-        prices3 = prices[20:31]
+        prices3 = prices[20:30]
+        prices4 = prices[30:40]
+        prices5 = prices[40:50]
+        prices6 = prices[50:61]
 
         mcprices1 = mc_prices[:10]
         mcprices2 = mc_prices[10:20]
-        mcprices3 = mc_prices[20:31]
+        mcprices3 = mc_prices[20:30]
+        mcprices4 = mc_prices[30:40]
+        mcprices5 = mc_prices[40:50]
+        mcprices6 = mc_prices[50:61]
 
         plt.figure()
         plt.plot(strikes, prices1,  label=r'$1Y$', color='orange')
@@ -113,6 +126,34 @@ if __name__ == "__main__":
         plt.title(f'3M Caplet Monte-Carlo vs. Analytical with N = {notional}')
         if save_fig:
             plt.savefig(get_plot_path('trolle_schwartz/ts_cpl_strikes.png'), dpi=400)
+        plt.show()
+
+
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        # Create a meshgrid for X, Y, and Z values
+        X, Y = np.meshgrid(strikes, [1, 2, 3, 5]) #[1, 2, 3, 5, 7, 10]
+        Z_mc = torch.stack([mcprices1, mcprices2, mcprices3, mcprices4]) #, mcprices5, mcprices6
+        Z_an = torch.stack([prices1, prices2, prices3, prices4]) #, prices5, prices6
+
+        d1 = (mcprices1 - prices1) / prices1
+        d2 =  (mcprices2 - prices2) / prices2
+        d3 = (mcprices3 - prices3) / prices3
+        d4 = (mcprices4 - prices4) / prices4
+
+        Devs = torch.stack((d1,d2,d3,d4))
+
+        # Create a 3D figure
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+
+        ax.plot_wireframe(X, Y, Z_an, color='black', linestyle='--')
+        ax.plot_surface(X, Y, Z_mc, cmap='magma', linestyle='--')
+
+        ax.set_xlabel('K')
+        ax.set_ylabel('Maturity')
         plt.show()
 
 
