@@ -150,6 +150,54 @@ def calc_delta_diff_nn(u_vec: torch.Tensor,
 
     return z_pred.flatten()
 
+def calc_delta_diff_nn_bermudan(u_vec: torch.Tensor,
+                        r0_vec: torch.Tensor,
+                        t0: float,
+                        calc_dU_dr,
+                        calc_dPrd_dr,
+                        nn_Params: dict,
+                        use_av: bool) -> torch.Tensor:
+    """
+    param u_vec:            1D vector of the underlying market variable
+    param r0_vec:           1D vector of short rates to generate training data from
+    param t0:               Current market time, effects time to expiry and fixings in the training
+    param calc_dU_dr:       Function for calculating the derivative of the underlying wrt. to r
+    param calc_dPrd_dr:     Function for calculating the derivative of the product wrt. to r
+    param use_av:           Use antithetic variates to reduce variance of both y- and z-labels
+
+    returns:                1D vector of predicted deltas for `u_vec`
+    """
+
+    N_train = nn_Params['N_train']
+    seed_weights = nn_Params['seed_weights']
+    lam = nn_Params['lam']
+    hidden_units = nn_Params['hidden_units']
+    hidden_layers = nn_Params['hidden_layers']
+    epochs = nn_Params['epochs']
+    batches_per_epoch = nn_Params['batches_per_epoch']
+    min_batch_size = nn_Params['min_batch_size']
+
+    if any(v is None for v in nn_Params.values()):
+        raise ValueError(f'Missing parameters to set NN')
+
+    X_test = u_vec
+
+    X_train, y_train, z_train = training_data(r0_vec=r0_vec, t0=t0,
+                                                 calc_dU_dr=calc_dU_dr,
+                                                 calc_dPrd_dr=calc_dPrd_dr,
+                                                 use_av=use_av
+                                                 )
+
+    # Setup Differential Neutral Network
+    diff_nn = Neural_Approximator(X_train, y_train, z_train)
+    diff_nn.prepare(N_train, True, weight_seed=seed_weights, lam=lam, hidden_units=hidden_units,
+                    hidden_layers=hidden_layers)
+    diff_nn.train(epochs=epochs, batches_per_epoch=batches_per_epoch, min_batch_size=min_batch_size)
+
+    _, z_pred = diff_nn.predict_values_and_derivs(X_test)
+
+    return z_pred
+
 
 def log_plotter(X, Y, title_add : str, save: bool, file_name: str = None):
     # add convergence order line

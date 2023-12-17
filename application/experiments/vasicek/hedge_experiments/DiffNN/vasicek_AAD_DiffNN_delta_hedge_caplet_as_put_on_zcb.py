@@ -2,7 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 from torch.autograd.functional import jvp
 from tqdm import tqdm
-from application.engine.vasicek import Vasicek
+from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import CapletAsPutOnZCB
 from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_nn
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
@@ -15,13 +15,13 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 1024 * 4
+    N_train = 1024
     N_test = 256
     use_av = True
     save_plot = False
 
     # Hedge experiment settings
-    hedge_points = 10
+    hedge_points = 250
     r0_min = -0.02
     r0_max = 0.15
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
@@ -30,7 +30,7 @@ if __name__ == '__main__':
     seed_weights = 1234
     epochs = 250
     batches_per_epoch = 16
-    min_batch_size = 256 * 10
+    min_batch_size = int(N_train * 5 / 8) #256 * 10
     lam = 1.0
     hidden_units = 20
     hidden_layers = 4
@@ -149,6 +149,7 @@ if __name__ == '__main__':
         cpl_prices.append(mdl.calc_cpl(r[k, :], exerciseDate-t, delta, strike, notional))
 
         if k < last_idx:
+            r0_vec = choose_training_grid(r[k, :], N_train)
             h_a = calc_delta_diff_nn(u_vec=zcb, r0_vec=r0_vec, t0=t,
                                      calc_dPrd_dr=calc_dcpl_dr, calc_dU_dr=calc_dzcb_dr,
                                     nn_Params=nn_params, use_av=use_av)

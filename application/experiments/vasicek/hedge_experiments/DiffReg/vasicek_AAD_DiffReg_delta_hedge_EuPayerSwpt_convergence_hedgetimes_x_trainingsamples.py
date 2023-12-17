@@ -28,7 +28,7 @@ if __name__ == '__main__':
     # Model specification
     r0 = torch.tensor(0.08) #torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = torch.tensor(0.09) #r0.median()
+    b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     measure = 'risk_neutral'
 
@@ -49,7 +49,7 @@ if __name__ == '__main__':
         int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
     )
 
-    strike = mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
+    strike = torch.tensor(0.0871)
 
     prd = EuropeanPayerSwaption(
         strike=strike,
@@ -111,13 +111,19 @@ if __name__ == '__main__':
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True, include_interactions=True)
 
     degrees = [3, 5, 7, 9]
+    degree_colors = {3: "red",
+                     5: "orange",
+                     7: "darkred",
+                     9: "pink"
+                     }
 
     fig, ax = plt.subplots(1, 2)
 
-    for deg in tqdm(degrees):
+    for deg in tqdm(degrees, desc="Generating for Hedge Frequency"):
         diff_reg.deg = deg
+
         # Simulate paths
-        hedge_times = [1, 2, 4, 12, 250//5, 250//2, 250, 250*2, 250*4]
+        hedge_times = [1, 2, 4, 12, 250//5, 250//2, 250, 250*2]
         hedge_error = []
 
         for steps in hedge_times:
@@ -125,11 +131,16 @@ if __name__ == '__main__':
             dTL = torch.linspace(0.0, float(swapFirstFixingDate), steps + 1)
             mcSimPaths(prd, mdl, rng, N_test, dTL)
             r = mdl.x
+
             # Get price of claim (we use 500k simulations to get an accurate estimate)
-            swpt = torch.empty_like(r[0, :])
-            for n in range(N_test):
-                mdl.r0 = r[0, n]
-                swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
+            if r0.dim() != 0:
+                swpt = torch.empty_like(r[0, :])
+                for n in range(N_test):
+                    mdl.r0 = r[0, n]
+                    swpt[n] = torch.mean(mcSim(prd, mdl, rng, 50000))
+            else:
+                price = torch.mean(mcSim(prd, mdl, rng, 500000))
+                swpt = price * torch.ones(N_test)
 
             # Initialize experiment
             swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
@@ -151,15 +162,20 @@ if __name__ == '__main__':
                 # Update portfolio
                 V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
                 if k < len(dTL) - 1:
-                    r0_vec = choose_training_grid(r[k, :], N_train)
+                    #r0_vec = choose_training_grid(r[k, :], N_train)
                     h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=t,
                                                calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
                                                diff_reg=diff_reg, use_av=use_av)[1].flatten()
                     h_b = V - h_a * swap
 
             hedge_error.append(torch.std(V - max0(swap)))
-        ax[0].plot(np.log(hedge_times), np.log(hedge_error), 'o-', label=f'Deg={deg}')
-
+        ax[0].plot(np.log(hedge_times), np.log(hedge_error), 'o-', label=f'Deg={deg}', color=degree_colors[deg])
+        ax[0].annotate(f'Deg={deg}',
+                     xy=(np.log(hedge_times[-1]), np.log(hedge_error[-1])),
+                     textcoords='offset points',
+                     color=degree_colors[deg],
+                     horizontalalignment='center'
+                     )
 
     ax[0].set_title(f'Samples={N_train}')
     ax[0].set_xlabel('Hedge Frequency')
@@ -174,7 +190,7 @@ if __name__ == '__main__':
     r = mdl.x
 
     # Setup Differential Regressor, and Scalar
-    for deg in tqdm(degrees):
+    for deg in tqdm(degrees, desc="Generating for Varying Training Size"):
         diff_reg.deg = deg
 
         # Simulate paths
@@ -186,10 +202,14 @@ if __name__ == '__main__':
             r0_vec = torch.linspace(r0_min, r0_max, N)
 
             # Get price of claim (we use 500k simulations to get an accurate estimate)
-            swpt = torch.empty_like(r[0, :])
-            for n in range(N_test):
-                mdl.r0 = r[0, n]
-                swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
+            if r0.dim() != 0:
+                swpt = torch.empty_like(r[0, :])
+                for n in range(N_test):
+                    mdl.r0 = r[0, n]
+                    swpt[n] = torch.mean(mcSim(prd, mdl, rng, 50000))
+            else:
+                price = torch.mean(mcSim(prd, mdl, rng, 500000))
+                swpt = price * torch.ones(N_test)
 
             # Initialize experiment
             swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
@@ -211,14 +231,20 @@ if __name__ == '__main__':
                 # Update portfolio
                 V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
                 if k < len(dTL) - 1:
-                    r0_vec = choose_training_grid(r[k, :], N)
+                    #r0_vec = choose_training_grid(r[k, :], N)
                     h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=t,
                                                calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
                                                diff_reg=diff_reg, use_av=use_av)[1].flatten()
                     h_b = V - h_a * swap
 
             hedge_error.append(torch.std(V - max0(swap)))
-        ax[1].plot(np.log(N_train), np.log(hedge_error), 'o-', label=f'Deg={deg}')
+        ax[1].plot(np.log(N_train), np.log(hedge_error), 'o-', label=f'Deg={deg}', color=degree_colors[deg])
+        ax[1].annotate(f'Deg={deg}',
+                     xy=(np.log(N_train[-1]), np.log(hedge_error[-1])),
+                     textcoords='offset points',
+                     color=degree_colors[deg],
+                     horizontalalignment='center'
+                     )
 
     ax[1].set_title(f'Hedge Times={steps}')
     ax[1].set_xlabel('Training Sample')
@@ -227,8 +253,6 @@ if __name__ == '__main__':
     # Legend
     handles, labels = fig.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
-    fig.legend(by_label.values(), by_label.keys(), ncol=2, fancybox=True, shadow=True,
-               bbox_to_anchor=(0.5, 1.0), draggable=True)
     fig.suptitle(prd.name)
 
     plt.show()

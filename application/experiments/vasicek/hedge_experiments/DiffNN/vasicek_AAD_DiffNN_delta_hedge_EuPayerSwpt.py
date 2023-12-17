@@ -2,7 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from torch.autograd.functional import jvp
-from application.engine.vasicek import Vasicek
+from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import EuropeanPayerSwaption
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
 from application.utils.torch_utils import max0
@@ -15,12 +15,12 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 1024*4
+    N_train = 1024
     N_test = 256
     use_av = True
 
     # Hedge experiment settings
-    hedge_times = 10
+    hedge_times = 250
 
     r0_min = -0.02
     r0_max = 0.15
@@ -31,7 +31,7 @@ if __name__ == '__main__':
     seed_weights = 1234
     epochs = 250
     batches_per_epoch = 16
-    min_batch_size = 256 * 10
+    min_batch_size = int(N_train * 5 / 8)
     lam = 1.0
     hidden_units = 20
     hidden_layers = 4
@@ -125,7 +125,7 @@ if __name__ == '__main__':
     """ Delta Hedge Experiment """
 
     # Get price of claim (we use 500k simulations to get an accurate estimate)
-    swpt = torch.empty_like(r[0, :])
+    swpt = torch.zeros_like(r[0, :])
     print("Generating MC prices")
     for n in tqdm(range(N_test)):
         mdl.r0 = r[0, n]
@@ -151,6 +151,7 @@ if __name__ == '__main__':
         # Update portfolio
         V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
         if k < len(dTL) - 1:
+            r0_vec = choose_training_grid(r[k, :], N_train)
             h_a = calc_delta_diff_nn(u_vec=swap, r0_vec=r0_vec, t0=t,
                                      calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
                                      nn_Params=nn_params, use_av=use_av)

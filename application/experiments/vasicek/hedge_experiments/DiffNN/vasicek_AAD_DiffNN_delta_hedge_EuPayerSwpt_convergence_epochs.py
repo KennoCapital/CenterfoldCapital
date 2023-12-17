@@ -1,32 +1,38 @@
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
+import time
+import random
+import os
 from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor
 from torch.autograd.functional import jvp
 from application.engine.vasicek import Vasicek, choose_training_grid
 from application.engine.products import EuropeanPayerSwaption
-from application.engine.differential_Regression import DifferentialPolynomialRegressor
 from application.engine.mcBase import mcSimPaths, mcSim, RNG
+from application.utils.path_config import get_plot_path
 from application.utils.torch_utils import max0
-from application.experiments.vasicek.vasicek_hedge_tools import diff_reg_fit_predict, log_plotter
+from application.experiments.vasicek.vasicek_hedge_tools import calc_delta_diff_nn
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
 
 if __name__ == '__main__':
+    start_time = time.time()
 
+    N_train = 1024
     seed = 1234
     N_test = 256
     use_av = True
 
     r0_min = 0.02
     r0_max = 0.12
-
+    r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Model specification
-    r0 = torch.linspace(r0_min, r0_max, N_test)
+    r0 = torch.tensor(0.08) #torch.linspace(r0_min, r0_max, N_test)
     a = torch.tensor(0.86)
-    b = r0.median()
+    b = torch.tensor(0.09)
     sigma = torch.tensor(0.0148)
     measure = 'risk_neutral'
 
@@ -47,7 +53,7 @@ if __name__ == '__main__':
         int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
     )
 
-    strike = mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
+    strike = torch.tensor(0.0871) #mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
 
     prd = EuropeanPayerSwaption(
         strike=strike,
@@ -102,65 +108,72 @@ if __name__ == '__main__':
         return res
 
     """ Delta Hedge Experiment """
-    steps = 100
+    steps = 250 // 2
     dTL = torch.linspace(0.0, float(swapFirstFixingDate), steps + 1)
     mcSimPaths(prd, mdl, rng, N_test, dTL)
     r = mdl.x
 
     # Setup Differential Regressor, and Scalar
-    degrees = [5, 7, 9, 15]
+    # Differential Neural Network Settings
+    seed_weights = 1234
+    epochs = [10, 25, 50, 100, 250, 500]
+    batches_per_epoch = 16
+    hidden_units = 20
+    hidden_layers = 4
+    lam = 1.0
+    min_batch_size = int(N_train * 5/8)
 
-    plt.figure()
-    for deg in tqdm(degrees):
-        alpha = 1.0
-        diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True)
+    hedge_error = []
+
+    for epoch in tqdm(epochs):
+        nn_params = {'N_train': N_train, 'seed_weights': seed_weights, 'epochs': epoch,
+                     'batches_per_epoch': batches_per_epoch, 'min_batch_size': min_batch_size,
+                     'lam': lam, 'hidden_units': hidden_units, 'hidden_layers': hidden_layers}
 
         # Simulate paths
-        N_train = [256, 1024, 4096, 8192] #[256 * 4*i for i in range(1, 5)]
-        hedge_error = []
-
-        for N in N_train:
-
-            r0_vec = torch.linspace(r0_min, r0_max, N)
-
-            # Get price of claim (we use 500k simulations to get an accurate estimate)
+        # Get price of claim (we use 500k simulations to get an accurate estimate)
+        if r0.dim() != 0:
             swpt = torch.empty_like(r[0, :])
             for n in range(N_test):
                 mdl.r0 = r[0, n]
-                swpt[n] = torch.mean(mcSim(prd, mdl, rng, 500000))
+                swpt[n] = torch.mean(mcSim(prd, mdl, rng, 50000))
+        else:
+            price = torch.mean(mcSim(prd, mdl, rng, 500000))
+            swpt = price * torch.ones(N_test)
 
-            # Initialize experiment
-            swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
+        # Initialize experiment
+        swap = mdl.calc_swap(mdl.r0, t_swap_fixings, delta, strike, notional)
 
-            V = swpt * torch.ones_like(r[0, :])
-            h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=0.0,
-                                       calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
-                                       diff_reg=diff_reg, use_av=use_av)[1].flatten()
-            h_b = V - h_a * swap
+        V = swpt
 
-            # Loop over time
-            for k in range(1, len(dTL)):
-                dt = dTL[k] - dTL[k-1]
-                t = dTL[k]
+        h_a = calc_delta_diff_nn(u_vec=swap, r0_vec=r0_vec, t0=0.0,
+                             calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
+                             nn_Params=nn_params, use_av=use_av)
+        h_b = V - h_a * swap
 
-                # Update market variables
-                swap = mdl.calc_swap(r[k, :], t_swap_fixings - t, delta, strike, notional)
+        # Loop over time
+        for k in range(1, len(dTL)):
+            dt = dTL[k] - dTL[k-1]
+            t = dTL[k]
 
-                # Update portfolio
-                V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
-                if k < len(dTL) - 1:
-                    r0_vec = choose_training_grid(r[k, :], N)
-                    h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=t,
-                                               calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
-                                               diff_reg=diff_reg, use_av=use_av)[1].flatten()
-                    h_b = V - h_a * swap
+            # Update market variables
+            swap = mdl.calc_swap(r[k, :], t_swap_fixings - t, delta, strike, notional)
 
-            hedge_error.append(torch.std(V - max0(swap)))
-        plt.plot(np.log(N_train), np.log(hedge_error), 'o-', label=f'Deg={deg}')
+            # Update portfolio
+            V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
+            if k < len(dTL) - 1:
+                #r0_vec = choose_training_grid(r[k, :], N)
+                h_a = calc_delta_diff_nn(u_vec=swap, r0_vec=r0_vec, t0=t,
+                                     calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
+                                     nn_Params=nn_params, use_av=use_av)
+                h_b = V - h_a * swap
 
-    plt.title(prd.name + f'alpha = {alpha}, Hedge Times={steps} , Notional = {int(notional)}')
-    plt.xlabel('Training Sample')
+        hedge_error.append(torch.std(V - max0(swap)))
+
+    plt.figure()
+    plt.plot(np.log(epochs), np.log(hedge_error), 'o-', color='orange')
+    plt.title(prd.name + f', Hedge Times={steps} , Notional = {int(notional)}')
+    plt.xlabel('Number of Epochs')
     plt.ylabel('Std. of Hedge Error')
-    plt.xticks(ticks=np.log(N_train), labels=N_train)
-    plt.legend()
+    plt.xticks(ticks=np.log(epochs), labels=epochs)
     plt.show()

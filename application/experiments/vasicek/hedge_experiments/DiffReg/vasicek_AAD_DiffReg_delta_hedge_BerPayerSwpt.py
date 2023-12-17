@@ -10,7 +10,7 @@ from application.engine.differential_Regression import DifferentialPolynomialReg
 from application.engine.mcBase import RNG, LSMC, lsmcDefaultSim, lsmcPayoff, mcSimPaths, mcSim
 from application.engine.regressor import PolynomialRegressor
 from application.utils.path_config import get_plot_path
-from application.experiments.vasicek.vasicek_hedge_tools import diff_reg_fit_predict
+from application.experiments.vasicek.vasicek_hedge_tools import diff_reg_fit_predict, calc_delta_diff_nn_bermudan
 from application.utils.torch_utils import max0
 from application.utils.prd_name_conventions import float_to_time_str
 
@@ -20,15 +20,15 @@ torch.set_default_dtype(torch.float64)
 if __name__ == '__main__':
 
     seed = 1234
-    N_train = 1024  # TODO decide on this
+    N_train = 8 * 1024  # TODO decide on this
     N_test = 256
     n = 5000
     use_av = True
 
-    hedge_times = 500
+    hedge_times = 125 * 3 #500
 
-    r0_min = 0.02
-    r0_max = 0.12
+    r0_min = -0.02
+    r0_max = 0.15
 
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
@@ -39,6 +39,17 @@ if __name__ == '__main__':
     include_interactions = True
     diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True,
                                                include_interactions=include_interactions)
+    seed_weights = 1234
+    epochs = 250
+    batches_per_epoch = 16
+    hidden_units = 20
+    hidden_layers = 4
+    lam = 1.0
+    min_batch_size = int(N_train * 5 / 8)
+
+    nn_params = {'N_train': N_train, 'seed_weights': seed_weights, 'epochs': epochs,
+                 'batches_per_epoch': batches_per_epoch, 'min_batch_size': min_batch_size,
+                 'lam': lam, 'hidden_units': hidden_units, 'hidden_layers': hidden_layers}
 
     # Model specification
     r0 = torch.linspace(r0_min, r0_max, N_test)
@@ -52,7 +63,7 @@ if __name__ == '__main__':
     rng = RNG(seed=seed, use_av=use_av)
 
     # Product specification
-    exerciseDates = torch.tensor([1.0, 2.0, 5.0])
+    exerciseDates = torch.tensor([1.0, 2.0, 3.0])
     delta = torch.tensor(0.25)
     swapLastFixingDate = torch.tensor(10.0)
     notional = torch.tensor(1e6)
@@ -165,9 +176,13 @@ if __name__ == '__main__':
     swap = torch.vstack([mdl.calc_swap(r[0, :], t, delta, strike, notional) for t in t_swap_fixings]).T
 
     V = swpt
-    h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=0.0,
-                               calc_dPrd_dr=calc_dBerSwpt_dr, calc_dU_dr=calc_dswap_dr,
-                               diff_reg=diff_reg, use_av=use_av)[1]
+    #h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=0.0,
+    #                           calc_dPrd_dr=calc_dBerSwpt_dr, calc_dU_dr=calc_dswap_dr,
+    #                           diff_reg=diff_reg, use_av=use_av)[1]
+    h_a = calc_delta_diff_nn_bermudan(u_vec=swap, r0_vec=r0_vec, t0=0.0,
+                                         calc_dPrd_dr=calc_dBerSwpt_dr, calc_dU_dr=calc_dswap_dr,
+                                         nn_Params=nn_params, use_av=use_av)
+
     h_b = V - torch.sum(h_a * swap, dim=1)
 
     swapTe = torch.full((len(exerciseDates), N_test), torch.nan)
@@ -198,10 +213,16 @@ if __name__ == '__main__':
             mask = exerciseDates > t
             calc_dPrd_dr = calc_dBerSwpt_dr if torch.sum(mask) > 1 else calc_dEuSwpt_dr
             r0_vec = choose_training_grid(r[k, :], N_train)
-            h_a = diff_reg_fit_predict(u_vec=swap[:, mask], r0_vec=r0_vec, t0=t,
-                                       calc_dPrd_dr=calc_dPrd_dr, calc_dU_dr=calc_dswap_dr,
-                                       diff_reg=diff_reg, use_av=use_av)[1]
+            #h_a = diff_reg_fit_predict(u_vec=swap[:, mask], r0_vec=r0_vec, t0=t,
+            #                           calc_dPrd_dr=calc_dPrd_dr, calc_dU_dr=calc_dswap_dr,
+            #                           diff_reg=diff_reg, use_av=use_av)[1]
+            h_a = calc_delta_diff_nn_bermudan(u_vec=swap[:, mask], r0_vec=r0_vec, t0=t,
+                                         calc_dPrd_dr=calc_dPrd_dr, calc_dU_dr=calc_dswap_dr,
+                                         nn_Params=nn_params, use_av=use_av)
+
             h_b = V - torch.sum(h_a * swap[:, mask], dim=1)
+
+
         """
         if k in (50, 150, 250, 350, 450):
             if idx < 2:
@@ -216,6 +237,12 @@ if __name__ == '__main__':
                 plt.title(f't={t}')
                 plt.show()
         """
+    difference = vTe - max0(swapTe)
+    mask = ~torch.isnan(difference)
+    mean = torch.mean(difference[mask])
+    std_value = torch.sqrt(torch.mean((difference[mask] - mean) ** 2))
+    print(std_value.item())
+
 
     """ Plot results """
     MAE_value = torch.nanmean(torch.abs(vTe - max0(swapTe)))
@@ -240,5 +267,5 @@ if __name__ == '__main__':
     fig.suptitle('Replicating payoff of Bermudan Payer Swaption')
     fig.legend(title='Exercise date', loc='upper center', ncol=4, fancybox=True, shadow=True, bbox_to_anchor=(0.5, 0.925))
 
-    plt.savefig(get_plot_path('07_Diff_reg_bermudan_delta_hedge.png'), dpi=400)
+    #plt.savefig(get_plot_path('07_Diff_reg_bermudan_delta_hedge.png'), dpi=400)
     plt.show()
