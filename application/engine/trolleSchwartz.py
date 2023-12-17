@@ -217,13 +217,6 @@ class trolleSchwartz(Model):
         for i in range(self.simDim):
             W[[2*i, 2*i+1], :, :] = (Z[[2*i, 2*i+1], :, :].T @ L[i].T).T
 
-        '''
-
-        W = Z.clone()
-        for i in range(self.simDim):
-            W[[2 * i + 1], :, :] = self.rho[i] * Z[[2 * i], :, :] * \
-                                   torch.sqrt(1.0 - self.rho[i] ** 2.0) * Z[[2 * i + 1],:, :]
-        '''
         Wf = W[0::2, :, :]
         Wv = W[1::2, :, :]
 
@@ -461,42 +454,48 @@ class trolleSchwartz(Model):
 
         :param X:    [x, v, phi1, phi2, phi3, phi4, phi5, phi6]
         """
-        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [i.reshape(self.simDim, -1) for i in X]
-
         if t.dim() == 0:
             t = t.view(1)
-        t = t.reshape(-1, 1)
+        t = t.reshape(1, -1, 1)
         if T.dim() == 0:
             T = T.view(1)
-        T = T.reshape(-1, 1)
+        T = T.reshape(1, -1, 1)
+
+        x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [x.reshape(self.simDim, 1, -1) for x in X]
+        alpha0 = self.alpha0.reshape(self.simDim, 1, -1)
+        alpha1 = self.alpha1.reshape(self.simDim, 1, -1)
+        gamma = self.gamma.reshape(self.simDim, 1, -1)
+        varphi = self.varphi.reshape(1, 1, -1)
 
         # eq. (6) - (12)
-        Bx = (self.alpha0 + self.alpha1 * (T - t)) * torch.exp(-self.gamma * (T - t))
+        Bx = (alpha0 + alpha1 * (T - t)) * torch.exp(-gamma * (T - t))
 
-        Bphi1 = self.alpha1 * torch.exp(-self.gamma * (T - t))
+        Bphi1 = alpha1 * torch.exp(-gamma * (T - t))
 
-        Bphi2 = self.alpha1 / self.gamma * (1 / self.gamma + self.alpha0 / self.alpha1) * \
-                (self.alpha0 + self.alpha1 * (T - t)) * torch.exp(-self.gamma * (T - t))
+        Bphi2 = alpha1 / gamma * (1 / gamma + alpha0 / alpha1) * \
+                (alpha0 + alpha1 * (T - t)) * torch.exp(-gamma * (T - t))
 
-        Bphi3 = - (self.alpha0 * self.alpha1 / self.gamma * (1 / self.gamma + self.alpha0 / self.alpha1) + \
-                   self.alpha1 / self.gamma * (self.alpha1 / self.gamma + 2 * self.alpha0) * (T - t) + \
-                   torch.pow(self.alpha1, 2) / self.gamma * (T - t) ** 2) * torch.exp(-2 * self.gamma * (T - t))
+        Bphi3 = - (alpha0 * alpha1 / gamma * (1 / gamma + alpha0 / alpha1) + \
+                   alpha1 / gamma * (alpha1 / gamma + 2 * alpha0) * (T - t) + \
+                   torch.pow(alpha1, 2) / gamma * (T - t) ** 2) * torch.exp(-2 * gamma * (T - t))
 
-        Bphi4 = torch.pow(self.alpha1, 2) / self.gamma * (1 / self.gamma + self.alpha0 / self.alpha1) * torch.exp(
-            -self.gamma * (T - t))
+        Bphi4 = torch.pow(alpha1, 2) / gamma * (1 / gamma + alpha0 / alpha1) * torch.exp(
+            -gamma * (T - t))
 
-        Bphi5 = - self.alpha1 / self.gamma * (
-                    self.alpha1 / self.gamma + 2 * self.alpha0 + 2 * self.alpha1 * (T - t)) * torch.exp(
-            -2 * self.gamma * (T - t))
+        Bphi5 = - alpha1 / gamma * (
+                    alpha1 / gamma + 2 * alpha0 + 2 * alpha1 * (T - t)) * torch.exp(
+            -2 * gamma * (T - t))
 
-        Bphi6 = - torch.pow(self.alpha1, 2) / self.gamma * torch.exp(-2 * self.gamma * (T - t))
+        Bphi6 = - torch.pow(alpha1, 2) / gamma * torch.exp(-2 * self.gamma * (T - t))
 
         # eq. (5) by each term
-        f0T = self.varphi
-        Bx_sum = Bx.T @ x
-        Bphi_sum = Bphi1.T @ phi1 + Bphi2.T @ phi2 + Bphi3.T @ phi3 + Bphi4.T @ phi4 + Bphi5.T @ phi5 + Bphi6.T @ phi6
-
-        return f0T + Bx_sum + Bphi_sum
+        f0T = varphi
+        Bx_sum = torch.sum(Bx * x, dim=0, keepdim=True)
+        Bphi_sum = torch.sum(
+            Bphi1 * phi1 + Bphi2 * phi2 + Bphi3 * phi3 + Bphi4 * phi4 + Bphi5 * phi5 + Bphi6 * phi6,
+            dim=0, keepdim=False
+        )
+        return (f0T + Bx_sum + Bphi_sum)[0]
 
     def calc_zcb_price(self, X, t, T):
         """
@@ -541,7 +540,7 @@ class trolleSchwartz(Model):
 
     def calc_swap_rate(self, X, t, delta):
         """t = T_0, ..., T_n (future dates)"""
-        zcb = self.calc_zcb(X=X, t=torch.tensor(0.), T=t)
+        zcb = self.calc_zcb(X=X, t=torch.tensor(0.), T=t)[0]
         return swap_rate(zcb, delta)
 
     def calc_characteristic_func(self, u, t, T0, T1):
