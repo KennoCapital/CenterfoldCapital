@@ -7,6 +7,7 @@ from application.engine.trolleSchwartz import trolleSchwartz
 from application.utils.path_config import get_plot_path, get_data_path
 from application.engine.mcBase import mcSim, RNG, mcSimPaths
 from application.engine.differential_NN import Neural_Approximator
+from matplotlib import ticker
 from scipy.interpolate import griddata
 import numpy as np
 
@@ -197,8 +198,9 @@ if __name__ == '__main__':
     # Settings
     file_path = get_data_path('ts_cpl_mc_prices_diffML_withAV_states_training.pkl')
     # burn_in_dTL = torch.linspace(0.0, 1, 101)
+    plot_nodes = 100
 
-    seed = 1234
+    seed = 42069
     N_train = 1024*8
     N_test = 256
     steps_per_year = 100
@@ -235,7 +237,7 @@ if __name__ == '__main__':
     # Model specification
     simDim = 1
     xt = torch.tensor([0.0]) #* torch.ones(N_train)
-    vt = torch.tensor([0.02]) #* torch.ones(N_train)
+    vt = torch.tensor([0.0194*5]) #* torch.ones(N_train)
     phi1t = torch.tensor([0.0]) #* torch.ones(N_train)
     phi2t = torch.tensor([0.0]) #* torch.ones(N_train)
     phi3t = torch.tensor([0.0]) #* torch.ones(N_train)
@@ -244,7 +246,7 @@ if __name__ == '__main__':
     phi6t = torch.tensor([0.0]) #* torch.ones(N_train)
 
     kappa = torch.tensor(0.0553)
-    theta = torch.tensor(.02) #7542* kappa / torch.tensor(2.1476)
+    theta = torch.tensor(.0194*5) #7542* kappa / torch.tensor(2.1476)
     sigma = torch.tensor(0.3325)
     rho = torch.tensor(0.4615)
 
@@ -263,7 +265,7 @@ if __name__ == '__main__':
         simDim=simDim
     )
 
-    burn_in_dTL = torch.linspace(0.0, .5, 51)
+    burn_in_dTL = torch.linspace(0.0, 1., 51)
 
     mcSimPaths(prd, mdl, rng, N_train, burn_in_dTL)
 
@@ -292,16 +294,11 @@ if __name__ == '__main__':
     Z_train = torch.hstack((dydu.reshape(-1,1), dydx[:,1].reshape(-1,1))) # size N x 2
 
     # Make predictions
-    """
-    q90 = X_train.quantile(0.9, dim=0)
-    cond = torch.prod(X_train <= q90, dim=1).bool()
+    q = X_train.quantile(0.9, dim=0)
+    cond = torch.prod(X_train <= q, dim=1).bool()
     idx_test = torch.randperm(len(X_train[cond]), generator=rng.gen)[:N_test]
+    idx_test = idx_test.sort().values
     X_test = X_train[idx_test,:]
-    """
-
-    # Make predictions old way
-    idx_test = torch.randperm(N_train, generator=rng.gen)[:N_test]
-    X_test = X_train[idx_test, :]
 
 
     # Fit Network
@@ -311,7 +308,6 @@ if __name__ == '__main__':
                     hidden_layers=hidden_layers)
     diff_nn.train(epochs=epochs, batches_per_epoch=batches_per_epoch, min_batch_size=min_batch_size)
     y_pred, z_pred = diff_nn.predict_values_and_derivs(X_test)
-
 
     # MC price
     price = torch.zeros_like(y_pred)
@@ -329,71 +325,94 @@ if __name__ == '__main__':
         payoff = mcSim(prd, cMdl, cRng, 50000, dTL)
         price[i] = torch.mean(payoff)
 
+    RMSE_value = torch.sqrt(torch.mean((y_pred - price) ** 2))
 
-    # Data for plotting a surface
-    x_ = X_test[:, 0].reshape(16, 16) # zcb
-    y_ = X_test[:, 1].reshape(16, 16) # vol
-    z_price = y_pred.reshape(16, 16) # cpl price
-    z_delta = z_pred[:, 0].reshape(16, 16) / notional # dc/dp
-    z_vega = z_pred[:, 1].reshape(16, 16) / notional # dc/dv
-    x_grid, y_grid = np.meshgrid(np.linspace(x_.min(), x_.max(), 100), np.linspace(y_.min(), y_.max(), 100))
-    z_price_grid = griddata((x_.flatten(), y_.flatten()), z_price.flatten(), (x_grid, y_grid), method='cubic')
-    z_delta_grid = griddata((x_.flatten(), y_.flatten()), z_delta.flatten(), (x_grid, y_grid), method='cubic')
-    z_vega_grid = griddata((x_.flatten(), y_.flatten()), z_vega.flatten(), (x_grid, y_grid), method='cubic')
+    fig, ax = plt.subplots(1, figsize=(8, 6))
+    ax.plot(price, price, 'r--', color='black', label='MC Price')
+    ax.plot(price, y_pred.flatten(), 'o', color='orange', alpha=0.25, label=f'DiffNN (RMSE = {RMSE_value:.2f})')
+    ax.legend()
+    ax.xaxis.set_major_formatter(ticker.EngFormatter())
+    ax.yaxis.set_major_formatter(ticker.EngFormatter())
+    ax.set_xlabel('MC Price')
+    ax.grid(lw=0.5)
+    ax.set_title('Price predictions of Caplet with Differential Neural Network')
+    plt.show()
+
+
+    # Make data used for plotting
+    X_test2 = torch.tensor([
+        (x, y)
+        for x in torch.linspace(X_test[:, 0].quantile(0.0), X_test[:, 0].max(), plot_nodes)
+        for y in torch.linspace(X_test[:, 1].quantile(0.0), X_test[:, 1].max(), plot_nodes)
+    ])
+
+    y_pred2, z_pred2 = diff_nn.predict_values_and_derivs(X_test2)
+
+    # Reshape to grids for plotting
+    x1_grid = X_test2[:, 0].reshape(plot_nodes, plot_nodes)
+    x2_grid = X_test2[:, 1].reshape(plot_nodes, plot_nodes)
+    y_grid = y_pred2.reshape(plot_nodes, plot_nodes)
+    z1_grid = z_pred2[:, 0].reshape(plot_nodes, plot_nodes)
+    z2_grid = z_pred2[:, 1].reshape(plot_nodes, plot_nodes)
+
+    test_shape = tuple([int(torch.sqrt(torch.tensor(N_test))), int(torch.sqrt(torch.tensor(N_test)))])
+    x1_grid_test = X_test[:, 0].reshape(test_shape)
+    x2_grid_test = X_test[:, 1].reshape(test_shape)
+    y_grid_test = price.reshape(test_shape)
 
     # Price
-    fig = plt.figure(figsize=(8,6))
+    fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection='3d')
-    surf_pred = ax.plot_surface(x_grid, y_grid, z_price_grid, cmap=plt.cm.magma, linewidth=0, antialiased=False)
-    ax.set_xlabel('ZCB Price')
+    surf_pred = ax.plot_surface(x1_grid, x2_grid, y_grid, cmap=plt.cm.magma, linewidth=0, antialiased=False, alpha=0.8)
+    scatter_test = ax.scatter(X_test[:, 0], X_test[:, 1], y_grid_test, alpha=1.0, color='black')
+    ax.set_xlabel(r'$ZCB$', labelpad=10)
     ax.set_ylabel(r'$\nu$')
     ax.set_zticklabels([])
-    cbar = fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=-15)
+    #ax.xaxis.set_major_formatter(ticker.EngFormatter())
+    cbar = fig.colorbar(surf_pred, shrink=0.5, aspect=5, format=ticker.EngFormatter())
     cbar.ax.set_title('Price')
-    ax.xaxis.pane.fill = None
-    ax.yaxis.pane.fill = None
-    ax.zaxis.pane.fill = None
-    ax.view_init(elev=20, azim=-100)
+    ax.xaxis.pane.fill = False
+    ax.yaxis.pane.fill = False
+    ax.zaxis.pane.fill = False
+    #ax.view_init(elev=20, azim=-100)
+    ax.view_init(elev=30, azim=-60)
+    #plt.savefig(path_name.format('price'), dpi=400)
     plt.show()
 
     # Delta
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection='3d')
-    surf_pred = ax.plot_surface(x_grid, y_grid, z_delta_grid, cmap=plt.cm.magma)
-    ax.set_xlabel('ZCB Price')
+    surf_pred = ax.plot_surface(x1_grid, x2_grid, z1_grid, cmap=plt.cm.magma)
+    ax.set_xlabel(r'$ZCB$', labelpad=10)
     ax.set_ylabel(r'$\nu$')
     ax.set_zticklabels([])
-    cbar = fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=-15)
+    #ax.xaxis.set_major_formatter(ticker.EngFormatter())
+    cbar = fig.colorbar(surf_pred, shrink=0.5, aspect=5, format=ticker.EngFormatter())
     cbar.ax.set_title('Delta')
-    ax.xaxis.pane.fill = None
-    ax.yaxis.pane.fill = None
-    ax.zaxis.pane.fill = None
-    ax.view_init(elev=20, azim=-100)
+    ax.xaxis.pane.fill = False
+    ax.yaxis.pane.fill = False
+    ax.zaxis.pane.fill = False
+    ax.view_init(elev=30, azim=-110)
+    #plt.savefig(path_name.format('delta'), dpi=400)
     plt.show()
 
     # Vega
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection='3d')
-    surf_pred = ax.plot_surface(x_grid, y_grid, z_vega_grid, cmap=plt.cm.magma)
-    ax.set_xlabel('ZCB Price')
+    surf_pred = ax.plot_surface(x1_grid, x2_grid, z2_grid, cmap=plt.cm.magma)
+    ax.set_xlabel(r'$ZCB$', labelpad=10)
     ax.set_ylabel(r'$\nu$')
     ax.set_zticklabels([])
-    cbar = fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=-15)
+    #ax.xaxis.set_major_formatter(ticker.EngFormatter())
+    cbar = fig.colorbar(surf_pred, shrink=0.5, aspect=5, format=ticker.EngFormatter())
     cbar.ax.set_title('Vega')
-    ax.xaxis.pane.fill = None
-    ax.yaxis.pane.fill = None
-    ax.zaxis.pane.fill = None
-    ax.view_init(elev=20, azim=-100)
+    ax.xaxis.pane.fill = False
+    ax.yaxis.pane.fill = False
+    ax.zaxis.pane.fill = False
+    ax.view_init(elev=30, azim=-110)
     plt.show()
 
-    RMSE_value = torch.sqrt(torch.mean((y_pred - price) ** 2))
-
-    plt.figure(figsize=(8, 6))
-    plt.plot(price, price, 'r--', color='black', label='MC Price')
-    plt.plot(price, y_pred.flatten(), 'o', color='orange', alpha=0.25, label=f'DiffNN (RMSE = {RMSE_value:.2f})')
-    plt.legend()
-    plt.xlabel('MC Price')
-    plt.grid(lw=0.5)
-    plt.title('Price predictions of Caplet with Differential Neural Network')
-    plt.show()
 
