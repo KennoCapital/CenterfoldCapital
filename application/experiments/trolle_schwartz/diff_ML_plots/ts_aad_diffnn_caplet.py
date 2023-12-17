@@ -1,27 +1,18 @@
-import os
-import pickle
 import torch
 import itertools
-import matplotlib.pyplot as plt
-from functools import partial
 from tqdm import tqdm
-from application.engine.differential_Regression import DifferentialPolynomialRegressor
-from application.engine.standard_scalar import DifferentialStandardScaler
+import matplotlib.pyplot as plt
 from application.engine.products import CapletAsPutOnZCB
 from application.engine.trolleSchwartz import trolleSchwartz
 from application.utils.path_config import get_plot_path, get_data_path
-from application.utils.torch_utils import max0
 from application.engine.mcBase import mcSim, RNG, mcSimPaths
-from joblib import Parallel, delayed
 from application.engine.differential_NN import Neural_Approximator
+from scipy.interpolate import griddata
+import numpy as np
 
 
 torch.set_printoptions(4)
 torch.set_default_dtype(torch.float64)
-
-MAX_PROCESSES = os.cpu_count() - 1
-print(f'Settings MAX_PROCESSES = {MAX_PROCESSES}')
-
 
 def get_training_data(X, t0, prd, N_train, const,
                       simDim: int = 1, seed: int = 1234, use_av: bool = True):
@@ -208,7 +199,7 @@ if __name__ == '__main__':
     # burn_in_dTL = torch.linspace(0.0, 1, 101)
 
     seed = 1234
-    N_train = 1024*4
+    N_train = 1024*8
     N_test = 256
     steps_per_year = 100
     use_av = True
@@ -217,19 +208,14 @@ if __name__ == '__main__':
     seed_weights = 1234
     epochs = 250
     batches_per_epoch = 16
-    min_batch_size = 256 * 10
+    min_batch_size = int(N_train * 0.5) #256 * 10
     lam = 1.0
     hidden_units = 20
     hidden_layers = 4
 
-    """
-    diff_reg = DifferentialPolynomialRegressor(deg=deg, alpha=alpha, use_SVD=True, bias=True,
-                                                   include_interactions=include_interactions)
-    scalar = DifferentialStandardScaler()
-    """
 
     # Product specification
-    exerciseDate = torch.tensor(1.0)
+    exerciseDate = torch.tensor(1.)
     delta = torch.tensor(0.25)
     notional = torch.tensor(1e6)
 
@@ -248,17 +234,17 @@ if __name__ == '__main__':
 
     # Model specification
     simDim = 1
-    xt = torch.tensor([0.0]) * torch.ones(N_train)
-    vt = torch.tensor([0.1]) * torch.ones(N_train)
-    phi1t = torch.tensor([0.0]) * torch.ones(N_train)
-    phi2t = torch.tensor([0.0]) * torch.ones(N_train)
-    phi3t = torch.tensor([0.0]) * torch.ones(N_train)
-    phi4t = torch.tensor([0.0]) * torch.ones(N_train)
-    phi5t = torch.tensor([0.0]) * torch.ones(N_train)
-    phi6t = torch.tensor([0.0]) * torch.ones(N_train)
+    xt = torch.tensor([0.0]) #* torch.ones(N_train)
+    vt = torch.tensor([0.02]) #* torch.ones(N_train)
+    phi1t = torch.tensor([0.0]) #* torch.ones(N_train)
+    phi2t = torch.tensor([0.0]) #* torch.ones(N_train)
+    phi3t = torch.tensor([0.0]) #* torch.ones(N_train)
+    phi4t = torch.tensor([0.0]) #* torch.ones(N_train)
+    phi5t = torch.tensor([0.0]) #* torch.ones(N_train)
+    phi6t = torch.tensor([0.0]) #* torch.ones(N_train)
 
     kappa = torch.tensor(0.0553)
-    theta = torch.tensor(.1) #7542* kappa / torch.tensor(2.1476)
+    theta = torch.tensor(.02) #7542* kappa / torch.tensor(2.1476)
     sigma = torch.tensor(0.3325)
     rho = torch.tensor(0.4615)
 
@@ -268,7 +254,7 @@ if __name__ == '__main__':
 
     varphi = torch.tensor(0.0832)
 
-    const = kappa, theta, sigma, rho, alpha0, alpha1, gamma, varphi
+    const = kappa, theta, rho, gamma, alpha0, alpha1, sigma, varphi
 
     mdl = trolleSchwartz(
         xt=xt, vt=vt, phi1t=phi1t, phi2t=phi2t, phi3t=phi3t, phi4t=phi4t, phi5t=phi5t, phi6t=phi6t,
@@ -277,7 +263,7 @@ if __name__ == '__main__':
         simDim=simDim
     )
 
-    burn_in_dTL = torch.linspace(0.0, 1., 51)
+    burn_in_dTL = torch.linspace(0.0, .5, 51)
 
     mcSimPaths(prd, mdl, rng, N_train, burn_in_dTL)
 
@@ -306,8 +292,17 @@ if __name__ == '__main__':
     Z_train = torch.hstack((dydu.reshape(-1,1), dydx[:,1].reshape(-1,1))) # size N x 2
 
     # Make predictions
+    """
+    q90 = X_train.quantile(0.9, dim=0)
+    cond = torch.prod(X_train <= q90, dim=1).bool()
+    idx_test = torch.randperm(len(X_train[cond]), generator=rng.gen)[:N_test]
+    X_test = X_train[idx_test,:]
+    """
+
+    # Make predictions old way
     idx_test = torch.randperm(N_train, generator=rng.gen)[:N_test]
     X_test = X_train[idx_test, :]
+
 
     # Fit Network
     # Setup Differential Neutral Network
@@ -320,17 +315,20 @@ if __name__ == '__main__':
 
     # MC price
     price = torch.zeros_like(y_pred)
+    x_mc = torch.stack(state0)
+    x_mc = x_mc[:, :, idx_test]
     for i in tqdm(range(N_test), desc='Calculating initial prices with MC'):
-        x_mc = torch.stack(state0)
-        x_mc = x_mc[:,:,idx_test]
         x, v, phi1, phi2, phi3, phi4, phi5, phi6 = [j for j in x_mc[:, :, i]]
         cMdl = trolleSchwartz(xt=x, vt=v, phi1t=phi1, phi2t=phi2, phi3t=phi3,
-                              phi4t=phi4, phi5t=phi5, phi6t=phi6)
+                              phi4t=phi4, phi5t=phi5, phi6t=phi6,
+                              kappa=kappa, theta=theta, sigma=sigma, rho=rho,
+                              gamma=gamma, alpha0=alpha0, alpha1=alpha1, varphi=varphi,
+                              simDim=simDim
+                              )
         cRng = RNG(seed=seed, use_av=use_av)
         payoff = mcSim(prd, cMdl, cRng, 50000, dTL)
         price[i] = torch.mean(payoff)
 
-    z_mdl = price.flatten().diff(dim=0) / X_test[:,0].flatten().diff(dim=0)
 
     # Data for plotting a surface
     x_ = X_test[:, 0].reshape(16, 16) # zcb
@@ -338,60 +336,64 @@ if __name__ == '__main__':
     z_price = y_pred.reshape(16, 16) # cpl price
     z_delta = z_pred[:, 0].reshape(16, 16) / notional # dc/dp
     z_vega = z_pred[:, 1].reshape(16, 16) / notional # dc/dv
-
-    from scipy.interpolate import griddata
-    import numpy as np
     x_grid, y_grid = np.meshgrid(np.linspace(x_.min(), x_.max(), 100), np.linspace(y_.min(), y_.max(), 100))
     z_price_grid = griddata((x_.flatten(), y_.flatten()), z_price.flatten(), (x_grid, y_grid), method='cubic')
     z_delta_grid = griddata((x_.flatten(), y_.flatten()), z_delta.flatten(), (x_grid, y_grid), method='cubic')
     z_vega_grid = griddata((x_.flatten(), y_.flatten()), z_vega.flatten(), (x_grid, y_grid), method='cubic')
 
     # Price
-    fig = plt.figure()
+    fig = plt.figure(figsize=(8,6))
     ax = fig.add_subplot(111, projection='3d')
-
     surf_pred = ax.plot_surface(x_grid, y_grid, z_price_grid, cmap=plt.cm.magma, linewidth=0, antialiased=False)
-    scatter_train = ax.scatter(X_train[:, 0].reshape(64, 64), X_train[:, 1].reshape(64, 64), y_train.reshape(64, 64),
-                               alpha=0.05, color='gray')
-    ax.set_ylim(0., 0.5)
-    ax.set_xlim(0.7, 1.05)
-    ax.set_xlabel(r'$P(0,T+\delta)$')
-    ax.set_ylabel(r'$\nu(0)$')
-    fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    ax.set_xlabel('ZCB Price')
+    ax.set_ylabel(r'$\nu$')
+    ax.set_zticklabels([])
+    cbar = fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    cbar.ax.set_title('Price')
+    ax.xaxis.pane.fill = None
+    ax.yaxis.pane.fill = None
+    ax.zaxis.pane.fill = None
+    ax.view_init(elev=20, azim=-100)
     plt.show()
 
     # Delta
-    fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, sharex='all', sharey='all')
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
     surf_pred = ax.plot_surface(x_grid, y_grid, z_delta_grid, cmap=plt.cm.magma)
-    scatter_train = ax.scatter(X_train[:, 0].reshape(64, 64), X_train[:, 1].reshape(64, 64), Z_train[:,0].reshape(64, 64)/notional,
-                               alpha=0.05, color='gray')
-    ax.set_ylim(0., 0.5)
-    ax.set_xlim(0.7, 1.05)
-    ax.set_xlabel(r'$P(0,T+\delta)$')
-    ax.set_ylabel(r'$\nu(0)$')
-    fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    ax.set_xlabel('ZCB Price')
+    ax.set_ylabel(r'$\nu$')
+    ax.set_zticklabels([])
+    cbar = fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    cbar.ax.set_title('Delta')
+    ax.xaxis.pane.fill = None
+    ax.yaxis.pane.fill = None
+    ax.zaxis.pane.fill = None
+    ax.view_init(elev=20, azim=-100)
     plt.show()
 
     # Vega
-    fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, sharex='all', sharey='all')
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
     surf_pred = ax.plot_surface(x_grid, y_grid, z_vega_grid, cmap=plt.cm.magma)
-    scatter_train = ax.scatter(X_train[:, 0].reshape(64, 64), X_train[:, 1].reshape(64, 64),
-                               Z_train[:, 1].reshape(64, 64) / notional,
-                               alpha=0.1, color='gray')
-    ax.set_ylim(0., 0.5)
-    ax.set_zlim(0, 0.025)
-    ax.set_xlim(0.7, 1.05)
-    ax.set_xlabel(r'$P(0,T+\delta)$')
-    ax.set_ylabel(r'$\nu(0)$')
-    fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    ax.set_xlabel('ZCB Price')
+    ax.set_ylabel(r'$\nu$')
+    ax.set_zticklabels([])
+    cbar = fig.colorbar(surf_pred, shrink=0.5, aspect=5)
+    cbar.ax.set_title('Vega')
+    ax.xaxis.pane.fill = None
+    ax.yaxis.pane.fill = None
+    ax.zaxis.pane.fill = None
+    ax.view_init(elev=20, azim=-100)
     plt.show()
 
+    RMSE_value = torch.sqrt(torch.mean((y_pred - price) ** 2))
 
-    plt.figure()
-    plt.plot(zcb.flatten(), y_train, 'o', color='gray', alpha=0.2)
-    plt.plot(X_test[:,0], y_pred, 'o', label='diff reg')
-    plt.xlabel('zcb')
-    plt.xlim(0.825, 1.)
+    plt.figure(figsize=(8, 6))
+    plt.plot(price, price, 'r--', color='black', label='MC Price')
+    plt.plot(price, y_pred.flatten(), 'o', color='orange', alpha=0.25, label=f'DiffNN (RMSE = {RMSE_value:.2f})')
     plt.legend()
+    plt.xlabel('MC Price')
+    plt.grid(lw=0.5)
+    plt.title('Price predictions of Caplet with Differential Neural Network')
     plt.show()
 
