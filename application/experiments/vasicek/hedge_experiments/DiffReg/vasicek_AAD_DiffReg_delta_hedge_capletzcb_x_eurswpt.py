@@ -168,8 +168,7 @@ if __name__ == '__main__':
     ax[0].set_position([box.x0, box.y0, box.width, box.height * 0.9])
 
     # Title
-    ax[0].set_title(
-        prd.name + f'\nHedgeFreq={dTL[1]:.4g}, alpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
+    ax[0].set_title("1Y3M Caplet as Put on ZCB")
 
 
 
@@ -313,14 +312,13 @@ if __name__ == '__main__':
     ax[1].set_position([box.x0, box.y0, box.width, box.height * 0.9])
 
     # Title
-    ax[1].set_title(
-        prd.name + f'\nHedgeFreq={dTL[1]:.4g}, alpha = {alpha}, deg={deg}, {N_train} training samples ' + av_str)
+    ax[1].set_title("1Y6Y3M European payer swaption")
 
     # Legend
     handles, labels = fig.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     fig.legend(by_label.values(), by_label.keys(), loc='upper center', ncol=2, fancybox=True, shadow=True,
-               bbox_to_anchor=(0.5, 1.0))
+               bbox_to_anchor=(0.5, 0.95))
 
-    #plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_capletzcb_x_eurswpt.png'), dpi=400)
+    plt.savefig(get_plot_path('vasicek_AAD_DiffReg_delta_hedge_capletzcb_x_eurswpt.png'), dpi=400)
     plt.show()
