@@ -162,13 +162,15 @@ if __name__ == '__main__':
                 # Update portfolio
                 V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
                 if k < len(dTL) - 1:
-                    #r0_vec = choose_training_grid(r[k, :], N_train)
+                    r0_vec = choose_training_grid(r[k, :], N_train)
                     h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=t,
                                                calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
                                                diff_reg=diff_reg, use_av=use_av)[1].flatten()
                     h_b = V - h_a * swap
 
             hedge_error.append(torch.std(V - max0(swap)))
+
+
         ax[0].plot(np.log(hedge_times), np.log(hedge_error), 'o-', label=f'Deg={deg}', color=degree_colors[deg])
         ax[0].annotate(f'Deg={deg}',
                      xy=(np.log(hedge_times[-1]), np.log(hedge_error[-1])),
@@ -231,7 +233,7 @@ if __name__ == '__main__':
                 # Update portfolio
                 V = h_a * swap + h_b * torch.exp(0.5 * (r[k, :] + r[k - 1, :]) * dt)
                 if k < len(dTL) - 1:
-                    #r0_vec = choose_training_grid(r[k, :], N)
+                    r0_vec = choose_training_grid(r[k, :], N)
                     h_a = diff_reg_fit_predict(u_vec=swap, r0_vec=r0_vec, t0=t,
                                                calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
                                                diff_reg=diff_reg, use_av=use_av)[1].flatten()
