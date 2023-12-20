@@ -51,9 +51,9 @@ def hedge(args):
     r0_vec = torch.linspace(r0_min, r0_max, N_train)
 
     # Model specification
-    r0 = torch.tensor(0.08)
+    r0 = torch.linspace(r0_min, r0_max, N_test) #torch.tensor(0.08)
     a = torch.tensor(0.86)
-    b = torch.tensor(0.09)
+    b = torch.tensor(0.09) #r0.median()
     sigma = torch.tensor(0.0148)
     measure = 'risk_neutral'
 
@@ -75,7 +75,7 @@ def hedge(args):
         int((swapLastFixingDate - swapFirstFixingDate) / delta + 1)
     )
 
-    strike = torch.tensor(.0871)
+    strike = torch.tensor(.0871) #mdl.calc_swap_rate(r0.median(), t_swap_fixings, delta)
 
     prd = EuropeanPayerSwaption(
         strike=strike,
@@ -137,11 +137,11 @@ def hedge(args):
     """ Delta Hedge Experiment """
     # Differential Neural Network Settings
     seed_weights = 1234
-    epochs = 50
+    epochs = 250
     batches_per_epoch = 16
     hidden_units = 20
     hidden_layers = 4
-    min_batch_size = N_train // batch_ratio
+    min_batch_size = int(N_train // batch_ratio)
 
     nn_params = {'N_train': N_train, 'seed_weights': seed_weights, 'epochs': epochs,
                  'batches_per_epoch': batches_per_epoch, 'min_batch_size': min_batch_size,
@@ -164,7 +164,7 @@ def hedge(args):
     # Initialize experiment
     swap = mdl.calc_swap(r[0, :], t_swap_fixings, delta, strike, notional)
 
-    V = swpt
+    V = swpt * torch.ones_like(r[0, :])
     h_a = calc_delta_diff_nn(u_vec=swap, r0_vec=r0_vec, t0=0.0,
                              calc_dPrd_dr=calc_dswpt_dr, calc_dU_dr=calc_dswap_dr,
                              nn_Params=nn_params, use_av=use_av)
@@ -199,9 +199,9 @@ if __name__ == '__main__':
 
     # varying sets
     lams = [0.0, 1.0]
-    training_sets = [1024, 1024 * 8, 1024 * 16]
-    batch_ratios = [1, 2, 4, 8]
-    hedge_times = [1, 2, 4, 12, 250 // 5, 250//2, 250, 500]
+    training_sets = [1024, 1024 * 4] #, 1024 * 16]
+    batch_ratios = [1, 2, 4]  #, ]
+    hedge_times = [1, 2, 4, 12, 250 // 5, 250//2, 250]
 
     combinations = list(itertools.product(lams, training_sets, batch_ratios, hedge_times))
 
@@ -225,12 +225,10 @@ if __name__ == '__main__':
                     # set labels correctly
                     if n==1024:
                         y_offset = 15
-                    elif n==1024*8:
+                    elif n==1024*4:
                         y_offset = 0
-                    elif n==16384:
-                        y_offset = -15
                     else:
-                        raise ValueError("Chose wrong training size!")
+                        y_offset = -15
                     plt.annotate(f'N={n}, bsz={b}',
                                  xy=(np.log(df_tmp['STEPS'].values[3]), np.log(df_tmp['HEDGE_ERROR'].values[3])) if lam == 0.0
                                     else
